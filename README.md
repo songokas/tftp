@@ -18,7 +18,8 @@ encrypt traffic or data.
 Install deb
 
 ```
-wget https://github.com/songokas/tftp/releases/download/0.1.0/tftp_0.1.0_amd64.deb && sudo apt install ./tftp_0.1.0_amd64.deb
+wget https://github.com/songokas/tftp/releases/download/v0.1.0/tftp_0.1.0_amd64.deb \
+  && sudo apt install ./tftp_0.1.0_amd64.deb
 ```
 
 Download binary
@@ -28,7 +29,7 @@ https://github.com/songokas/tftp/releases
 Install from source
 
 ```bash
-cargo install --bins --root=~/bin/ --git=https://github.com/songokas/tftp
+cargo install --bins --root=. --git=https://github.com/songokas/tftp
 ```
 
 ## Getting started
