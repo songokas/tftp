@@ -1,0 +1,36 @@
+[package]
+name = "tftp"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+strip="debuginfo"
+
+[workspace]
+members = [
+    "binary"
+]
+
+[dependencies]
+log = "0.4"
+# TODO remove once heapless retain is available and results must be used fixed
+arrayvec = { version = "0.7", optional = false, default-features = false}
+heapless = { version = "0.7", optional = false, default-features = false}
+base64 =  { version = "0.21", optional = true, default-features = false}
+x25519-dalek =  { version = "2.0.0-pre.0", optional = true, default-features = false, features = ["u64_backend"]}
+chacha20poly1305 = { version = "0.10", optional = true, default-features = false, features = ["heapless", "getrandom"]}
+# heapless depends on 0.2.1
+hash32 = "0.2.1"
+rand = { version = "0.8", optional = false, default-features = false, features = ["getrandom"]}
+
+[dev-dependencies]
+rand = "0.8"
+vfs = "0.9"
+
+[features]
+default = ["std", "alloc", "encryption"]
+std = ["x25519-dalek?/std"]
+alloc = ["chacha20poly1305?/alloc"]
+encryption = ["x25519-dalek", "chacha20poly1305", "base64"]
+seek = []
+stack_large_window = []

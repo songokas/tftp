@@ -1,0 +1,4 @@
+[ -z "$SERVER_HOME" ] && SERVER_HOME=/opt/tftp
+[ -z "$SERVER_USER" ] && SERVER_USER=tftp
+
+adduser --system $SERVER_USER --home $SERVER_HOME

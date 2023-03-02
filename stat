@@ -1,0 +1,316 @@
+#!/bin/bash
+
+set -eEux -o pipefail
+
+TEST_DIR="./target/tftp-232342"
+OUTPUT_DIR="./target/info"
+
+mkdir -p ./target/info
+
+server_heap() {
+    local server="$1"
+    local client="$2"
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/client_file
+    ( sleep 5 ; $client send 127.0.0.1:9000 target/client_file --remote-path server_file )&
+    valgrind --tool=massif --massif-out-file=target/massif.out $server server 127.0.0.1:9000 ./target 
+}
+
+server_flamegraph() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/client_file
+    (sleep 5 ; $client send 127.0.0.1:9000 target/client_file --remote-path server_file ; killall $server)&
+    flamegraph -o $OUTPUT_DIR/server_flamegraph${suffix}.svg -- $server server 127.0.0.1:9000 ./target/
+}
+
+send_flamegraph() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/send_file
+    $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    flamegraph -o $OUTPUT_DIR/send_flamegraph${suffix}.svg -- $client send 127.0.0.1:9000 target/send_file --remote-path server_file
+    kill "${server_pids[@]}"
+}
+
+receive_flamegraph() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/server_file
+    $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    flamegraph -o $OUTPUT_DIR/receive_flamegraph${suffix}.svg -- $client receive 127.0.0.1:9000 server_file --local-path target/receive_file
+    kill "${server_pids[@]}"
+}
+
+send_dump() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    local dump_pids=()
+    rm -f target/server_file
+    head -c 1M /dev/urandom > target/send_file
+    sudo -v
+    sudo tcpdump -s 65535 -i lo -w $OUTPUT_DIR/send_capture${suffix}.pcap port 9000 & dump_pids+=($!)
+    sleep 1
+    $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    $client send 127.0.0.1:9000 target/send_file --remote-path server_file
+    sleep 1
+    kill "${server_pids[@]}"
+    sudo kill "`ps -C keyword -o pid= --ppid ${dump_pids[@]}`"
+}
+
+receive_dump() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    local dump_pids=()
+
+    rm -f target/server_file
+    head -c 1M /dev/urandom > target/server_file
+    sudo -v
+    sudo tcpdump -s 65535 -i lo -w $OUTPUT_DIR/receive_capture${suffix}.pcap port 9000 & dump_pids+=($!)
+    sleep 1
+    $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    $client receive 127.0.0.1:9000 server_file --local-path target/receive_file
+    sleep 1
+    kill "${server_pids[@]}"
+    sudo kill "`ps -C keyword -o pid= --ppid ${dump_pids[@]}`"
+}
+
+send_receive_full_encryption_dump() {
+    local server="$1"
+    local client="$2"
+    local private_key="tn4oZ8Rtgci2CNULF7UYdgeKz0i+jiK0O2Gs0PPjZk8="
+    local public_key="uNzZDPe9sRhuXRTAM8YjCSmt7OHhlBahKCPOarNwCk0="
+    local server_pids=()
+    local dump_pids=()
+    rm -f target/server_file
+    head -c 1M /dev/urandom > target/send_file
+    sudo -v
+    sudo tcpdump -s 65535 -i lo -w $OUTPUT_DIR/full_encryption_capture.pcap port 9000 & dump_pids+=($!)
+    sleep 1
+    $server server 127.0.0.1:9000 ./target/ --private-key $private_key --required-full-encryption true & server_pids+=($!)
+    $client send 127.0.0.1:9000 target/send_file --remote-path server_file --encryption-level protocol --server-public-key $public_key
+    $client receive 127.0.0.1:9000 server_file --local-path target/receive_file --encryption-level protocol --server-public-key $public_key
+    sleep 1
+    kill "${server_pids[@]}"
+    sudo kill "`ps -C keyword -o pid= --ppid ${dump_pids[@]}`"
+}
+
+measure_localhost_window_size() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local sender_data="$OUTPUT_DIR/sender_window_localhost$suffix"
+    local receiver_data="$OUTPUT_DIR/receiver_window_localhost$suffix"
+    local server_pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    > $sender_data
+    > $receiver_data
+
+    head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
+    $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 104857600 --allow-overwrite & server_pids+=($!)
+
+    for window_size in 1 2 4 6 8 10 12 14 16 32 64; do
+        /usr/bin/time -o $sender_data -a -f "$window_size %e %M %K" $client send 127.0.0.1:9000 $TEST_DIR/client/samples/100M --remote-path samples/100M --window-size $window_size
+        /usr/bin/time -o $receiver_data -a -f "$window_size %e %M %K" $client receive 127.0.0.1:9000 samples/100M --max-file-size 104857600 --window-size $window_size --local-path $TEST_DIR/client/samples/100M
+    done
+
+    kill "${server_pids[@]}"
+
+    plot_window_size $sender_data $receiver_data
+    plot_window_size_image $sender_data $receiver_data $suffix
+}
+
+measure_localhost_queue_size() {
+    local server="$1"
+    local client="$2"
+    local sender_data="$OUTPUT_DIR/sender_queue_localhost"
+    local receiver_data="$OUTPUT_DIR/receiver_queue_localhost"
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    > $sender_data
+    > $receiver_data
+
+    head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
+
+    for queue_size in 1 2 4 8 16 32 64 128 256 512 1000; do
+        local server_pids=()
+        $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 104857600 --allow-overwrite --max-blocks-in-queue-reader $queue_size --max-blocks-in-queue-writer $queue_size & server_pids+=($!)
+        /usr/bin/time -o $sender_data -a -f "$queue_size %e %M %K" $client send 127.0.0.1:9000 $TEST_DIR/client/samples/100M --remote-path samples/100M --window-size 1 --max-blocks-in-queue $queue_size
+        /usr/bin/time -o $receiver_data -a -f "$queue_size %e %M %K" $client receive 127.0.0.1:9000 samples/100M --max-file-size 104857600 --window-size 1 --max-blocks-in-queue $queue_size --local-path $TEST_DIR/client/samples/100M
+        kill "${server_pids[@]}"
+        sleep 1
+    done
+
+    plot_queue_size $sender_data $receiver_data
+}
+
+measure_endpoint_window_size() {
+    local client="$1"
+    local endpoint="$2"
+    local suffix="${3:-""}"
+    local sender_data="$OUTPUT_DIR/sender_window_$endpoint$suffix"
+    local receiver_data="$OUTPUT_DIR/receiver_window_$endpoint$suffix"
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+    
+    > $sender_data
+    > $receiver_data
+
+    head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
+
+    for window_size in 1 2 4 6 8 10 12 14 16 32 64; do
+        /usr/bin/time -o $sender_data -a -f "$window_size %e %M %K" $client send $endpoint $TEST_DIR/client/samples/100M --remote-path samples/100M --window-size $window_size
+        /usr/bin/time -o $receiver_data -a -f "$window_size %e %M %K" $client receive $endpoint samples/100M --max-file-size 104857600 --window-size $window_size --local-path $TEST_DIR/client/samples/100M
+    done
+
+    plot_window_size $sender_data $receiver_data
+    plot_window_size_image $sender_data $receiver_data $suffix
+}
+
+plot_window_size() {
+    local sender_data="$1"
+    local receiver_data="$2"
+
+    gnuplot -p <<EOF
+set terminal dumb size 120, 30
+set title 'Send 100Mb'
+set xlabel 'WindowSize'
+set ylabel 'Time'
+set autoscale
+stats '$sender_data' nooutput
+plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$sender_data' with points pointtype 'x' notitle
+EOF
+
+    gnuplot -p <<EOF
+set terminal dumb size 120, 30
+set title 'Receive 100Mb'
+set xlabel 'WindowSize'
+set ylabel 'Time'
+set autoscale
+stats '$receiver_data' nooutput
+plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$receiver_data' with points pointtype 'x' notitle
+EOF
+}
+
+plot_window_size_image() {
+    local sender_data="$1"
+    local receiver_data="$2"
+    local suffix="${3:-""}"
+
+    gnuplot -p <<EOF
+set terminal png size 600, 400
+set output '$OUTPUT_DIR/sender_window_size${suffix}.png'
+set title 'Send 100Mb'
+set xlabel 'WindowSize'
+set ylabel 'Time'
+set autoscale
+stats '$sender_data' nooutput
+plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$sender_data' with points pointtype 'x' notitle
+EOF
+
+    gnuplot -p <<EOF
+set terminal png size 600, 400
+set output '$OUTPUT_DIR/receiver_window_size${suffix}.png'
+set title 'Receive 100Mb'
+set xlabel 'WindowSize'
+set ylabel 'Time'
+set autoscale
+stats '$receiver_data' nooutput
+plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$receiver_data' with points pointtype 'x' notitle
+EOF
+}
+
+plot_queue_size() {
+    local sender_data="$1"
+    local receiver_data="$2"
+
+    gnuplot -p <<EOF
+set terminal dumb size 120, 30
+set title 'Send 100Mb'
+set xlabel 'QueueSize'
+set ylabel 'Time'
+set xtics (0,1,2,4,8,16,32,64,128,256,512,1024)
+stats '$sender_data' nooutput
+plot [-10:STATS_max_x + 50] [:STATS_max_y + 2] '$sender_data' with points pointtype 'x' notitle
+EOF
+
+    gnuplot -p <<EOF
+set terminal dumb size 120, 30
+set title 'Receive 100Mb'
+set xlabel 'QueueSize'
+set ylabel 'Time'
+set xtics (0,1,2,4,8,16,32,64,128,256,512,1024)
+stats '$receiver_data' nooutput
+plot [-10:STATS_max_x + 50] [-10:STATS_max_y + 10] '$receiver_data' with points pointtype 'x' notitle
+EOF
+}
+
+
+produce_info() {
+    local release_bin="./target/release/tftp"
+    local debug_bin="./target/debug/tftp"
+
+    cargo build -p tftp-binary
+    server_flamegraph $debug_bin $debug_bin
+    send_flamegraph $debug_bin $debug_bin
+    receive_flamegraph $debug_bin $debug_bin
+
+    cargo build -p tftp-binary --release
+
+    send_dump $release_bin $release_bin "_delayed_encryption"
+    receive_dump $release_bin $release_bin "_delayed_encryption"
+    send_receive_full_encryption_dump $release_bin $release_bin
+    measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption"
+
+    cargo build -p tftp-binary --no-default-features --features alloc
+
+    server_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
+    send_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
+    receive_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
+
+    cargo build -p tftp-binary --no-default-features --features alloc --release
+
+    measure_endpoint_window_size $release_bin servas:69 "_no_encryption_alloc"
+
+    cargo build -p tftp-binary --no-default-features --features encryption,stack_large_window
+
+    server_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
+    send_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
+    receive_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
+
+    cargo build -p tftp-binary --no-default-features --release --features encryption,stack_large_window
+
+    measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption_stack"
+
+    cargo build -p tftp-binary --no-default-features --features stack_large_window
+
+    server_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
+    send_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
+    receive_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
+
+    cargo build -p tftp-binary --no-default-features --release --features stack_large_window
+
+    send_dump $release_bin $release_bin "_no_encryption_stack"
+    receive_dump $release_bin $release_bin "_no_encryption_stack"
+    measure_endpoint_window_size $release_bin servas:69 "_no_encryption_stack"
+}
+
+$1 "${2:-""}" "${3:-""}" "${4:-""}"

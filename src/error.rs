@@ -1,0 +1,264 @@
+use core::{
+    array::TryFromSliceError,
+    fmt::{Display, Formatter},
+    str::Utf8Error,
+    time::Duration,
+};
+
+use crate::{
+    encryption::EncryptionLevel, packet::Extension, std_compat::error::Error, types::DefaultString,
+};
+
+#[cfg(all(feature = "std", feature = "alloc"))]
+pub type BoxedError = alloc::boxed::Box<dyn std::error::Error + Send + Sync>;
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+pub type BoxedError = GeneralError;
+pub type BoxedResult<T> = Result<T, BoxedError>;
+pub type DefaultBoxedResult = Result<(), BoxedError>;
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+#[derive(Debug)]
+pub enum GeneralError {
+    PacketError(PacketError),
+    FileError(FileError),
+    StorageError(StorageError),
+    EncryptionError(EncryptionError),
+    ExtensionError(ExtensionError),
+    IoError(crate::std_compat::io::Error),
+    FmtError(core::fmt::Error),
+    Infallible,
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl Display for GeneralError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            GeneralError::PacketError(s) => s.fmt(f),
+            GeneralError::FileError(s) => s.fmt(f),
+            GeneralError::StorageError(s) => s.fmt(f),
+            GeneralError::EncryptionError(s) => s.fmt(f),
+            GeneralError::ExtensionError(s) => s.fmt(f),
+            GeneralError::IoError(s) => s.fmt(f),
+            GeneralError::FmtError(s) => s.fmt(f),
+            GeneralError::Infallible => write!(f, "unknown error"),
+        }
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<PacketError> for GeneralError {
+    fn from(source: PacketError) -> Self {
+        GeneralError::PacketError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<FileError> for GeneralError {
+    fn from(source: FileError) -> Self {
+        GeneralError::FileError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<StorageError> for GeneralError {
+    fn from(source: StorageError) -> Self {
+        GeneralError::StorageError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<EncryptionError> for GeneralError {
+    fn from(source: EncryptionError) -> Self {
+        GeneralError::EncryptionError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<ExtensionError> for GeneralError {
+    fn from(source: ExtensionError) -> Self {
+        GeneralError::ExtensionError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<crate::std_compat::io::Error> for GeneralError {
+    fn from(source: crate::std_compat::io::Error) -> Self {
+        GeneralError::IoError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<core::fmt::Error> for GeneralError {
+    fn from(source: core::fmt::Error) -> Self {
+        GeneralError::FmtError(source)
+    }
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<core::convert::Infallible> for GeneralError {
+    fn from(_: core::convert::Infallible) -> Self {
+        GeneralError::Infallible
+    }
+}
+
+#[derive(Debug)]
+pub enum PacketError {
+    Invalid,
+    RemoteError(DefaultString),
+    Timeout(Duration),
+    InvalidString(Utf8Error),
+    InvalidData(TryFromSliceError),
+}
+
+impl Display for PacketError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PacketError::Invalid => write!(f, "Invalid packet received"),
+            PacketError::RemoteError(s) => write!(f, "{s}"),
+            PacketError::Timeout(s) => write!(f, "Timeout occured {}", s.as_secs_f32()),
+            PacketError::InvalidString(s) => s.fmt(f),
+            PacketError::InvalidData(s) => s.fmt(f),
+        }
+    }
+}
+
+impl Error for PacketError {}
+
+impl From<Utf8Error> for PacketError {
+    fn from(source: Utf8Error) -> Self {
+        PacketError::InvalidString(source)
+    }
+}
+
+impl From<TryFromSliceError> for PacketError {
+    fn from(source: TryFromSliceError) -> Self {
+        PacketError::InvalidData(source)
+    }
+}
+
+pub type PacketResult<T> = Result<T, PacketError>;
+
+#[derive(Debug)]
+pub enum StorageError {
+    CapacityReached,
+    File(crate::std_compat::io::Error),
+    AlreadyWriten,
+    FileTooBig,
+    // expected, current
+    ExpectedBlock((u16, u16)),
+}
+
+impl From<crate::std_compat::io::Error> for StorageError {
+    fn from(source: crate::std_compat::io::Error) -> Self {
+        StorageError::File(source)
+    }
+}
+
+impl Error for StorageError {}
+
+impl Display for StorageError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            StorageError::CapacityReached => write!(f, "Buffer capacity reached"),
+            StorageError::File(s) => s.fmt(f),
+            StorageError::AlreadyWriten => write!(f, "Block has been already written"),
+            StorageError::FileTooBig => write!(f, "File is too big"),
+            StorageError::ExpectedBlock((expected, current)) => {
+                write!(f, "Expecting block {} current block {}", expected, current)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum FileError {
+    InvalidFileName,
+}
+
+impl Error for FileError {}
+
+impl Display for FileError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FileError::InvalidFileName => write!(f, "Invalid file name specified"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ExtensionError {
+    ClientRequiredEncryption(EncryptionLevel),
+    ServerRequiredEncryption(EncryptionLevel),
+    InvalidPublicKey,
+    InvalidNonce,
+    EncryptionError(EncryptionError),
+    InvalidExtension(Extension),
+}
+
+impl Error for ExtensionError {}
+
+impl Display for ExtensionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ExtensionError::ClientRequiredEncryption(l) => write!(
+                f,
+                "Server does not provide encryption however client requested {l}",
+            ),
+            ExtensionError::ServerRequiredEncryption(l) => {
+                write!(f, "Server requires {l} encryption",)
+            }
+            ExtensionError::InvalidPublicKey => write!(f, "Invalid public key received",),
+            ExtensionError::InvalidNonce => write!(f, "Invalid nonce received",),
+            ExtensionError::EncryptionError(s) => {
+                write!(f, "Invalid extension parsing error {}", s)
+            }
+            ExtensionError::InvalidExtension(s) => {
+                write!(f, "Invalid extension {}", s)
+            }
+        }
+    }
+}
+
+impl From<EncryptionError> for ExtensionError {
+    fn from(source: EncryptionError) -> Self {
+        ExtensionError::EncryptionError(source)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EncodingErrorType {
+    PrivateKey,
+    PublicKey,
+    Nonce,
+}
+
+impl Display for EncodingErrorType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EncodingErrorType::PrivateKey => write!(f, "private key"),
+            EncodingErrorType::PublicKey => write!(f, "public key"),
+            EncodingErrorType::Nonce => write!(f, "nonce"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum EncryptionError {
+    Encrypt,
+    Decrypt,
+    Encode(EncodingErrorType),
+    Decode(EncodingErrorType),
+}
+
+impl Error for EncryptionError {}
+
+impl Display for EncryptionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EncryptionError::Encrypt => write!(f, "Failed to encrypt"),
+            EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
+            EncryptionError::Encode(t) => write!(f, "Failed to encode {}", t),
+            EncryptionError::Decode(t) => write!(f, "Failed to decode {}", t),
+        }
+    }
+}

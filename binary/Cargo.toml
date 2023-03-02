@@ -1,0 +1,61 @@
+[package]
+name = "tftp-binary"
+version = "0.1.0"
+edition = "2021"
+
+authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
+description = "Tftp server and client"
+homepage = "https://github.com/songokas/tftp"
+repository = "https://github.com/songokas/tftp"
+license = "../LICENSE"
+readme = "../README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# std compile time requirement
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.10"
+log = "0.4"
+tftp = { path = "..", default-features = false}
+rand = { version = "0.8", optional = false, default-features = false, features = ["getrandom"]}
+# std compile time requirement
+polling = "2"
+
+[dev-dependencies]
+rand = "0.8"
+env_logger = "0.10"
+
+[features]
+default = ["std", "alloc", "encryption"]
+std = ["tftp/std", "polling/std"]
+alloc = ["tftp/alloc"]
+encryption = ["tftp/encryption"]
+seek = ["tftp/seek"]
+stack_large_window = ["tftp/stack_large_window"]
+
+[[bin]]
+name = "tftp"
+path = "src/main.rs"
+
+
+
+[build-dependencies]
+cargo-deb = "1"
+
+[package.metadata.deb]
+name = "tftp"
+maintainer = "Tomas Jakstas <tom.jakstas@gmail.com>"
+copyright = "2023, Tomas Jakstas <tom.jakstas@gmail.com>"
+extended-description = """\
+Simple tftp client and server with optional encryption\
+"""
+depends = "$auto"
+section = "utility"
+priority = "optional"
+maintainer-scripts = "../builder/debian"
+assets = [
+    ["target/release/tftp", "usr/bin/", "755"],
+    ["../README.md", "usr/share/doc/tftp/README", "644"],
+    ["../builder/debian/service", "lib/systemd/system/tftp.service", "644"],
+]

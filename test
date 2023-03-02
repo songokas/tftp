@@ -1,0 +1,319 @@
+#!/bin/bash
+
+set -eEux -o pipefail
+
+trap "jobs -p | xargs -r kill" SIGINT
+trap '[[ $? != 0 ]] && jobs -p | xargs -r kill' EXIT
+
+TARGETS=(x86_64-unknown-linux-gnu)
+RELEASE="release"
+
+TEST_DIR="./target/tftp-232342"
+
+test_full_config() {
+    local server="$1"
+    local client="$2"
+    local private_key="tn4oZ8Rtgci2CNULF7UYdgeKz0i+jiK0O2Gs0PPjZk8="
+    local public_key="uNzZDPe9sRhuXRTAM8YjCSmt7OHhlBahKCPOarNwCk0="
+    local client_private_key="ZoCtWKMLP8bPQFbOHMu9AzkVMaUIxiXhDYhQwDGlNas="
+    local client_public_key="hX0vxxwVcP/uegcppn46e8maSXFduJDG1IywVYhlMmA="
+    local server_pids=()
+    local pids=()
+
+    rm -rf "$TEST_DIR"
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    echo "$client_public_key" > $TEST_DIR/authorized
+    head -c 10K /dev/urandom > $TEST_DIR/client/file
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server -a --max-blocks-in-queue-reader 4 --max-blocks-in-queue-writer 4 --request-timeout 10000 \
+        --max-file-size 100000000 --max-block-size 512 --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
+    
+    time $client send 127.0.0.1:9000 $TEST_DIR/client/file --listen 127.0.0.1:0 --remote-path new-path --max-blocks-in-queue 2 --request-timeout 10000 \
+        --max-file-size 100000000 --block-size 110 --encryption-level protocol --server-public-key "$public_key" --private-key "$client_private_key" \
+        --known-hosts $TEST_DIR/known
+    
+    cmp -s $TEST_DIR/client/file $TEST_DIR/server/new-path
+    
+   time $client receive 127.0.0.1:9000 new-path --local-path $TEST_DIR/delete/file --listen 127.0.0.1:0 --max-blocks-in-queue 4 --request-timeout 10000 \
+       --max-file-size 100000000 --block-size 120 --encryption-level protocol --private-key "$client_private_key" \
+       --known-hosts $TEST_DIR/known
+
+    cmp -s $TEST_DIR/delete/file $TEST_DIR/server/new-path
+
+    kill "${server_pids[@]}"
+}
+
+test_large_files() {
+    local server="$1"
+    local client="$2"
+    local window_size="${3:-1}"
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    head -c 111M /dev/urandom > $TEST_DIR/client/samples/111M
+    head -c 112M /dev/urandom > $TEST_DIR/server/samples/112M
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 524288000 & server_pids+=($!)
+    time $client send 127.0.0.1:9000 $TEST_DIR/client/samples/111M --remote-path samples/111M --window-size $window_size & pids+=($!)
+    time $client receive 127.0.0.1:9000 samples/112M --max-file-size 724288000 --window-size $window_size --local-path $TEST_DIR/client/samples/112M & pids+=($!)
+    wait "${pids[@]}"
+
+    cmp -s $TEST_DIR/client/samples/111M $TEST_DIR/server/samples/111M
+    cmp -s $TEST_DIR/client/samples/112M $TEST_DIR/server/samples/112M
+    kill "${server_pids[@]}"
+}
+
+test_high_load() {
+    local server="$1"
+    local client="$2"
+    local window_size="${3:-1}"
+    local size=50
+    local max_size=$((size + size))
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server/samples & server_pids+=($!)
+
+    for ((i=1;i<=size;i++)); do
+        head -c 1M /dev/urandom > $TEST_DIR/client/samples/$i
+    done;
+    for ((i=size+1;i<=max_size;i++)); do
+        head -c 1M /dev/urandom > $TEST_DIR/server/samples/$i
+    done;
+    for ((i=1;i<=size;i++)); do
+        $client send 127.0.0.1:9000 $TEST_DIR/client/samples/$i --window-size $window_size & pids+=($!)
+    done
+    for ((i=size+1;i<=max_size;i++)); do
+        $client receive 127.0.0.1:9000 $i --window-size $window_size --local-path $TEST_DIR/delete/$i & pids+=($!)
+    done
+    time wait "${pids[@]}"
+
+    for ((i=1;i<=size;i++)); do
+        cmp -s $TEST_DIR/client/samples/$i $TEST_DIR/server/samples/$i
+    done
+    for ((i=size+1;i<=max_size;i++)); do
+        cmp -s $TEST_DIR/server/samples/$i $TEST_DIR/delete/$i
+    done
+    kill "${server_pids[@]}"
+}
+
+test_encryption_level() {
+    local server="$1"
+    local client="$2"
+    local data="hello"
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server & pids+=($!)
+
+    for level in data optional-data protocol optional-protocol none; do
+        local remote_path=$(openssl rand -hex 12)
+        echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --encryption-level $level
+        local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --encryption-level $level)
+        if [[ "$data" != "$received" ]]; then
+            exit 1
+        fi
+    done;
+
+    kill "${pids[@]}"
+}
+
+test_standard_tftp() {
+    local server="$1"
+    local client="$2"
+    local data=$(openssl rand -hex 1500)
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server --require-server-port-change --max-blocks-in-queue-reader 1 --max-blocks-in-queue-writer 1 & pids+=($!)
+
+    local remote_path=$(openssl rand -hex 12)
+    echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --allow-server-port-change --window-size 1 --max-blocks-in-queue 1
+    local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --allow-server-port-change --window-size 1 --max-blocks-in-queue 1)
+    if [[ "$data" != "$received" ]]; then
+        exit 1
+    fi
+
+    kill "${pids[@]}"
+}
+
+test_encryption_authorized_only() {
+    local server="$1"
+    local client="$2"
+    local private_key="tn4oZ8Rtgci2CNULF7UYdgeKz0i+jiK0O2Gs0PPjZk8="
+    local public_key="uNzZDPe9sRhuXRTAM8YjCSmt7OHhlBahKCPOarNwCk0="
+    local client_private_key="ZoCtWKMLP8bPQFbOHMu9AzkVMaUIxiXhDYhQwDGlNas="
+    local client_public_key="hX0vxxwVcP/uegcppn46e8maSXFduJDG1IywVYhlMmA="
+    local data="hello"
+    local server_pids=()
+    local pids=()
+
+    rm -rf "$TEST_DIR"
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    echo "$client_public_key" > $TEST_DIR/authorized
+    echo "127.0.0.1:9000 $public_key" > $TEST_DIR/known
+    head -c 10M /dev/urandom > $TEST_DIR/client/file
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server --required-full-encryption false --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
+
+    local remote_path=$(openssl rand -hex 12)
+    # disallow no public key
+    echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --request-timeout 500 \
+        --remote-path $remote_path --private-key "$client_private_key" --encryption-level none && exit 1 || true
+    $client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --request-timeout 500 \
+        --private-key "$client_private_key" --encryption-level none && exit 1 || true
+    for level in data optional-data protocol optional-protocol; do
+        local remote_path=$(openssl rand -hex 12)
+        echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --request-timeout 500 \
+            --remote-path $remote_path --private-key "$client_private_key" --encryption-level $level
+        local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --request-timeout 500 --private-key "$client_private_key" --encryption-level $level)
+        if [[ "$data" != "$received" ]]; then
+            exit 1
+        fi
+        local remote_path=$(openssl rand -hex 12)
+        echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --request-timeout 500 \
+            --remote-path $remote_path --server-public-key "$public_key" --private-key "$client_private_key" --encryption-level $level
+        local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --request-timeout 500 --server-public-key "$public_key" --private-key "$client_private_key" --encryption-level $level)
+        if [[ "$data" != "$received" ]]; then
+            exit 1
+        fi
+        local remote_path=$(openssl rand -hex 12)
+        echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --request-timeout 500 \
+            --remote-path $remote_path --known-hosts $TEST_DIR/known --private-key "$client_private_key" --encryption-level $level
+        local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --request-timeout 500 --known-hosts $TEST_DIR/known --private-key "$client_private_key" --encryption-level $level)
+        if [[ "$data" != "$received" ]]; then
+            exit 1
+        fi
+    done;
+
+
+    kill "${server_pids[@]}" 
+}
+
+test_curl_client() {
+    local server="$1"
+    local server_pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 104857600 & server_pids+=($!)
+    curl -T $TEST_DIR/client/samples/100M tftp://127.0.0.1:9000
+    curl -o $TEST_DIR/delete/100M tftp://127.0.0.1:9000/100M
+    kill "${server_pids[@]}" 
+}
+
+
+test_hpa_tftp_server() {
+    local client="$1"
+    local server_pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+    # --foreground --address 127.0.0.1:9000 does not work 
+    # echo TFTPD_ARGS="--secure --create -vvv /tmp" > /etc/conf.d/tftpd
+
+    sudo rm -f /tmp/100M
+    
+    head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
+
+    sudo systemctl start tftpd 
+
+    $client send 127.0.0.1:69 $TEST_DIR/client/samples/100M --allow-server-port-change
+    $client receive 127.0.0.1:69 100M --max-file-size 104857600 --local-path $TEST_DIR/delete/100M --allow-server-port-change
+
+    sudo systemctl stop tftpd 
+}
+
+test_bin() {
+    cargo test -p tftp-binary
+    cargo test -p tftp-binary --no-default-features --features std
+    cargo test -p tftp-binary --no-default-features --features alloc
+    cargo test -p tftp-binary --no-default-features --features encryption
+    cargo test -p tftp-binary --no-default-features --features std,alloc
+    cargo test -p tftp-binary --no-default-features --features alloc,encryption
+    cargo test -p tftp-binary --no-default-features --features std,encryption
+    cargo test -p tftp-binary --no-default-features
+}
+
+
+test_lib() {
+    cargo test -p tftp
+    cargo test -p tftp --no-default-features --features std
+    cargo test -p tftp --no-default-features --features alloc
+    cargo test -p tftp --no-default-features --features encryption
+    cargo test -p tftp --no-default-features --features std,alloc
+    cargo test -p tftp --no-default-features --features alloc,encryption
+    cargo test -p tftp --no-default-features --features std,encryption
+    cargo test -p tftp --no-default-features
+}
+
+build_debug_targets() {
+    cargo build -p tftp-binary
+    cp ./target/debug/tftp ./target/tftp
+
+    cargo build -p tftp-binary --no-default-features --features encryption
+    cp ./target/debug/tftp ./target/tftp-stack-encryption
+
+    cargo build -p tftp-binary --no-default-features --features alloc
+    cp ./target/debug/tftp ./target/tftp-alloc
+
+    cargo build -p tftp-binary --no-default-features
+    cp ./target/debug/tftp ./target/tftp-stack
+}
+
+test_all() {
+    local encryption_targets=(./target/tftp ./target/tftp-stack-encryption)
+    local non_encryption_targets=(./target/tftp-alloc ./target/tftp-stack)
+
+    build_debug_targets
+
+    test_lib
+    test_bin
+    for server in ${encryption_targets[@]}; do
+        for client in ${encryption_targets[@]}; do
+            test_full_config $server $client
+            test_large_files $server $client 1
+            test_large_files $server $client 4
+            test_high_load $server $client 1
+            test_high_load $server $client 4
+            test_encryption_level $server $client
+            test_encryption_authorized_only $server $client
+            test_standard_tftp $server $client
+        done
+    done
+
+    for server in ${non_encryption_targets[@]}; do
+        for client in ${non_encryption_targets[@]}; do
+            test_large_files $server $client 4
+            test_high_load $server $client 4
+            test_standard_tftp $server $client
+        done
+    done
+
+    # non encryption server communication with encrypted clients
+    for server in ${non_encryption_targets[@]}; do
+        for client in ${encryption_targets[@]}; do
+            test_encryption_level $server $client
+            test_standard_tftp $server $client
+        done
+    done
+}
+
+$1 "${2:-""}" "${3:-""}" "${4:-""}"
