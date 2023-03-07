@@ -1,6 +1,6 @@
 use core::{ops::Div, time::Duration};
 
-use log::debug;
+use log::{debug, trace};
 
 use crate::{std_compat::time::Instant, time::InstantCallback};
 
@@ -59,18 +59,19 @@ impl RateControl {
         self.current_rtt = (self.instant)();
     }
 
-    pub fn end_rtt(&mut self, block: u16) {
+    pub fn end_rtt(&mut self, block: u16) -> Option<Duration> {
+        let mut elapsed_duration = None;
         if self.rtt_for_packet == block {
+            let elapsed = self.current_rtt.elapsed();
             if self.rtt_estimate == 0.0 {
-                self.rtt_estimate = self.current_rtt.elapsed().as_secs_f64();
+                self.rtt_estimate = elapsed.as_secs_f64();
             } else {
-                self.rtt_estimate = smooth_rtt_estimate(
-                    self.rtt_estimate,
-                    self.current_rtt.elapsed().as_secs_f64(),
-                );
+                self.rtt_estimate = smooth_rtt_estimate(self.rtt_estimate, elapsed.as_secs_f64());
             }
+            elapsed_duration = elapsed.into()
         }
         self.rtt_for_packet = 0;
+        elapsed_duration
     }
 
     pub fn data_sent(&mut self, size: usize) {
@@ -168,34 +169,62 @@ fn average_transmit_rate(
                     * (1_f64 + 32_f64 * loss_event_rate.powf(2.0)))))) as u32
 }
 
-#[test]
-fn test_average_transmit() {
-    let result = average_transmit_rate(0.01, 512_f64, 1_f64, 0_f64, 1_f64);
-    assert_eq!(result, 4294967295);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let result = average_transmit_rate(0.01, 512_f64, 1_f64, 0.001_f64, 1_f64);
-    assert_eq!(result, 1618739);
+    #[cfg(feature = "std")]
+    #[test]
+    fn measure_rtt() {
+        let mut rate = RateControl::new(std::time::Instant::now);
+        rate.start_rtt(1);
+        assert!(rate.rtt_estimate == 0.0);
+        assert!(rate.end_rtt(1).is_some());
+        assert!(rate.end_rtt(1).is_none());
+        assert!(rate.rtt_estimate > 0.0);
 
-    let result = average_transmit_rate(0.01, 512_f64, 8_f64, 0.001_f64, 1_f64);
-    assert_eq!(result, 572310);
-}
+        rate.start_rtt(2);
+        assert!(rate.end_rtt(1).is_none());
 
-#[test]
-fn test_packets_to_send() {
-    assert_eq!(446, packets_to_send(572310, 200, 512));
-    assert_eq!(1264, packets_to_send(1618739, 200, 512));
-    // send 1677721 packets * 512 / 1024 / 1024 = 819Mb in 200ms
-    assert_eq!(1677721 * 2, packets_to_send(4294967295, 200, 512));
-    assert_eq!(4294967295, packets_to_send(0, 200, 512));
-    assert_eq!(1, packets_to_send(1, 200, 512));
-    assert_eq!(1, packets_to_send(128, 200, 512));
-    assert_eq!(6, packets_to_send(10000, 200, 512));
-}
+        rate.start_rtt(2);
+        assert!(rate.end_rtt(3).is_none());
+        assert!(rate.end_rtt(2).is_none());
 
-#[test]
-fn test_smooth_rrt_estimate() {
-    assert_eq!(0.275, smooth_rtt_estimate(0.25, 0.5));
-    assert_eq!(0.55, smooth_rtt_estimate(0.5, 1.0));
-    assert_eq!(0.46, smooth_rtt_estimate(0.5, 0.1));
-    assert_eq!(0.45, smooth_rtt_estimate(0.5, 0.0));
+        let current = rate.rtt_estimate;
+        rate.start_rtt(8);
+        assert!(rate.end_rtt(8).is_some());
+        assert!(rate.rtt_estimate != current);
+    }
+
+    #[test]
+    fn test_average_transmit() {
+        let result = average_transmit_rate(0.01, 512_f64, 1_f64, 0_f64, 1_f64);
+        assert_eq!(result, 4294967295);
+
+        let result = average_transmit_rate(0.01, 512_f64, 1_f64, 0.001_f64, 1_f64);
+        assert_eq!(result, 1618739);
+
+        let result = average_transmit_rate(0.01, 512_f64, 8_f64, 0.001_f64, 1_f64);
+        assert_eq!(result, 572310);
+    }
+
+    #[test]
+    fn test_packets_to_send() {
+        assert_eq!(446, packets_to_send(572310, 200, 512));
+        assert_eq!(1264, packets_to_send(1618739, 200, 512));
+        // send 1677721 packets * 512 / 1024 / 1024 = 819Mb in 200ms
+        assert_eq!(1677721 * 2, packets_to_send(4294967295, 200, 512));
+        assert_eq!(4294967295, packets_to_send(0, 200, 512));
+        assert_eq!(1, packets_to_send(1, 200, 512));
+        assert_eq!(1, packets_to_send(128, 200, 512));
+        assert_eq!(6, packets_to_send(10000, 200, 512));
+    }
+
+    #[test]
+    fn test_smooth_rrt_estimate() {
+        assert_eq!(0.275, smooth_rtt_estimate(0.25, 0.5));
+        assert_eq!(0.55, smooth_rtt_estimate(0.5, 1.0));
+        assert_eq!(0.46, smooth_rtt_estimate(0.5, 0.1));
+        assert_eq!(0.45, smooth_rtt_estimate(0.5, 0.0));
+    }
 }

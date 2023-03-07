@@ -3,7 +3,7 @@ use std::{fs::File, path::PathBuf};
 use tftp::{
     config::{ConnectionOptions, MAX_EXTENSION_VALUE_SIZE},
     encryption::{decode_private_key, PrivateKey},
-    error::{BoxedResult, EncryptionError},
+    error::{BoxedResult, EncryptionError, FileError},
     server::ServerConfig,
     std_compat::io,
     types::FilePath,
@@ -28,32 +28,63 @@ pub fn create_server_reader(
     path: &FilePath,
     config: &ServerConfig,
 ) -> BoxedResult<(Option<u64>, StdCompatFile)> {
+    use std::fs::canonicalize;
     let dir: PathBuf = config.directory.as_str().parse()?;
     let path = dir.join(path.as_str());
-    create_reader(&std_into_path(path))
+    let real_dir = canonicalize(dir);
+    let real_path = canonicalize(path);
+    if let (Ok(d), Ok(p)) = (real_dir, real_path) {
+        if p.starts_with(d) {
+            return create_reader(&std_into_path(p));
+        }
+    }
+    Err(FileError::InvalidFileName.into())
 }
 
 pub fn create_server_writer(path: &FilePath, config: &ServerConfig) -> BoxedResult<StdCompatFile> {
-    use std::fs::{create_dir_all, OpenOptions};
+    use std::fs::{canonicalize, create_dir_all, OpenOptions};
     // TODO alloc in stack PathBuf
     let dir: PathBuf = config.directory.as_str().parse()?;
     let path: PathBuf = dir.join(path.as_str());
+    if !path.starts_with(&dir) {
+        return Err(FileError::InvalidFileName.into());
+    }
     if let Some(dir) = path.parent() {
         if !dir.is_dir() {
             create_dir_all(dir).map_err(from_io_err)?
         }
     };
-    let mut options = OpenOptions::new();
-    if config.allow_overwrite {
-        options.write(true).create(true).truncate(true)
-    } else {
-        options.write(true).create_new(true)
-    };
-    let file = options.open(path).map_err(from_io_err)?;
-    #[cfg(not(feature = "std"))]
-    let file = StdCompatFile(file);
 
-    Ok(file)
+    let file = if config.allow_overwrite {
+        let mut options = OpenOptions::new();
+        // while path is not resolved do not truncate, but create if it does not exist
+        options.write(true).create(true);
+        options.open(&path).map_err(from_io_err)?
+    } else {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        options.open(&path).map_err(from_io_err)?
+    };
+
+    let real_dir = canonicalize(dir);
+    let real_path = canonicalize(path);
+    if let (Ok(d), Ok(p)) = (real_dir, real_path) {
+        if p.starts_with(d) {
+            if config.allow_overwrite {
+                drop(file);
+                let mut options = OpenOptions::new();
+                options.write(true).create(true).truncate(true);
+                let file = options.open(&p).map_err(from_io_err)?;
+                #[cfg(not(feature = "std"))]
+                let file = StdCompatFile(file);
+                return Ok(file);
+            }
+            #[cfg(not(feature = "std"))]
+            let file = StdCompatFile(file);
+            return Ok(file);
+        }
+    }
+    Err(FileError::InvalidFileName.into())
 }
 
 #[allow(dead_code)]
@@ -104,7 +135,8 @@ impl io::Write for StdCompatFile {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        use std::io::Write;
+        self.0.flush().map_err(from_io_err)
     }
 }
 

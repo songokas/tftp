@@ -5,10 +5,10 @@ use clap::{Parser, Subcommand};
 use tftp::{
     client::ClientConfig,
     config::{
-        DEFAULT_DATA_BLOCK_SIZE, DEFAULT_WINDOW_SIZE, EXTENSION_BLOCK_SIZE_MIN,
-        EXTENSION_TIMEOUT_SIZE_MAX, EXTENSION_TIMEOUT_SIZE_MIN, EXTENSION_WINDOW_SIZE_MIN,
-        MAX_BLOCKS_READER, MAX_BLOCKS_WRITER, MAX_CLIENTS, MAX_DATA_BLOCK_SIZE,
-        RETRY_PACKET_TIMEOUT,
+        DEFAULT_DATA_BLOCK_SIZE, DEFAULT_RETRY_PACKET_TIMEOUT, DEFAULT_WINDOW_SIZE,
+        EXTENSION_BLOCK_SIZE_MIN, EXTENSION_TIMEOUT_SIZE_MAX, EXTENSION_TIMEOUT_SIZE_MIN,
+        EXTENSION_WINDOW_SIZE_MIN, MAX_BLOCKS_READER, MAX_BLOCKS_WRITER, MAX_CLIENTS,
+        MAX_DATA_BLOCK_SIZE,
     },
     encryption::{decode_private_key, decode_public_key},
     error::BoxedError,
@@ -53,9 +53,9 @@ pub struct ClientCliConfig {
 
     #[arg(
         long,
-        default_value_t = RETRY_PACKET_TIMEOUT.as_secs(),
+        default_value_t = DEFAULT_RETRY_PACKET_TIMEOUT.as_millis() as u64,
         value_parser = clap::value_parser!(u64).range((EXTENSION_TIMEOUT_SIZE_MIN as u64)..(EXTENSION_TIMEOUT_SIZE_MAX as u64)),
-        help = "Resend packet after timeout. default: 1 second"
+        help = "Resend packet after timeout in ms. default: 80ms"
     )]
     pub retry_timeout: u64,
 

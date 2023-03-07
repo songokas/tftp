@@ -104,7 +104,7 @@ where
 
     let options = ConnectionOptions {
         block_size: config.block_size as u16,
-        retry_packet_after_timeout: Duration::from_secs(config.retry_timeout),
+        retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
         file_size: None,
         encryption_keys: None,
         #[cfg(feature = "encryption")]
@@ -164,7 +164,7 @@ where
     let socket = create_socket(&config.listen, 1).map_err(|e| BinError::from(e.to_string()))?;
     let options = ConnectionOptions {
         block_size: config.block_size as u16,
-        retry_packet_after_timeout: Duration::from_secs(config.retry_timeout),
+        retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
         file_size: Some(0),
         encryption_keys: None,
         #[cfg(feature = "encryption")]
@@ -487,7 +487,7 @@ mod tests {
             listen: "127.0.0.1:0".parse().unwrap(),
             request_timeout: 1000,
             block_size: 100,
-            retry_timeout: 1,
+            retry_timeout: 1000,
             max_file_size: 2000,
             #[cfg(feature = "encryption")]
             private_key,
@@ -521,7 +521,7 @@ mod tests {
             listen: "127.0.0.1:0".parse().unwrap(),
             request_timeout: 1000,
             block_size: 100,
-            retry_timeout: 1,
+            retry_timeout: 1000,
             max_file_size: 2000,
             #[cfg(feature = "encryption")]
             private_key,

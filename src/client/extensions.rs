@@ -4,9 +4,9 @@ use log::{debug, error};
 
 use crate::{
     config::{
-        ConnectionOptions, DEFAULT_DATA_BLOCK_SIZE, ENCRYPTION_TAG_SIZE, EXTENSION_BLOCK_SIZE_MIN,
-        EXTENSION_TIMEOUT_SIZE_MAX, EXTENSION_TIMEOUT_SIZE_MIN, EXTENSION_WINDOW_SIZE_MIN,
-        RETRY_PACKET_TIMEOUT,
+        ConnectionOptions, DEFAULT_DATA_BLOCK_SIZE, DEFAULT_RETRY_PACKET_TIMEOUT,
+        ENCRYPTION_TAG_SIZE, EXTENSION_BLOCK_SIZE_MIN, EXTENSION_TIMEOUT_SIZE_MAX,
+        EXTENSION_TIMEOUT_SIZE_MIN, EXTENSION_WINDOW_SIZE_MIN,
     },
     encryption::*,
     error::ExtensionError,
@@ -49,7 +49,9 @@ pub fn create_extensions(options: &ConnectionOptions) -> PacketExtensions {
         );
     }
 
-    if options.retry_packet_after_timeout != RETRY_PACKET_TIMEOUT {
+    if options.retry_packet_after_timeout != DEFAULT_RETRY_PACKET_TIMEOUT
+        && options.retry_packet_after_timeout.as_secs() >= EXTENSION_TIMEOUT_SIZE_MIN as u64
+    {
         extensions.insert(
             Extension::Timeout,
             format_str!(
@@ -146,7 +148,7 @@ pub fn parse_extensions(
             return Err(ExtensionError::InvalidExtension(Extension::Timeout));
         }
     } else {
-        options.retry_packet_after_timeout = RETRY_PACKET_TIMEOUT;
+        options.retry_packet_after_timeout = DEFAULT_RETRY_PACKET_TIMEOUT;
     }
 
     if let Some(tsize) = extensions.get(&Extension::TransferSize) {

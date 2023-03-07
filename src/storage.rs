@@ -409,7 +409,7 @@ where
     fn free_block(&mut self, block: u16) -> usize {
         let index = self.block_mapper.index(block);
 
-        if index > self.current_block_read {
+        if index > self.current_block_read && !self.blocks.contains_key(&index) {
             return 0;
         }
         let mut size = 0;
@@ -422,8 +422,9 @@ where
                     size += self.blocks.remove(&b).map(|t| t.size).unwrap_or(0);
                 }
                 self.start_window = index + 1;
+                self.current_block_read = index;
                 if !self.file_reading_finished {
-                    self.end_window = self.start_window + self.window_size as u64 - 1;
+                    self.end_window = self.current_block_read + self.window_size as u64;
                 }
             };
         }
@@ -881,8 +882,9 @@ mod tests {
         assert_eq!(size, 0, "{:?}", block_reader);
         let size = block_reader.free_block(4);
         assert_eq!(size, 20, "{:?}", block_reader);
-        let result = block_reader.next().unwrap();
-        assert!(result.is_none(), "{:?}", block_reader);
+        // block starts from next
+        let block = block_reader.next().unwrap().unwrap();
+        assert_eq!(block.block, 5);
 
         let size = block_reader.free_block(6);
         assert_eq!(size, 20, "{:?}", block_reader);

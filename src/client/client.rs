@@ -3,7 +3,7 @@ use core::{
     time::Duration,
 };
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use rand::{CryptoRng, RngCore};
 
 use super::extensions::{create_extensions, parse_extensions, validate_extensions};
@@ -122,15 +122,20 @@ where
     );
 
     let mut timeout = instant();
+    let mut last_sent = instant();
+    let mut last_received = instant();
+
     let mut total_unconfirmed = 0;
     let mut total_confirmed = 0;
 
     let mut rate_control = RateControl::new(instant);
     let mut stats_print = instant();
     let mut stats_calculate = instant();
+    
     let mut no_work: u8 = 0;
     let mut packets_to_send = u32::MAX;
     let packet_send_window: u32 = 200;
+
 
     loop {
         if stats_calculate.elapsed().as_millis() > packet_send_window as u128 {
@@ -142,7 +147,6 @@ where
             stats_calculate = instant();
             packets_to_send = u32::MAX;
             // rate_control.packets_to_send(packet_send_window, options.block_size as u32);
-            rate_control.print_info();
         }
         if stats_print.elapsed().as_secs() > 2 {
             rate_control.print_info();
@@ -150,31 +154,31 @@ where
         }
 
         if packets_to_send > 0 {
-            if let Some(block) = block_reader.next()? {
-                let data_length = block.data.len();
+            if let Some(data_block) = block_reader.next()? {
+                let data_length = data_block.data.len();
 
-                debug!("Send data block {} data size {}", block.block, data_length);
-                if block.expect_ack {
-                    rate_control.start_rtt(block.block);
+                debug!(
+                    "Send data block {} data size {} ack {}",
+                    data_block.block, data_length, data_block.expect_ack
+                );
+                if data_block.expect_ack {
+                    rate_control.start_rtt(data_block.block);
                 }
-                if block.retry > 0 {
+                if data_block.retry > 0 {
                     rate_control.increment_errors();
                 }
 
                 let data_packet = Packet::Data(DataPacket {
-                    block: block.block,
-                    data: &block.data,
+                    block: data_block.block,
+                    data: &data_block.data,
                 });
                 match socket.send_to(&mut data_packet.to_bytes(), endpoint) {
                     Ok(n) => {
+                        last_sent = instant();
                         no_work = 1;
                         rate_control.data_sent(data_length);
                         total_unconfirmed += data_length;
                         packets_to_send -= 1;
-                        debug!(
-                            "Sent packet size {} total data size {}",
-                            n, total_unconfirmed
-                        );
                     }
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                         no_work = no_work.wrapping_add(1);
@@ -203,12 +207,20 @@ where
         } else {
             None
         };
+
+        debug!(
+            "Last sent {}us Last received {}us waiting {}ms",
+            last_sent.elapsed().as_micros(),
+            last_received.elapsed().as_micros(),
+            wait_for.unwrap_or(Duration::ZERO).as_millis()
+        );
         let length = match socket.recv_from(&mut buffer, wait_for) {
             Ok((n, s)) => {
                 if s != endpoint {
                     continue;
                 }
                 no_work = 1;
+                last_received = instant();
                 n
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -244,7 +256,9 @@ where
                 let data_length = block_reader.free_block(p.block);
 
                 rate_control.data_received(data_length);
-                rate_control.end_rtt(p.block);
+                if let Some(rtt) = rate_control.end_rtt(p.block) {
+                    debug!("Rtt for block {} elapsed {}us", p.block, rtt.as_micros());
+                }
 
                 total_confirmed += data_length;
 

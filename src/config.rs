@@ -47,7 +47,7 @@ pub const MAX_EXTENSION_VALUE_SIZE: u8 = 45;
 pub const MAX_DEFAULT_STRING_SIZE: u8 = 140;
 pub const MAX_FILE_PATH_SIZE: u8 = 150;
 
-pub const RETRY_PACKET_TIMEOUT: Duration = Duration::from_secs(1);
+pub const DEFAULT_RETRY_PACKET_TIMEOUT: Duration = Duration::from_millis(80);
 pub const EXTENSION_WINDOW_SIZE_MIN: u16 = 1;
 // pub const EXTENSION_WINDOW_SIZE_MAX: u16 = 65535;
 pub const EXTENSION_BLOCK_SIZE_MIN: u16 = 8 + ENCRYPTION_TAG_SIZE as u16;
@@ -69,7 +69,7 @@ impl Default for ConnectionOptions {
     fn default() -> Self {
         Self {
             block_size: DEFAULT_DATA_BLOCK_SIZE,
-            retry_packet_after_timeout: RETRY_PACKET_TIMEOUT,
+            retry_packet_after_timeout: DEFAULT_RETRY_PACKET_TIMEOUT,
             file_size: None,
             encryption_keys: None,
             encryption_level: EncryptionLevel::None,
@@ -99,12 +99,12 @@ impl ConnectionOptions {
 
 pub fn print_options(context: &str, options: &ConnectionOptions) {
     debug!(
-        "{} options - block_size: {}, window size: {}, file_size: {} bytes, retry packet: {}s, encryption level: {}, encrypting: {}",
+        "{} options - block_size: {}, window size: {}, file_size: {} bytes, retry packet: {}ms, encryption level: {}, encrypting: {}",
         context,
         options.block_size,
         options.window_size,
         options.file_size.unwrap_or(0),
-        options.retry_packet_after_timeout.as_secs(),
+        options.retry_packet_after_timeout.as_millis(),
         options.encryption_level,
         matches!(
             options.encryption_keys,

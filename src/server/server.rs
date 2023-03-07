@@ -1,6 +1,6 @@
-use core::{cmp::max, mem::size_of_val, time::Duration};
+use core::{cmp::max, fmt::write, mem::size_of_val, time::Duration};
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use rand::{CryptoRng, RngCore};
 
 use crate::{
@@ -114,25 +114,19 @@ where
     let mut timeout_duration = instant();
     let mut last_socket_addr: Option<SocketAddr> = None;
     let mut no_work: u8 = 0;
+    let mut last_received = instant();
     loop {
+        let send_duration = instant();
         if timeout_duration.elapsed() > Duration::from_secs(2) {
             timeout_clients(&mut clients, config.request_timeout);
             timeout_duration = instant();
         }
-        let send_duration = instant();
         let sent = send_data_blocks(&mut clients);
         if sent > 0 {
             no_work = 1;
         } else {
             no_work = no_work.wrapping_add(1);
         }
-
-        debug!(
-            "Total clients {} sent {} packets in {}s",
-            clients.len(),
-            sent,
-            send_duration.elapsed().as_secs_f32()
-        );
 
         #[cfg(feature = "alloc")]
         buffer.resize(max_buffer_size as usize, 0);
@@ -148,9 +142,20 @@ where
         } else {
             None
         };
+
+        trace!(
+            "Total clients {} sent {} packets in {}us waiting {}ms last received {}us",
+            clients.len(),
+            sent,
+            send_duration.elapsed().as_micros(),
+            wait_for.unwrap_or(Duration::ZERO).as_millis(),
+            last_received.elapsed().as_micros(),
+        );
+
         let (mut received_length, from_client) = match socket.recv_from(&mut buffer, wait_for) {
             Ok(n) => {
                 no_work = 1;
+                last_received = instant();
                 n
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -164,6 +169,7 @@ where
                             Ok(n) => {
                                 recv = Some(n);
                                 no_work = 1;
+                                last_received = instant();
                                 break;
                             }
                             _ => continue,
@@ -207,18 +213,20 @@ where
                         let data_length = p.data.len();
 
                         debug!(
-                            "Packet received block {} size {} total {} block size {} from {}",
-                            p.block,
-                            data_length,
-                            connection.transfer,
-                            connection.options.block_size,
-                            from_client
+                            "Packet received block {} size {} total {} from {}",
+                            p.block, data_length, connection.transfer, from_client
                         );
 
+                        let mut write_elapsed = instant();
                         match write_block(&mut connection, p.block, p.data) {
                             Ok(n) if n > 0 => {
                                 connection.last_updated = instant();
                                 connection.transfer += n;
+                                trace!(
+                                    "Block {} written in {}us",
+                                    p.block,
+                                    write_elapsed.elapsed().as_micros()
+                                );
                             }
                             Ok(_) => continue,
                             Err(e) => {

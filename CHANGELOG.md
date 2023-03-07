@@ -4,9 +4,9 @@ All visible changes will be documented here. This project adheres to Semantic Ve
 
 ## [Unreleased]
 
-- Support for c in a library
-- Gracefull handling of socket/sleeps/network delays
-- Pass in sleep function
+- Default retry timeout in milli seconds
+- Secure server directory so that files do not escape provided directory
+- Retry window size from last acknoledged
 
 ## [0.1.0] - 2023-02-15
 

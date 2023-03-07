@@ -223,7 +223,7 @@ set xlabel 'WindowSize'
 set ylabel 'Time'
 set autoscale
 stats '$sender_data' nooutput
-plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$sender_data' with points pointtype 'x' notitle
+plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$sender_data' with lines notitle
 EOF
 
     gnuplot -p <<EOF
@@ -234,7 +234,7 @@ set xlabel 'WindowSize'
 set ylabel 'Time'
 set autoscale
 stats '$receiver_data' nooutput
-plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$receiver_data' with points pointtype 'x' notitle
+plot [:STATS_max_x + 5] [:STATS_max_y + 2] '$receiver_data' with lines notitle
 EOF
 }
 
@@ -243,7 +243,7 @@ plot_queue_size() {
     local receiver_data="$2"
 
     gnuplot -p <<EOF
-set terminal dumb size 120, 30
+set terminal dumb size 90, 30
 set title 'Send 100Mb'
 set xlabel 'QueueSize'
 set ylabel 'Time'
@@ -253,7 +253,7 @@ plot [-10:STATS_max_x + 50] [:STATS_max_y + 2] '$sender_data' with points pointt
 EOF
 
     gnuplot -p <<EOF
-set terminal dumb size 120, 30
+set terminal dumb size 90, 30
 set title 'Receive 100Mb'
 set xlabel 'QueueSize'
 set ylabel 'Time'

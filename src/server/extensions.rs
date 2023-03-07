@@ -73,7 +73,8 @@ pub fn create_options(
 
     if let Some(timeout) = extensions.get(&Extension::Timeout) {
         let client_retry_seconds: u8 = timeout.parse().unwrap_or(0);
-        if (EXTENSION_TIMEOUT_SIZE_MIN..=EXTENSION_TIMEOUT_SIZE_MAX).contains(&client_retry_seconds)
+        if (EXTENSION_TIMEOUT_SIZE_MIN as u64..=config.request_timeout.as_secs())
+            .contains(&(client_retry_seconds as u64))
         {
             options.retry_packet_after_timeout = Duration::from_secs(client_retry_seconds as u64);
             used_extensions.insert(
@@ -267,7 +268,7 @@ mod tests {
             allow_overwrite: false,
             max_queued_blocks_reader: 1,
             max_queued_blocks_writer: 1,
-            request_timeout: Duration::from_millis(1),
+            request_timeout: Duration::from_secs(10),
             max_connections: 1,
             max_file_size: 1,
             max_block_size: 101,
