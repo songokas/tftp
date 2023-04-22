@@ -1,6 +1,6 @@
 use core::{cmp::min, time::Duration};
 
-use log::{debug, error};
+use log::{debug, error, warn};
 use rand::{CryptoRng, RngCore};
 
 use super::{extensions::create_options, validation::validate_request_options};
@@ -17,7 +17,7 @@ use crate::{
         RequestPacket,
     },
     server::ServerConfig,
-    socket::Socket,
+    socket::{BoundSocket, Socket, ToSocketId},
     std_compat::{
         io::{self, Read, Seek, Write},
         net::SocketAddr,
@@ -33,32 +33,34 @@ pub enum ClientType<R, W> {
     Writer(FileWriter<W>),
 }
 
-pub struct Connection<R, W, S> {
-    pub socket: S,
+pub struct Connection<R, W, B> {
+    pub socket: B,
     pub options: ConnectionOptions,
     pub encryptor: Option<Encryptor>,
     pub last_updated: Instant,
     pub transfer: usize,
     pub client_type: ClientType<R, W>,
     pub endpoint: SocketAddr,
+    pub invalid: bool,
 }
 
-impl<R, W, S: Socket> Connection<R, W, S> {
-    pub fn recv_from(
-        &self,
-        buffer: &mut DataBuffer,
-        wait_for: Option<Duration>,
-    ) -> io::Result<(usize, SocketAddr)> {
-        self.socket.recv_from(buffer, wait_for)
+impl<R, W, B: BoundSocket> Connection<R, W, B> {
+    pub fn recv(&self, buffer: &mut DataBuffer, wait_for: Option<Duration>) -> io::Result<usize> {
+        self.socket.recv(buffer, wait_for)
     }
 
-    pub fn receive_packet(&self, _buffer: &mut DataBuffer) -> bool {
+    pub fn decrypt_packet(&self, _buffer: &mut DataBuffer) -> bool {
         #[cfg(feature = "encryption")]
         if let (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) =
             (self.options.encryption_level, &self.encryptor)
         {
             if encryptor.decrypt(_buffer).is_err() {
-                error!("Failed to decrypt packet {:x?}", &_buffer);
+                debug!(
+                    "Failed to decrypt packet from {} {} {:x?}",
+                    self.endpoint,
+                    &_buffer.len(),
+                    &_buffer
+                );
                 return false;
             }
         }
@@ -69,21 +71,26 @@ impl<R, W, S: Socket> Connection<R, W, S> {
             self.options.encryption_level,
             &self.encryptor,
         ) {
-            if let Err(_) = overwrite_data_packet(_buffer, |buf| encryptor.decrypt(buf)) {
-                error!("Failed to decrypt data {:x?}", &_buffer);
+            if overwrite_data_packet(_buffer, |buf| encryptor.decrypt(buf)).is_err() {
+                debug!(
+                    "Failed to decrypt data from {} {} {:x?}",
+                    self.endpoint,
+                    &_buffer.len(),
+                    &_buffer
+                );
                 return false;
             }
         }
 
-        return true;
+        true
     }
 
     pub fn send_packet(&self, packet: Packet) -> bool {
         let packet_name = packet.packet_type();
         match &packet {
-            Packet::Data(d) => debug!("Send {} {} {}", packet_name, d.block, self.endpoint),
-            Packet::Ack(d) => debug!("Send {} {} {}", packet_name, d.block, self.endpoint),
-            _ => debug!("Send {} {}", packet_name, self.endpoint),
+            Packet::Data(d) => debug!("Send {} {} to {}", packet_name, d.block, self.endpoint),
+            Packet::Ack(d) => debug!("Send {} {} to {}", packet_name, d.block, self.endpoint),
+            _ => debug!("Send {} to {}", packet_name, self.endpoint),
         };
 
         let mut data = packet.to_bytes();
@@ -106,8 +113,8 @@ impl<R, W, S: Socket> Connection<R, W, S> {
                 return false;
             }
         }
-        if let Err(e) = self.socket.send_to(&mut data, self.endpoint) {
-            error!("Failed to send {} for {} {}", packet_name, self.endpoint, e);
+        if let Err(e) = self.socket.send(&mut data) {
+            error!("Failed to send {} to {} {}", packet_name, self.endpoint, e);
             return false;
         }
         true
@@ -206,21 +213,23 @@ impl<'a> ConnectionBuilder<'a> {
         Ok(())
     }
 
-    pub(crate) fn build_writer<W, CreateWriter, R, CreateSocket, S>(
+    pub fn build_writer<W, CreateWriter, R, CreateBoundSocket, S, B>(
         mut self,
         socket: &S,
         client: SocketAddr,
         create_writer: &CreateWriter,
-        create_socket: &CreateSocket,
+        create_bound_socket: &CreateBoundSocket,
         instant: fn() -> Instant,
-    ) -> BoxedResult<(Connection<R, W, S>, PacketExtensions, Option<FinalizedKeys>)>
+        socket_id: usize,
+    ) -> ConnectionResult<R, W, B>
     where
         S: Socket,
+        B: BoundSocket + ToSocketId,
         W: Write + Seek,
-        CreateSocket: Fn(&str, usize) -> BoxedResult<S>,
+        CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
         CreateWriter: Fn(&FilePath, &ServerConfig) -> BoxedResult<W>,
     {
-        let file_name = self.file_name.ok_or_else(|| FileError::InvalidFileName)?;
+        let file_name = self.file_name.ok_or(FileError::InvalidFileName)?;
         let (encryptor, finalized_keys) = if self.options.encryption_level != EncryptionLevel::Full
         {
             (None, self.finalized_keys.take())
@@ -249,12 +258,27 @@ impl<'a> ConnectionBuilder<'a> {
                 return Err(e);
             }
         };
-        let new_socket = if self.config.require_server_port_change {
-            let listen = format_str!(DefaultString, "{}:{}", self.config.listen.ip(), 0);
-            create_socket(&listen, 0)?
+        let listen = if self.config.require_server_port_change {
+            format_str!(DefaultString, "{}:{}", self.config.listen.ip(), 0)
         } else {
-            socket.try_clone()?
+            format_str!(
+                DefaultString,
+                "{}:{}",
+                self.config.listen.ip(),
+                self.config.listen.port()
+            )
         };
+        let new_socket = match create_bound_socket(&listen, socket_id, client) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to create socket {}", e);
+                return Err(e);
+            }
+        };
+        #[cfg(not(feature = "multi_thread"))]
+        if let Err(_) = socket.add_interest(&new_socket) {
+            warn!("Unable to add socket {} to epoll", new_socket.socket_id());
+        }
         Ok((
             Connection {
                 socket: new_socket,
@@ -269,27 +293,30 @@ impl<'a> ConnectionBuilder<'a> {
                 options: self.options,
                 endpoint: client,
                 encryptor,
+                invalid: false,
             },
             self.used_extensions,
             finalized_keys,
         ))
     }
 
-    pub fn build_reader<R, CreateReader, W, CreateSocket, S>(
+    pub fn build_reader<R, CreateReader, W, CreateBoundSocket, S, B>(
         mut self,
         socket: &S,
         client: SocketAddr,
         create_reader: &CreateReader,
-        create_socket: &CreateSocket,
+        create_bound_socket: &CreateBoundSocket,
         instant: fn() -> Instant,
-    ) -> BoxedResult<(Connection<R, W, S>, PacketExtensions, Option<FinalizedKeys>)>
+        socket_id: usize,
+    ) -> ConnectionResult<R, W, B>
     where
         S: Socket,
-        CreateSocket: Fn(&str, usize) -> BoxedResult<S>,
+        B: BoundSocket + ToSocketId,
+        CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
         R: Read + Seek,
         CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
     {
-        let file_name = self.file_name.ok_or_else(|| FileError::InvalidFileName)?;
+        let file_name = self.file_name.ok_or(FileError::InvalidFileName)?;
         let (encryptor, finalized_keys) = if self.options.encryption_level != EncryptionLevel::Full
         {
             (None, self.finalized_keys.take())
@@ -304,7 +331,7 @@ impl<'a> ConnectionBuilder<'a> {
             &self.used_extensions,
             self.config,
         )?;
-        let (transfer_size, reader) = match create_reader(&file_path, &self.config) {
+        let (transfer_size, reader) = match create_reader(&file_path, self.config) {
             Ok(f) => f,
             Err(e) => {
                 error!("Failed to open file {} {}", file_path, e);
@@ -336,16 +363,30 @@ impl<'a> ConnectionBuilder<'a> {
             reader,
             self.config.max_queued_blocks_reader,
             self.options.block_size,
-            self.options.retry_packet_after_timeout,
             instant,
             self.options.window_size,
         );
-        let new_socket = if self.config.require_server_port_change {
-            let listen = format_str!(DefaultString, "{}:{}", self.config.listen.ip(), 0);
-            create_socket(&listen, 0)?
+        let listen = if self.config.require_server_port_change {
+            format_str!(DefaultString, "{}:{}", self.config.listen.ip(), 0)
         } else {
-            socket.try_clone()?
+            format_str!(
+                DefaultString,
+                "{}:{}",
+                self.config.listen.ip(),
+                self.config.listen.port()
+            )
         };
+        let new_socket = match create_bound_socket(&listen, socket_id, client) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to create socket {}", e);
+                return Err(e);
+            }
+        };
+        #[cfg(not(feature = "multi_thread"))]
+        if let Err(_) = socket.add_interest(&new_socket) {
+            warn!("Unable to add socket {} to epoll", new_socket.socket_id());
+        }
         Ok((
             Connection {
                 socket: new_socket,
@@ -355,6 +396,7 @@ impl<'a> ConnectionBuilder<'a> {
                 endpoint: client,
                 encryptor,
                 last_updated: instant(),
+                invalid: false,
             },
             self.used_extensions,
             finalized_keys,
@@ -406,3 +448,6 @@ fn handle_encrypted(
         remote_key,
     )))
 }
+
+type ConnectionResult<R, W, B> =
+    BoxedResult<(Connection<R, W, B>, PacketExtensions, Option<FinalizedKeys>)>;

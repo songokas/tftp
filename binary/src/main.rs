@@ -23,8 +23,10 @@ use tftp::{
     error::{BoxedResult, EncryptionError},
     key_management::{append_to_known_hosts, get_from_known_hosts},
     server::server,
+    socket::Socket,
     std_compat::{
         io::{Read, Seek, Write},
+        net::SocketAddr,
         time::Instant,
     },
     types::FilePath,
@@ -51,12 +53,14 @@ fn main() -> BinResult<()> {
             remote_path,
             max_blocks_in_queue,
             config,
+            ignore_rate_control,
         } => start_send(
             local_path,
             remote_path,
             config,
             max_blocks_in_queue as u16,
             create_reader,
+            ignore_rate_control,
         )
         .map(|_| ()),
 
@@ -75,11 +79,13 @@ fn main() -> BinResult<()> {
         .map(|_| ()),
         Commands::Server(config) => {
             let config = config.try_into()?;
+            // init_logger(config.listen);
             server(
                 config,
                 create_server_reader,
                 create_server_writer,
                 create_socket,
+                create_bound_socket,
                 instant_callback,
                 OsRng,
             )
@@ -94,13 +100,15 @@ fn start_send<CreateReader, R>(
     config: ClientCliConfig,
     max_blocks_in_queue: u16,
     create_reader: CreateReader,
+    ignore_rate_control: bool,
 ) -> BinResult<usize>
 where
     R: Read + Seek,
     CreateReader: Fn(&FilePath) -> BoxedResult<(Option<u64>, R)>,
 {
-    let socket =
-        create_socket(config.listen.as_str(), 1).map_err(|e| BinError::from(e.to_string()))?;
+    let socket = create_socket(config.listen.as_str(), 1, false)
+        .map_err(|e| BinError::from(e.to_string()))?;
+    // init_logger(socket.local_addr().expect("local address"));
 
     let options = ConnectionOptions {
         block_size: config.block_size as u16,
@@ -126,7 +134,7 @@ where
         Some(p) => p,
         None => Path::new(local_path.as_str())
             .file_name()
-            .ok_or_else(|| "Invalid local filename")?
+            .ok_or("Invalid local filename")?
             .to_string_lossy()
             .parse()
             .expect("Invalid local file name"),
@@ -140,10 +148,11 @@ where
         socket,
         instant_callback,
         OsRng,
+        ignore_rate_control,
     )
     .map(|(total, _remote_key)| {
         debug!("Client total sent {}", total);
-        let file = known_hosts_file.as_ref().map(|s| s.as_str());
+        let file = known_hosts_file.as_deref();
         handle_hosts_file(file, _remote_key, &endpoint);
         total
     })
@@ -161,7 +170,10 @@ where
     W: Write + Seek,
     CreateWriter: Fn(&FilePath) -> BoxedResult<W>,
 {
-    let socket = create_socket(&config.listen, 1).map_err(|e| BinError::from(e.to_string()))?;
+    let socket =
+        create_socket(&config.listen, 1, false).map_err(|e| BinError::from(e.to_string()))?;
+    // init_logger(socket.local_addr().expect("local address"));
+
     let options = ConnectionOptions {
         block_size: config.block_size as u16,
         retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
@@ -187,7 +199,7 @@ where
         Some(p) => p,
         None => Path::new(remote_path.as_str())
             .file_name()
-            .ok_or_else(|| "Invalid remote file name")?
+            .ok_or("Invalid remote file name")?
             .to_string_lossy()
             .parse()
             .expect("Invalid remote file name"),
@@ -204,7 +216,7 @@ where
     )
     .map(|(total, _remote_key)| {
         debug!("Client total received {}", total);
-        let file = known_hosts_file.as_ref().map(|s| s.as_str());
+        let file = known_hosts_file.as_deref();
         handle_hosts_file(file, _remote_key, &endpoint);
         total
     })
@@ -252,6 +264,24 @@ fn handle_hosts_file(
     };
 }
 
+#[allow(dead_code)]
+fn init_logger(local_addr: SocketAddr) {
+    use std::io::Write;
+    // builder using box
+    Builder::from_env(Env::default().default_filter_or("debug"))
+        .format(move |buf, record| {
+            writeln!(
+                buf,
+                "[{local_addr} {} {}]: {}",
+                record.level(),
+                buf.timestamp_micros(),
+                record.args()
+            )
+        })
+        .try_init()
+        .unwrap_or_default();
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -279,6 +309,7 @@ mod tests {
     #[cfg(feature = "encryption")]
     #[test]
     fn test_client_full_encryption() {
+        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
         let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
         let key: [u8; 32] = bytes.try_into().unwrap();
         let server_private_key: PrivateKey = key.into();
@@ -367,7 +398,9 @@ mod tests {
 
     #[test]
     fn test_client_no_encryption() {
-        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+        //     .format_timestamp_micros()
+        //     .init();
         client_send(EncryptionLevel::None, None, None, None);
         client_receive(EncryptionLevel::None, None, None, None);
     }
@@ -401,7 +434,7 @@ mod tests {
         #[cfg(feature = "encryption")]
         let client_private_key = _client_private_key
             .as_ref()
-            .map(|k| encode_private_key(&k).unwrap());
+            .map(|k| encode_private_key(k).unwrap());
         let client = {
             let d = bytes.clone();
             spawn(move || {
@@ -453,7 +486,7 @@ mod tests {
         #[cfg(feature = "encryption")]
         let client_private_key = _client_private_key
             .as_ref()
-            .map(|k| encode_private_key(&k).unwrap());
+            .map(|k| encode_private_key(k).unwrap());
         let client = {
             let d = expected_data.clone();
             spawn(move || {
@@ -470,7 +503,7 @@ mod tests {
             })
         };
         let result = client.join().unwrap();
-        assert!(result.is_ok(), "{:?}", result);
+        assert!(result.is_ok(), "{result:?}");
         assert_eq!(result.unwrap(), expected_size);
         assert_eq!(&bytes, expected_data.lock().unwrap().get_ref());
     }
@@ -483,7 +516,7 @@ mod tests {
         #[cfg(feature = "encryption")] private_key: Option<ShortString>,
     ) -> BinResult<usize> {
         let cli_config = ClientCliConfig {
-            endpoint: format!("127.0.0.1:{}", server_port).parse().unwrap(),
+            endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
             listen: "127.0.0.1:0".parse().unwrap(),
             request_timeout: 1000,
             block_size: 100,
@@ -506,7 +539,7 @@ mod tests {
         let create_reader =
             |_path: &FilePath| Ok((Some(bytes.len() as u64), CursorReader::new(bytes.clone())));
 
-        start_send(local_file, remote_file, cli_config, 4, create_reader)
+        start_send(local_file, remote_file, cli_config, 4, create_reader, false)
     }
 
     fn start_receive_file(
@@ -517,7 +550,7 @@ mod tests {
         #[cfg(feature = "encryption")] private_key: Option<ShortString>,
     ) -> BinResult<usize> {
         let cli_config = ClientCliConfig {
-            endpoint: format!("127.0.0.1:{}", server_port).parse().unwrap(),
+            endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
             listen: "127.0.0.1:0".parse().unwrap(),
             request_timeout: 1000,
             block_size: 100,
@@ -549,7 +582,7 @@ mod tests {
         private_key: Option<PrivateKey>,
         authorized_keys: Option<AuthorizedKeys>,
     ) -> DefaultBoxedResult {
-        let listen: std::net::SocketAddr = format!("127.0.0.1:{}", server_port).parse().unwrap();
+        let listen: std::net::SocketAddr = format!("127.0.0.1:{server_port}").parse().unwrap();
         #[cfg(not(feature = "std"))]
         let listen = std_to_socket_addr(listen);
         let config = ServerConfig {
@@ -558,7 +591,7 @@ mod tests {
             allow_overwrite: false,
             max_queued_blocks_reader: 4,
             max_queued_blocks_writer: 4,
-            request_timeout: Duration::from_millis(100),
+            request_timeout: Duration::from_millis(1000),
             max_connections: 10,
             max_file_size: 2000,
             max_block_size: MAX_DATA_BLOCK_SIZE,
@@ -583,6 +616,7 @@ mod tests {
             create_reader,
             create_writer,
             create_socket,
+            create_bound_socket,
             instant_callback,
             OsRng,
         )

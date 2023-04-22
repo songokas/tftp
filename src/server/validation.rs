@@ -57,7 +57,7 @@ pub fn validate_request_options(
         Err(e) => {
             let packet = Packet::Error(e);
             socket.send_to(&mut packet.to_bytes(), client)?;
-            return Err(FileError::InvalidFileName.into());
+            Err(FileError::InvalidFileName.into())
         }
     }
 }

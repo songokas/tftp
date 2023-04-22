@@ -91,7 +91,7 @@ pub fn append_to_known_hosts(
     file.write_fmt(format_args!(
         "\n{} {}\n",
         endpoint,
-        encode_public_key(&public_key)?
+        encode_public_key(public_key)?
     ))?;
     Ok(())
 }

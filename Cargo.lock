@@ -865,6 +865,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "socket2"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc8d618c6641ae355025c449427f9e96b98abf99a772be3cef6708d15c77147a"
+dependencies = [
+ "libc",
+ "windows-sys 0.45.0",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -950,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "tftp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec",
  "base64",
@@ -965,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "tftp-binary"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cargo-deb",
  "clap",
@@ -973,6 +983,7 @@ dependencies = [
  "log",
  "polling",
  "rand",
+ "socket2",
  "tftp",
 ]
 

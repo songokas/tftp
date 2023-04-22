@@ -88,10 +88,10 @@ test_high_load() {
         head -c 1M /dev/urandom > $TEST_DIR/server/samples/$i
     done;
     for ((i=1;i<=size;i++)); do
-        $client send 127.0.0.1:9000 $TEST_DIR/client/samples/$i --window-size $window_size & pids+=($!)
+        $client send 127.0.0.1:9000 $TEST_DIR/client/samples/$i --listen 127.0.0.1:0 --window-size $window_size & pids+=($!)
     done
     for ((i=size+1;i<=max_size;i++)); do
-        $client receive 127.0.0.1:9000 $i --window-size $window_size --local-path $TEST_DIR/delete/$i & pids+=($!)
+        $client receive 127.0.0.1:9000 $i --window-size $window_size --listen 127.0.0.1:0 --local-path $TEST_DIR/delete/$i & pids+=($!)
     done
     time wait "${pids[@]}"
 

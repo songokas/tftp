@@ -80,7 +80,7 @@ pub fn create_extensions(options: &ConnectionOptions) -> PacketExtensions {
     if options.encryption_level != EncryptionLevel::None {
         match (&options.encryption_keys, options.encryption_level) {
             (Some(EncryptionKeys::ClientKey(s)), l) => {
-                let value = encode_public_key(&s).expect("invalid key");
+                let value = encode_public_key(s).expect("invalid key");
                 extensions.insert(Extension::PublicKey, value);
                 extensions.insert(Extension::Nonce, "0".parse().expect("convert to string"));
                 extensions.insert(
@@ -97,7 +97,7 @@ pub fn create_extensions(options: &ConnectionOptions) -> PacketExtensions {
                         | EncryptionLevel::OptionalProtocol
                 ) =>
             {
-                let value = encode_public_key(&local).expect("invalid key");
+                let value = encode_public_key(local).expect("invalid key");
                 extensions.insert(Extension::PublicKey, value);
                 extensions.insert(Extension::Nonce, "0".parse().expect("convert to string"));
                 extensions.insert(
@@ -195,15 +195,13 @@ pub fn parse_extensions(
         if matches!(
             _expected_encryption_level,
             EncryptionLevel::Data | EncryptionLevel::Protocol
+        ) && !matches!(
+            options.encryption_level,
+            EncryptionLevel::Data | EncryptionLevel::Protocol
         ) {
-            if !matches!(
+            return Err(ExtensionError::ClientRequiredEncryption(
                 options.encryption_level,
-                EncryptionLevel::Data | EncryptionLevel::Protocol
-            ) {
-                return Err(ExtensionError::ClientRequiredEncryption(
-                    options.encryption_level,
-                ));
-            }
+            ));
         }
     }
     Ok(options)

@@ -97,7 +97,10 @@ where
         }
         let index = self.block_mapper.index(block);
         if index <= self.current_block_written {
-            return Err(StorageError::AlreadyWriten);
+            return Err(StorageError::ExpectedBlock((
+                self.block_mapper.block(self.current_block_written + 1),
+                self.block_mapper.block(self.current_block_written),
+            )));
         }
 
         if self.window_size > 1 && index > self.current_block_written + 1 {
@@ -197,7 +200,7 @@ where
 
 /// Since not all packet are received/acknowledged this serves as a repeater
 pub trait BlockReader {
-    fn next(&mut self) -> Result<Option<Block>, StorageError>;
+    fn next(&mut self, retry_timeout: Duration) -> Result<Option<Block>, StorageError>;
     /// release block returning data size released
     fn free_block(&mut self, block: u16) -> usize;
     fn is_finished(&self) -> bool;
@@ -211,7 +214,6 @@ pub struct FileReader<T> {
     file_reading_finished: bool,
     current_block_read: u64,
     block_size: u16,
-    retry_timeout: Duration,
     instant: InstantCallback,
     block_mapper: BlockMapper,
     start_window: u64,
@@ -228,7 +230,6 @@ where
         reader: T,
         max_blocks_in_memory: u16,
         block_size: u16,
-        retry_timeout: Duration,
         instant: InstantCallback,
         window_size: u16,
     ) -> Self {
@@ -251,7 +252,6 @@ where
             file_reading_finished: false,
             current_block_read: 0,
             block_size,
-            retry_timeout,
             instant,
             block_mapper: BlockMapper::new(),
             start_window: 1,
@@ -262,7 +262,7 @@ where
     }
 
     fn read_block(&mut self, block: u64) -> Result<Option<DataBlock>, StorageError> {
-        let position = (block as u64 - 1) * self.block_size as u64;
+        let position = (block - 1) * self.block_size as u64;
         #[cfg(feature = "seek")]
         if matches!(self.reader.seek(SeekFrom::Current(0)), Ok(p) if p != position) {
             self.reader.seek(SeekFrom::Start(position))?;
@@ -283,13 +283,13 @@ impl<T> BlockReader for FileReader<T>
 where
     T: Read + Seek,
 {
-    fn next(&mut self) -> Result<Option<Block>, StorageError> {
+    fn next(&mut self, retry_timeout: Duration) -> Result<Option<Block>, StorageError> {
         if self.is_finished() {
             return Ok(None);
         }
 
         if self.window_size > 1 {
-            if self.window_last_read.elapsed() > self.retry_timeout {
+            if self.window_last_read.elapsed() > retry_timeout {
                 self.window_last_read = (self.instant)();
                 self.current_block_read = self.start_window - 1;
             }
@@ -301,7 +301,7 @@ where
             let next = self
                 .blocks
                 .iter_mut()
-                .find(|(_, t)| t.last_read.elapsed() >= self.retry_timeout)
+                .find(|(_, t)| t.last_read.elapsed() >= retry_timeout)
                 .map(|(b, t)| (b, t));
 
             if next.is_some()
@@ -338,7 +338,6 @@ where
                     return Ok(None);
                 };
             }
-
             let earliest = self
                 .blocks
                 .iter()
@@ -416,17 +415,15 @@ where
 
         if self.window_size <= 1 {
             size += self.blocks.remove(&index).map(|t| t.size).unwrap_or(0);
-        } else {
-            if index <= self.end_window && index >= self.start_window {
-                for b in self.start_window..=index {
-                    size += self.blocks.remove(&b).map(|t| t.size).unwrap_or(0);
-                }
-                self.start_window = index + 1;
-                self.current_block_read = index;
-                if !self.file_reading_finished {
-                    self.end_window = self.current_block_read + self.window_size as u64;
-                }
-            };
+        } else if index <= self.end_window && index >= self.start_window {
+            for b in self.start_window..=index {
+                size += self.blocks.remove(&b).map(|t| t.size).unwrap_or(0);
+            }
+            self.start_window = index + 1;
+            self.current_block_read = index;
+            if !self.file_reading_finished {
+                self.end_window = self.current_block_read + self.window_size as u64;
+            }
         }
         size
     }
@@ -458,7 +455,7 @@ impl BlockMapper {
             if block < 10000 {
                 let next_block = self.next_block_set - 1;
                 return (next_block * u16::MAX as u64) + block as u64 + next_block;
-            } else if block >= 10000 && block < 20000 {
+            } else if (10000..20000).contains(&block) {
                 self.current_block_set += 1;
             }
         }
@@ -541,9 +538,8 @@ mod tests {
         block_writer.write_block(1, &random_bytes[..20]).unwrap();
         let result = block_writer.write_block(1, &random_bytes[..20]);
         assert!(
-            matches!(result, Err(StorageError::AlreadyWriten)),
-            "{:?}",
-            result
+            matches!(result, Err(StorageError::ExpectedBlock((2, 1)))),
+            "{result:?}",
         );
         assert!(!block_writer.is_finished_below(20));
         block_writer.write_block(3, &random_bytes[40..60]).unwrap();
@@ -552,8 +548,7 @@ mod tests {
         let result = block_writer.write_block(6, &random_bytes[100..102]);
         assert!(
             matches!(result, Err(StorageError::CapacityReached)),
-            "{:?}",
-            result
+            "{result:?}",
         );
         assert!(!block_writer.is_finished_below(20));
         block_writer.write_block(2, &random_bytes[20..40]).unwrap();
@@ -579,8 +574,7 @@ mod tests {
         let result = block_writer.write_block(5, &random_bytes[..20]);
         assert!(
             matches!(result, Err(StorageError::CapacityReached)),
-            "{:?}",
-            result
+            "{result:?}",
         );
         block_writer.write_block(1, &random_bytes[..20]).unwrap();
         block_writer.write_block(4, &random_bytes[..20]).unwrap();
@@ -588,29 +582,25 @@ mod tests {
         let result = block_writer.write_block(5, &random_bytes[..20]);
         assert!(
             matches!(result, Err(StorageError::AlreadyWriten)),
-            "{:?}",
-            result
+            "{result:?}",
         );
         let result = block_writer.write_block(6, &random_bytes[..20]);
         assert!(
             matches!(result, Err(StorageError::CapacityReached)),
-            "{:?}",
-            result
+            "{result:?}",
         );
         let result = block_writer.write_block(9, &random_bytes[..20]);
         assert!(
             matches!(result, Err(StorageError::CapacityReached)),
-            "{:?}",
-            result
+            "{result:?}",
         );
         block_writer.write_block(2, &random_bytes[..20]).unwrap();
         block_writer.write_block(6, &random_bytes[..2]).unwrap();
         assert!(!block_writer.is_finished_below(20));
         let result = block_writer.write_block(2, &random_bytes[..20]);
         assert!(
-            matches!(result, Err(StorageError::AlreadyWriten)),
-            "{:?}",
-            result
+            matches!(result, Err(StorageError::ExpectedBlock(_))),
+            "{result:?}",
         );
         block_writer.write_block(3, &random_bytes[..20]).unwrap();
         assert!(block_writer.is_finished_below(20));
@@ -629,22 +619,19 @@ mod tests {
         assert!(!last_in_windown);
         let result = block_writer.write_block(1, &random_bytes[..20]);
         assert!(
-            matches!(result, Err(StorageError::AlreadyWriten)),
-            "{:?}",
-            result
+            matches!(result, Err(StorageError::ExpectedBlock(_))),
+            "{result:?}",
         );
         assert!(!block_writer.is_finished_below(20));
         let result = block_writer.write_block(3, &random_bytes[40..60]);
         assert!(
             matches!(result, Err(StorageError::ExpectedBlock(_))),
-            "{:?}",
-            result
+            "{result:?}",
         );
         let result = block_writer.write_block(6, &random_bytes[100..102]);
         assert!(
             matches!(result, Err(StorageError::CapacityReached)),
-            "{:?}",
-            result
+            "{result:?}",
         );
         assert!(!block_writer.is_finished_below(20));
 
@@ -673,9 +660,7 @@ mod tests {
     fn test_block_write_window_size_1_packet() {
         let random_bytes: Vec<u8> = (0..102).map(|_| rand::random::<u8>()).collect();
         let cursor = Arc::new(Mutex::new(Cursor::new(vec![])));
-        let writer = CursorWriter {
-            cursor: cursor.clone(),
-        };
+        let writer = CursorWriter { cursor };
         let mut block_writer = FileWriter::from_writer(writer, 20, 0, 3);
         let (s, last_in_windown) = block_writer.write_block(1, &random_bytes[..16]).unwrap();
         assert_eq!(s, 16);
@@ -691,42 +676,36 @@ mod tests {
         let inner_reader = CursorReader {
             cursor: inner_reader,
         };
-        let mut block_reader = FileReader::from_reader(
-            inner_reader,
-            2,
-            20,
-            Duration::from_millis(100),
-            instant_callback,
-            1,
-        );
+        let retry_timeout = Duration::from_millis(100);
+        let mut block_reader = FileReader::from_reader(inner_reader, 2, 20, instant_callback, 1);
 
         //can read upto maximum blocks
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 1);
         assert_eq!(&block.data, &random_bytes[0..20]);
         sleep(Duration::from_millis(20));
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert_eq!(result.unwrap().block, 2);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
 
         // retry reading last blocks
         sleep(Duration::from_millis(101));
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 1);
         assert_eq!(&block.data, &random_bytes[0..20]);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 2);
         assert_eq!(&block.data, &random_bytes[20..40]);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
 
         // can read more blocks after free
         let size = block_reader.free_block(1);
         assert_eq!(size, 20);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert_eq!(result.unwrap().block, 3);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
 
         let size = block_reader.free_block(2);
@@ -735,50 +714,45 @@ mod tests {
         assert_eq!(size, 20);
         let size = block_reader.free_block(4);
         assert_eq!(size, 0);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert_eq!(result.unwrap().block, 4);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert_eq!(result.unwrap().block, 5);
         let size = block_reader.free_block(5);
         assert_eq!(size, 20);
 
         // last block is empty
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 6);
         assert_eq!(block.data, []);
-        let block = block_reader.next().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap();
         assert!(block.is_none());
         let size = block_reader.free_block(6);
         assert_eq!(size, 0);
 
         // its not finished until all blocks are freed
-        assert!(!block_reader.is_finished(), "{:?}", block_reader);
-        let result = block_reader.next().unwrap();
+        assert!(!block_reader.is_finished(), "{block_reader:?}");
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
 
         let size = block_reader.free_block(4);
         assert_eq!(size, 20);
-        assert!(block_reader.is_finished(), "{:?}", block_reader);
-        let result = block_reader.next().unwrap();
+        assert!(block_reader.is_finished(), "{block_reader:?}");
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_block_read_window_size() {
         let random_bytes: Vec<u8> = (0..100).map(|_| rand::random::<u8>()).collect();
-        let inner_reader = Cursor::new(random_bytes.clone());
+        let inner_reader = Cursor::new(random_bytes);
         #[cfg(not(feature = "std"))]
         let inner_reader = CursorReader {
             cursor: inner_reader,
         };
-        let mut block_reader = FileReader::from_reader(
-            inner_reader,
-            2,
-            20,
-            Duration::from_millis(100),
-            instant_callback,
-            4,
-        );
+        let retry_timeout = Duration::from_millis(100);
+
+        let mut block_reader = FileReader::from_reader(inner_reader, 2, 20, instant_callback, 4);
 
         let size = block_reader.free_block(1);
         assert_eq!(size, 0);
@@ -786,7 +760,7 @@ mod tests {
         assert_eq!(size, 0);
 
         // can free first block
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 1);
         let size = block_reader.free_block(0);
         assert_eq!(size, 0);
@@ -794,101 +768,95 @@ mod tests {
         assert_eq!(size, 20);
 
         // can free multiple blocks which are less than a windown size
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 2);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 3);
         let size = block_reader.free_block(3);
         assert_eq!(size, 40);
 
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 4);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 5);
         let size = block_reader.free_block(6);
         assert_eq!(size, 0);
         let size = block_reader.free_block(5);
         assert_eq!(size, 40);
-        assert!(!block_reader.is_finished(), "{:?}", block_reader);
+        assert!(!block_reader.is_finished(), "{block_reader:?}");
 
         // free last empty block
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 6);
         assert_eq!(block.data, []);
-        assert!(!block_reader.is_finished(), "{:?}", block_reader);
-        let block = block_reader.next().unwrap();
+        assert!(!block_reader.is_finished(), "{block_reader:?}");
+        let block = block_reader.next(retry_timeout).unwrap();
         assert!(block.is_none());
         let size = block_reader.free_block(6);
         assert_eq!(size, 0);
-        assert!(block_reader.is_finished(), "{:?}", block_reader);
-        let block = block_reader.next().unwrap();
+        assert!(block_reader.is_finished(), "{block_reader:?}");
+        let block = block_reader.next(retry_timeout).unwrap();
         assert!(block.is_none());
     }
 
     #[test]
     fn test_block_read_window_size_full() {
         let random_bytes: Vec<u8> = (0..100).map(|_| rand::random::<u8>()).collect();
-        let inner_reader = Cursor::new(random_bytes.clone());
+        let inner_reader = Cursor::new(random_bytes);
         #[cfg(not(feature = "std"))]
         let inner_reader = CursorReader {
             cursor: inner_reader,
         };
-        let mut block_reader = FileReader::from_reader(
-            inner_reader,
-            2,
-            20,
-            Duration::from_millis(100),
-            instant_callback,
-            3,
-        );
+        let retry_timeout = Duration::from_millis(100);
+        let mut block_reader = FileReader::from_reader(inner_reader, 2, 20, instant_callback, 3);
 
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 1);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 2);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 3);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
 
         let size = block_reader.free_block(3);
         assert_eq!(size, 60);
 
-        assert!(!block_reader.is_finished(), "{:?}", block_reader);
+        assert!(!block_reader.is_finished(), "{block_reader:?}");
 
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 4);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 5);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 6);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
 
         // read window again after timeout
         sleep(Duration::from_millis(101));
 
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 4);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 5);
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 6);
-        let result = block_reader.next().unwrap();
+        let result = block_reader.next(retry_timeout).unwrap();
         assert!(result.is_none());
-        assert!(!block_reader.is_finished(), "{:?}", block_reader);
+        assert!(!block_reader.is_finished(), "{block_reader:?}");
 
         let size = block_reader.free_block(3);
-        assert_eq!(size, 0, "{:?}", block_reader);
+        assert_eq!(size, 0, "{block_reader:?}");
         let size = block_reader.free_block(4);
-        assert_eq!(size, 20, "{:?}", block_reader);
+        assert_eq!(size, 20, "{block_reader:?}");
         // block starts from next
-        let block = block_reader.next().unwrap().unwrap();
+        let block = block_reader.next(retry_timeout).unwrap().unwrap();
         assert_eq!(block.block, 5);
 
         let size = block_reader.free_block(6);
-        assert_eq!(size, 20, "{:?}", block_reader);
-        assert!(block_reader.is_finished(), "{:?}", block_reader);
+        assert_eq!(size, 20, "{block_reader:?}");
+        assert!(block_reader.is_finished(), "{block_reader:?}");
     }
 
     #[test]

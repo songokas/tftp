@@ -275,7 +275,7 @@ mod tests {
         ];
         for (expected, public) in data {
             let encoded = decode_public_key(public.as_bytes());
-            assert_eq!(expected, encoded.is_ok(), "{}", public);
+            assert_eq!(expected, encoded.is_ok(), "{public}");
         }
     }
 
@@ -289,7 +289,7 @@ mod tests {
         ];
         for (expected, nonce) in data {
             let encoded = decode_nonce(nonce.as_bytes());
-            assert_eq!(expected, encoded.is_ok(), "{}", nonce);
+            assert_eq!(expected, encoded.is_ok(), "{nonce}");
         }
     }
 

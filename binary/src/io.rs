@@ -21,7 +21,7 @@ pub fn create_reader(path: &FilePath) -> BoxedResult<(Option<u64>, StdCompatFile
     let file_size = file.metadata().map_err(from_io_err)?.len();
     #[cfg(not(feature = "std"))]
     let file = StdCompatFile(file);
-    Ok(((file_size > 0).then(|| file_size), file))
+    Ok(((file_size > 0).then_some(file_size), file))
 }
 
 pub fn create_server_reader(
@@ -230,6 +230,6 @@ impl tftp::std_compat::io::BufRead for StdBufReader {
 pub fn std_into_path(path: PathBuf) -> FilePath {
     let mut f = FilePath::new();
     // TODO alloc in stack
-    let _result = f.push_str(&path.to_string_lossy().to_string());
+    f.push_str(&path.to_string_lossy());
     f
 }

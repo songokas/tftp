@@ -91,9 +91,16 @@ impl ConnectionOptions {
 
     pub fn remote_public_key(&self) -> Option<PublicKey> {
         match self.encryption_keys {
-            Some(EncryptionKeys::LocalToRemote(_, p)) => p.clone().into(),
+            Some(EncryptionKeys::LocalToRemote(_, p)) => p.into(),
             _ => None,
         }
+    }
+
+    pub fn is_encrypting(&self) -> bool {
+        matches!(
+            self.encryption_keys,
+            Some(crate::encryption::EncryptionKeys::LocalToRemote(..))
+        )
     }
 }
 
@@ -106,9 +113,7 @@ pub fn print_options(context: &str, options: &ConnectionOptions) {
         options.file_size.unwrap_or(0),
         options.retry_packet_after_timeout.as_millis(),
         options.encryption_level,
-        matches!(
-            options.encryption_keys,
-            Some(crate::encryption::EncryptionKeys::LocalToRemote(..))
-        ),
+        options.is_encrypting(),
+
     );
 }

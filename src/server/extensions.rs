@@ -136,7 +136,7 @@ pub fn create_options(
             );
             used_extensions.insert(
                 Extension::Nonce,
-                encode_nonce(&final_keys.nonce()).expect("nonce encoder"),
+                encode_nonce(final_keys.nonce()).expect("nonce encoder"),
             );
             options.encryption_keys = Some(EncryptionKeys::LocalToRemote(
                 final_keys.public,
@@ -199,7 +199,7 @@ mod tests {
         extensions.insert(Extension::WindowSize, "8".parse().unwrap());
         let (extensions, options, _) =
             create_options(extensions, options, &create_config(), None, 8, OsRng).unwrap();
-        assert_eq!(extensions.len(), 4, "{:?}", extensions);
+        assert_eq!(extensions.len(), 4, "{extensions:?}");
         assert_eq!(options.window_size, 8);
         assert_eq!(options.block_size, 101);
         assert_eq!(options.file_size, Some(6));

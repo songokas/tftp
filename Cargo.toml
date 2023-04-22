@@ -1,6 +1,6 @@
 [package]
 name = "tftp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [profile.release]
@@ -28,9 +28,10 @@ rand = "0.8"
 vfs = "0.9"
 
 [features]
-default = ["std", "alloc", "encryption"]
+default = ["std", "alloc", "encryption", "multi_thread"]
 std = ["x25519-dalek?/std"]
 alloc = ["chacha20poly1305?/alloc"]
 encryption = ["x25519-dalek", "chacha20poly1305", "base64"]
 seek = []
 stack_large_window = []
+multi_thread = []

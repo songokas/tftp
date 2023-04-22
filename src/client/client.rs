@@ -46,15 +46,17 @@ pub struct ClientConfig {
     pub allow_server_port_change: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn send_file<CreateReader, R, Sock, Rng>(
     config: ClientConfig,
     local_file_path: FilePath,
     remote_file_path: FilePath,
     mut options: ConnectionOptions,
     create_reader: CreateReader,
-    socket: Sock,
+    mut socket: Sock,
     instant: InstantCallback,
     rng: Rng,
+    ignore_rate_control: bool,
 ) -> BoxedResult<(usize, Option<PublicKey>)>
 where
     R: Read + Seek,
@@ -71,7 +73,7 @@ where
     );
 
     #[cfg(feature = "encryption")]
-    let (socket, initial_keys) = create_initial_socket(socket, &config, &mut options, rng)?;
+    let (mut socket, initial_keys) = create_initial_socket(socket, &config, &mut options, rng)?;
 
     let mut max_buffer_size = max(
         options.block_size + DATA_PACKET_HEADER_SIZE as u16,
@@ -90,20 +92,30 @@ where
         d
     };
 
-    print_options("Client initial", &options);
+    // print_options("Client initial", &options);
+
+    let mut rate_control = RateControl::new(instant);
+
+    rate_control.start_rtt(1);
 
     let (_, acknowledge, mut options, endpoint) = query_server(
-        &socket,
+        &mut socket,
         &mut buffer,
-        PacketType::Write,
+        Packet::Write,
         remote_file_path,
         options,
         instant,
         &config,
     )?;
 
+    let initial_rtt = rate_control
+        .end_rtt(1)
+        .unwrap_or_else(|| Duration::from_millis(1));
+
+    debug!("Initial exchange took {}", initial_rtt.as_secs_f32());
+
     #[cfg(feature = "encryption")]
-    let (socket, options) = configure_socket(socket, initial_keys, options);
+    let (mut socket, options) = configure_socket(socket, initial_keys, options);
 
     print_options("Client using", &options);
 
@@ -116,7 +128,6 @@ where
         reader,
         config.max_blocks_in_memory,
         options.block_size,
-        options.retry_packet_after_timeout,
         instant,
         options.window_size,
     );
@@ -128,44 +139,53 @@ where
     let mut total_unconfirmed = 0;
     let mut total_confirmed = 0;
 
-    let mut rate_control = RateControl::new(instant);
-    let mut stats_print = instant();
     let mut stats_calculate = instant();
-    
+
     let mut no_work: u8 = 0;
     let mut packets_to_send = u32::MAX;
-    let packet_send_window: u32 = 200;
+    let flow_control_period = Duration::from_millis(200);
 
+    rate_control.acknoledged_data(options.block_size as usize, 1);
+    rate_control.calculate_transmit_rate(
+        options.block_size,
+        options.window_size,
+        options.retry_packet_after_timeout,
+        initial_rtt,
+    );
 
     loop {
-        if stats_calculate.elapsed().as_millis() > packet_send_window as u128 {
+        if stats_calculate.elapsed() > flow_control_period {
             rate_control.calculate_transmit_rate(
                 options.block_size,
                 options.window_size,
-                options.retry_packet_after_timeout.as_secs_f64(),
+                options.retry_packet_after_timeout,
+                stats_calculate.elapsed(),
             );
             stats_calculate = instant();
-            packets_to_send = u32::MAX;
-            // rate_control.packets_to_send(packet_send_window, options.block_size as u32);
-        }
-        if stats_print.elapsed().as_secs() > 2 {
-            rate_control.print_info();
-            stats_print = instant();
+
+            // packets_to_send = u32::MAX;
+            packets_to_send = if ignore_rate_control {
+                u32::MAX
+            } else {
+                rate_control.packets_to_send(flow_control_period, options.block_size)
+            };
         }
 
         if packets_to_send > 0 {
-            if let Some(data_block) = block_reader.next()? {
+            let timeout_interval = rate_control
+                .timeout_interval(options.retry_packet_after_timeout, options.block_size);
+            if let Some(data_block) = block_reader.next(timeout_interval)? {
                 let data_length = data_block.data.len();
 
                 debug!(
-                    "Send data block {} data size {} ack {}",
-                    data_block.block, data_length, data_block.expect_ack
+                    "Send data block {} data size {data_length} ack {} to send {packets_to_send}",
+                    data_block.block, data_block.expect_ack
                 );
                 if data_block.expect_ack {
+                    if data_block.retry > 0 {
+                        rate_control.increment_errors();
+                    }
                     rate_control.start_rtt(data_block.block);
-                }
-                if data_block.retry > 0 {
-                    rate_control.increment_errors();
                 }
 
                 let data_packet = Packet::Data(DataPacket {
@@ -192,6 +212,7 @@ where
             }
         } else {
             no_work = no_work.wrapping_add(1);
+            rate_control.mark_as_data_limited();
         }
 
         #[cfg(feature = "alloc")]
@@ -208,7 +229,7 @@ where
             None
         };
 
-        debug!(
+        trace!(
             "Last sent {}us Last received {}us waiting {}ms",
             last_sent.elapsed().as_micros(),
             last_received.elapsed().as_micros(),
@@ -255,9 +276,15 @@ where
                 timeout = instant();
                 let data_length = block_reader.free_block(p.block);
 
-                rate_control.data_received(data_length);
+                rate_control.acknoledged_data(
+                    data_length,
+                    (data_length / options.block_size as usize) as u32,
+                );
                 if let Some(rtt) = rate_control.end_rtt(p.block) {
-                    debug!("Rtt for block {} elapsed {}us", p.block, rtt.as_micros());
+                    trace!("Rtt for block {} elapsed {}us", p.block, rtt.as_micros());
+                // can not measure rtt for random blocks
+                } else if config.max_blocks_in_memory == 1 && options.window_size >= 1 {
+                    rate_control.increment_errors();
                 }
 
                 total_confirmed += data_length;
@@ -278,6 +305,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn receive_file<CreateWriter, Sock, W, Rng>(
     config: ClientConfig,
     local_file_path: FilePath,
@@ -307,7 +335,7 @@ where
     );
 
     #[cfg(feature = "encryption")]
-    let (socket, initial_keys) = create_initial_socket(socket, &config, &mut options, rng)?;
+    let (mut socket, initial_keys) = create_initial_socket(socket, &config, &mut options, rng)?;
 
     #[allow(unused_must_use)]
     let mut buffer = {
@@ -316,20 +344,24 @@ where
         d
     };
 
-    print_options("Client initial", &options);
-
+    let initial_rtt = instant();
     let (mut received_length, acknowledge, mut options, endpoint) = query_server(
-        &socket,
+        &mut socket,
         &mut buffer,
-        PacketType::Read,
+        Packet::Read,
         remote_file_path,
         options,
         instant,
         &config,
     )?;
 
+    debug!(
+        "Initial exchange took {}",
+        initial_rtt.elapsed().as_secs_f32()
+    );
+
     #[cfg(feature = "encryption")]
-    let (socket, options) = configure_socket(socket, initial_keys, options);
+    let (mut socket, options) = configure_socket(socket, initial_keys, options);
 
     let writer = create_writer(&local_file_path)?;
     let mut block_writer = FileWriter::from_writer(
@@ -372,7 +404,6 @@ where
 
     let mut timeout = instant();
     let mut total = 0;
-    let mut no_work: u8 = 0;
 
     loop {
         #[cfg(feature = "alloc")]
@@ -383,18 +414,12 @@ where
             buffer.set_len(max_buffer_size as usize)
         };
 
-        let wait_for = if no_work > 1 {
-            Duration::from_millis(no_work as u64).into()
-        } else {
-            None
-        };
-        let length = match socket.recv_from(&mut buffer, wait_for) {
+        let length = match socket.recv_from(&mut buffer, Duration::from_secs(1).into()) {
             Ok((n, s)) => {
                 if s != endpoint {
                     continue;
                 }
-                debug!("Received packet size {}", n);
-                no_work = 1;
+                trace!("Received packet size {}", n);
                 n
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -405,7 +430,6 @@ where
                     }
                     return Err(PacketError::Timeout(elapsed).into());
                 }
-                no_work = no_work.wrapping_add(1);
                 continue;
             }
             Err(e) => {
@@ -435,11 +459,8 @@ where
                     Ok(n) => {
                         if n > 0 {
                             timeout = instant();
-                            no_work = 1;
-                        } else {
-                            no_work = no_work.wrapping_add(1);
+                            total += n;
                         }
-                        total += n;
                     }
                     Err(e) => return Err(e),
                 }
@@ -561,10 +582,10 @@ fn configure_socket(
     (socket, options)
 }
 
-fn query_server(
-    socket: &impl Socket,
+fn query_server<'a>(
+    socket: &mut impl Socket,
     buffer: &mut DataBuffer,
-    packet_type: PacketType,
+    create_packet: impl Fn(RequestPacket) -> Packet<'a>,
     file_path: FilePath,
     options: ConnectionOptions,
     instant: InstantCallback,
@@ -583,11 +604,8 @@ fn query_server(
             mode: Mode::Octet,
             extensions,
         };
-        let packet = match packet_type {
-            PacketType::Read => Packet::Read(request_packet),
-            PacketType::Write => Packet::Write(request_packet),
-            _ => panic!("Invalid packet type provided"),
-        };
+        let packet = create_packet(request_packet);
+        let packet_type = packet.packet_type();
 
         let (length, endpoint) = wait_for_initial_packet(
             socket,
@@ -596,10 +614,11 @@ fn query_server(
             buffer,
             request_timeout,
             instant,
+            options.retry_packet_after_timeout,
         )?;
         if config.endpoint != endpoint {
             if !config.allow_server_port_change {
-                error!("Server is using new port, however configuration does not allow it");
+                error!("Server is using a new port, however configuration does not allow it");
                 return Err(PacketError::Invalid.into());
             } else {
                 debug!("Using new endpoint {}", endpoint);
@@ -733,19 +752,24 @@ fn write_block(
 }
 
 fn wait_for_initial_packet(
-    socket: &impl Socket,
+    socket: &mut impl Socket,
     endpoint: SocketAddr,
     packet: Packet,
     buffer: &mut DataBuffer,
     request_timeout: Duration,
     instant: InstantCallback,
+    mut retry_timeout: Duration,
 ) -> BoxedResult<(usize, SocketAddr)> {
     let timeout = instant();
     loop {
         socket.send_to(&mut packet.clone().to_bytes(), endpoint)?;
-        debug!("Initial packet elapsed {}", timeout.elapsed().as_secs_f32());
+        debug!(
+            "Initial packet elapsed {} wait {}",
+            timeout.elapsed().as_secs_f32(),
+            retry_timeout.as_secs_f32()
+        );
 
-        match socket.recv_from(buffer, Duration::from_millis(200).into()) {
+        match socket.recv_from(buffer, retry_timeout.into()) {
             Ok((n, s)) => {
                 if s.ip() == endpoint.ip() {
                     return Ok((n, s));
@@ -757,6 +781,10 @@ fn wait_for_initial_packet(
                 if elapsed > request_timeout {
                     return Err(PacketError::Timeout(elapsed).into());
                 }
+                retry_timeout = min(
+                    request_timeout.saturating_sub(elapsed),
+                    retry_timeout.saturating_mul(2),
+                );
                 continue;
             }
             Err(e) => {

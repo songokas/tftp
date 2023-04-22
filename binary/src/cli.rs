@@ -155,6 +155,9 @@ pub enum Commands {
 
         #[arg(long, default_value_t = 1 as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_READER as u64)))]
         max_blocks_in_queue: u64,
+
+        #[arg(long, default_value_t = true)]
+        ignore_rate_control: bool,
     },
 
     Receive {

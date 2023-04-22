@@ -164,7 +164,7 @@ impl Display for StorageError {
             StorageError::AlreadyWriten => write!(f, "Block has been already written"),
             StorageError::FileTooBig => write!(f, "File is too big"),
             StorageError::ExpectedBlock((expected, current)) => {
-                write!(f, "Expecting block {} current block {}", expected, current)
+                write!(f, "Expecting block {expected} current block {current}")
             }
         }
     }
@@ -210,10 +210,10 @@ impl Display for ExtensionError {
             ExtensionError::InvalidPublicKey => write!(f, "Invalid public key received",),
             ExtensionError::InvalidNonce => write!(f, "Invalid nonce received",),
             ExtensionError::EncryptionError(s) => {
-                write!(f, "Invalid extension parsing error {}", s)
+                write!(f, "Invalid extension parsing error {s}")
             }
             ExtensionError::InvalidExtension(s) => {
-                write!(f, "Invalid extension {}", s)
+                write!(f, "Invalid extension {s}")
             }
         }
     }
@@ -257,8 +257,8 @@ impl Display for EncryptionError {
         match self {
             EncryptionError::Encrypt => write!(f, "Failed to encrypt"),
             EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
-            EncryptionError::Encode(t) => write!(f, "Failed to encode {}", t),
-            EncryptionError::Decode(t) => write!(f, "Failed to decode {}", t),
+            EncryptionError::Encode(t) => write!(f, "Failed to encode {t}"),
+            EncryptionError::Decode(t) => write!(f, "Failed to decode {t}"),
         }
     }
 }
