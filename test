@@ -26,16 +26,16 @@ test_full_config() {
     echo "$client_public_key" > $TEST_DIR/authorized
     head -c 10K /dev/urandom > $TEST_DIR/client/file
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server -a --max-blocks-in-queue-reader 4 --max-blocks-in-queue-writer 4 --request-timeout 10000 \
+    $server server 127.0.0.1:9000 $TEST_DIR/server -a --max-window-size 4 --request-timeout 10000 \
         --max-file-size 100000000 --max-block-size 512 --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
     
-    time $client send 127.0.0.1:9000 $TEST_DIR/client/file --listen 127.0.0.1:0 --remote-path new-path --max-blocks-in-queue 2 --request-timeout 10000 \
+    time $client send 127.0.0.1:9000 $TEST_DIR/client/file --listen 127.0.0.1:0 --remote-path new-path --request-timeout 10000 \
         --max-file-size 100000000 --block-size 110 --encryption-level protocol --server-public-key "$public_key" --private-key "$client_private_key" \
         --known-hosts $TEST_DIR/known
     
     cmp -s $TEST_DIR/client/file $TEST_DIR/server/new-path
     
-   time $client receive 127.0.0.1:9000 new-path --local-path $TEST_DIR/delete/file --listen 127.0.0.1:0 --max-blocks-in-queue 4 --request-timeout 10000 \
+   time $client receive 127.0.0.1:9000 new-path --local-path $TEST_DIR/delete/file --listen 127.0.0.1:0 --request-timeout 10000 \
        --max-file-size 100000000 --block-size 120 --encryption-level protocol --private-key "$client_private_key" \
        --known-hosts $TEST_DIR/known
 
@@ -62,9 +62,11 @@ test_large_files() {
     time $client receive 127.0.0.1:9000 samples/112M --max-file-size 724288000 --window-size $window_size --local-path $TEST_DIR/client/samples/112M & pids+=($!)
     wait "${pids[@]}"
 
+    sleep 1
+    kill "${server_pids[@]}"
+
     cmp -s $TEST_DIR/client/samples/111M $TEST_DIR/server/samples/111M
     cmp -s $TEST_DIR/client/samples/112M $TEST_DIR/server/samples/112M
-    kill "${server_pids[@]}"
 }
 
 test_high_load() {
@@ -138,11 +140,11 @@ test_standard_tftp() {
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server --require-server-port-change --max-blocks-in-queue-reader 1 --max-blocks-in-queue-writer 1 & pids+=($!)
+    $server server 127.0.0.1:9000 $TEST_DIR/server --require-server-port-change --max-window-size 1 & pids+=($!)
 
     local remote_path=$(openssl rand -hex 12)
-    echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --allow-server-port-change --window-size 1 --max-blocks-in-queue 1
-    local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --allow-server-port-change --window-size 1 --max-blocks-in-queue 1)
+    echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --allow-server-port-change --window-size 1
+    local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --allow-server-port-change --window-size 1)
     if [[ "$data" != "$received" ]]; then
         exit 1
     fi
@@ -261,6 +263,7 @@ test_lib() {
     cargo test -p tftp --no-default-features --features std,alloc
     cargo test -p tftp --no-default-features --features alloc,encryption
     cargo test -p tftp --no-default-features --features std,encryption
+    cargo test -p tftp --no-default-features --features seek
     cargo test -p tftp --no-default-features
 }
 
@@ -268,13 +271,13 @@ build_debug_targets() {
     cargo build -p tftp-binary
     cp ./target/debug/tftp ./target/tftp
 
-    cargo build -p tftp-binary --no-default-features --features encryption
+    cargo build -p tftp-binary --no-default-features --features encryption,seek
     cp ./target/debug/tftp ./target/tftp-stack-encryption
 
-    cargo build -p tftp-binary --no-default-features --features alloc
+    cargo build -p tftp-binary --no-default-features --features alloc,seek
     cp ./target/debug/tftp ./target/tftp-alloc
 
-    cargo build -p tftp-binary --no-default-features
+    cargo build -p tftp-binary --no-default-features --features seek
     cp ./target/debug/tftp ./target/tftp-stack
 }
 

@@ -1,11 +1,12 @@
-use core::{cmp::min, time::Duration};
+use core::time::Duration;
 
 use log::debug;
 
-use crate::{
-    encryption::{EncryptionKeys, EncryptionLevel, PublicKey},
-    macros::{cfg_alloc, cfg_stack_large_window, cfg_stack_many_clients},
-};
+use crate::encryption::EncryptionKeys;
+use crate::encryption::EncryptionLevel;
+use crate::encryption::PublicKey;
+use crate::macros::cfg_alloc;
+use crate::macros::cfg_stack;
 
 pub const DEFAULT_DATA_BLOCK_SIZE: u16 = 512;
 pub const DATA_PACKET_HEADER_SIZE: u8 = 4;
@@ -24,23 +25,21 @@ pub const ENCRYPTION_TAG_SIZE: u8 = 0;
 cfg_alloc!(
     /// how many clients server can manage at once
     pub const MAX_CLIENTS: u16 = 5000;
-    pub const MAX_BLOCKS_WRITER: u16 = 2000;
+    /// max window size
     pub const MAX_BLOCKS_READER: u16 = 1000;
     pub const DEFAULT_WINDOW_SIZE: u8 = 8;
 );
 
-cfg_stack_many_clients!(
+cfg_stack!(
     pub const MAX_CLIENTS: u16 = 100;
-    pub const MAX_BLOCKS_WRITER: u16 = 4;
-    pub const MAX_BLOCKS_READER: u16 = 4;
+    pub const MAX_BLOCKS_READER: u16 = 16;
+    /// how many single readers available window size = 1
+    pub const MAX_SINGLE_READERS: u16 = 50;
+    /// how many multi readers available window size > 1
+    pub const MAX_MULTI_READERS: u16 = 10;
+    /// how many seek readers available window size > 1
+    pub const MAX_MULTI_SEEK_READERS: u16 = 50;
     pub const DEFAULT_WINDOW_SIZE: u8 = 4;
-);
-
-cfg_stack_large_window!(
-    pub const MAX_CLIENTS: u16 = 3;
-    pub const MAX_BLOCKS_WRITER: u16 = 64;
-    pub const MAX_BLOCKS_READER: u16 = 64;
-    pub const DEFAULT_WINDOW_SIZE: u8 = 8;
 );
 
 pub const MAX_EXTENSION_VALUE_SIZE: u8 = 45;

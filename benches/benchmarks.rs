@@ -111,6 +111,24 @@ fn test_btree_retrieve_256(b: &mut Bencher) {
 }
 
 #[bench]
+fn test_heapless_map_retrieve_256(b: &mut Bencher) {
+    let mut map = heapless::FnvIndexMap::<u8, bool, { u8::MAX as usize + 1 }>::new();
+    let mut i = 0;
+    while i <= u8::MAX {
+        map.insert(i, true);
+
+        if i == u8::MAX {
+            break;
+        }
+        i += 1;
+    }
+
+    b.iter(|| {
+        map.get(&rand::random::<u8>()).unwrap();
+    });
+}
+
+#[bench]
 fn test_arrayvec_retrieve_256(b: &mut Bencher) {
     let mut map = arrayvec::ArrayVec::<u8, { u8::MAX as usize + 1 }>::new();
     let mut i = 0;
@@ -148,6 +166,25 @@ fn test_btree_retrieve_20(b: &mut Bencher) {
 }
 
 #[bench]
+fn test_heapless_map_retrieve_20(b: &mut Bencher) {
+    const SIZE: usize = 20;
+    let mut map = heapless::FnvIndexMap::<u8, bool, { u8::MAX as usize + 1 }>::new();
+    let mut i: u8 = 0;
+    while i as usize <= SIZE {
+        map.insert(i, true).unwrap();
+        if i as usize == SIZE - 1 {
+            break;
+        }
+        i += 1;
+    }
+    let mut rng = rand::thread_rng();
+    b.iter(|| {
+        let random_index = rng.gen_range(0..19);
+        map.get(&random_index).unwrap();
+    });
+}
+
+#[bench]
 fn test_arrayvec_retrieve_20(b: &mut Bencher) {
     const SIZE: usize = 20;
     let mut map = arrayvec::ArrayVec::<u8, { SIZE }>::new();
@@ -169,7 +206,8 @@ fn test_arrayvec_retrieve_20(b: &mut Bencher) {
 #[cfg(feature = "encryption")]
 #[bench]
 fn test_encrypt_decrypt(b: &mut Bencher) {
-    use tftp::{config::MAX_DATA_BLOCK_SIZE, types::DataBuffer};
+    use tftp::config::MAX_DATA_BLOCK_SIZE;
+    use tftp::types::DataBuffer;
 
     let encryptor = create_encryptor();
     let mut rng = rand::thread_rng();
@@ -189,7 +227,8 @@ fn test_encrypt_decrypt(b: &mut Bencher) {
 
 #[cfg(feature = "encryption")]
 fn create_encryptor() -> tftp::encryption::Encryptor {
-    use chacha20poly1305::{KeyInit, XChaCha20Poly1305};
+    use chacha20poly1305::KeyInit;
+    use chacha20poly1305::XChaCha20Poly1305;
     tftp::encryption::Encryptor {
         cipher: XChaCha20Poly1305::new(
             &[

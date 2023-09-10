@@ -1,23 +1,31 @@
-use core::{cmp::min, time::Duration};
+use core::time::Duration;
 use std::net::ToSocketAddrs;
 
-use clap::{Parser, Subcommand};
-use tftp::{
-    client::ClientConfig,
-    config::{
-        DEFAULT_DATA_BLOCK_SIZE, DEFAULT_RETRY_PACKET_TIMEOUT, DEFAULT_WINDOW_SIZE,
-        EXTENSION_BLOCK_SIZE_MIN, EXTENSION_TIMEOUT_SIZE_MAX, EXTENSION_TIMEOUT_SIZE_MIN,
-        EXTENSION_WINDOW_SIZE_MIN, MAX_BLOCKS_READER, MAX_BLOCKS_WRITER, MAX_CLIENTS,
-        MAX_DATA_BLOCK_SIZE,
-    },
-    encryption::{decode_private_key, decode_public_key},
-    error::BoxedError,
-    key_management::{get_from_known_hosts, read_authorized_keys},
-    server::ServerConfig,
-    types::{DefaultString, ExtensionValue, FilePath, ShortString},
-};
+use clap::Parser;
+use clap::Subcommand;
 
-use crate::io::create_buff_reader;
+use tftp::client::ClientConfig;
+use tftp::config::DEFAULT_RETRY_PACKET_TIMEOUT;
+use tftp::config::DEFAULT_WINDOW_SIZE;
+use tftp::config::EXTENSION_BLOCK_SIZE_MIN;
+use tftp::config::EXTENSION_TIMEOUT_SIZE_MAX;
+use tftp::config::EXTENSION_TIMEOUT_SIZE_MIN;
+use tftp::config::EXTENSION_WINDOW_SIZE_MIN;
+use tftp::config::MAX_BLOCKS_READER;
+use tftp::config::MAX_CLIENTS;
+use tftp::config::MAX_DATA_BLOCK_SIZE;
+use tftp::server::ServerConfig;
+use tftp::types::DefaultString;
+use tftp::types::FilePath;
+
+use crate::macros::cfg_encryption;
+
+cfg_encryption! {
+    use tftp::encryption::*;
+    use tftp::key_management::*;
+    use tftp::types::ShortString;
+    use crate::io::create_buff_reader;
+}
 
 pub type BinError = Box<dyn std::error::Error + Sync + Send>;
 pub type BinResult<T> = Result<T, BinError>;
@@ -100,13 +108,7 @@ pub struct ServerCliConfig {
     #[arg(long, default_value_t = MAX_CLIENTS as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_CLIENTS as u64)))]
     pub max_connections: u64,
 
-    #[arg(long, default_value_t = 1 as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_READER as u64)))]
-    pub max_blocks_in_queue_reader: u64,
-
-    #[arg(long, default_value_t = 1 as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_WRITER as u64)))]
-    pub max_blocks_in_queue_writer: u64,
-
-    #[arg(long, default_value_t = min(MAX_BLOCKS_WRITER, MAX_BLOCKS_READER) as u64, value_parser = clap::value_parser!(u64).range(1..=(min(MAX_BLOCKS_WRITER, MAX_BLOCKS_READER) as u64)))]
+    #[arg(long, default_value_t = MAX_BLOCKS_READER as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_READER) as u64))]
     pub max_window_size: u64,
 
     #[arg(
@@ -139,6 +141,10 @@ pub struct ServerCliConfig {
 
     #[arg(long)]
     pub require_server_port_change: bool,
+
+    #[cfg(feature = "seek")]
+    #[arg(long, default_value_t = false)]
+    prefer_seek: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -153,11 +159,12 @@ pub enum Commands {
         #[arg(short, long)]
         remote_path: Option<FilePath>,
 
-        #[arg(long, default_value_t = 1 as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_READER as u64)))]
-        max_blocks_in_queue: u64,
-
         #[arg(long, default_value_t = true)]
         ignore_rate_control: bool,
+
+        #[cfg(feature = "seek")]
+        #[arg(long, default_value_t = false)]
+        prefer_seek: bool,
     },
 
     Receive {
@@ -169,16 +176,13 @@ pub enum Commands {
 
         #[arg(value_name = "FILE")]
         remote_path: FilePath,
-
-        #[arg(long, default_value_t = 1 as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_WRITER as u64)))]
-        max_blocks_in_queue: u64,
     },
 
     Server(ServerCliConfig),
 }
 
 impl ClientCliConfig {
-    pub fn try_into(self, max_blocks_in_memory: u16) -> BinResult<ClientConfig> {
+    pub fn try_into(self, ignore_rate_control: bool, prefer_seek: bool) -> BinResult<ClientConfig> {
         #[cfg(feature = "encryption")]
         let remote_public_key = match (&self.server_public_key, &self.known_hosts) {
             (Some(p), _) => decode_public_key(p.as_bytes())
@@ -215,12 +219,13 @@ impl ClientCliConfig {
         Ok(ClientConfig {
             listen: self.listen,
             endpoint,
-            max_blocks_in_memory,
             request_timeout: Duration::from_millis(self.request_timeout),
             max_file_size: self.max_file_size,
             private_key,
             remote_public_key,
             allow_server_port_change: self.allow_server_port_change,
+            ignore_rate_control,
+            prefer_seek,
         })
     }
 }
@@ -239,8 +244,6 @@ impl ServerCliConfig {
             listen,
             directory: self.directory,
             allow_overwrite: self.allow_overwrite,
-            max_queued_blocks_reader: self.max_blocks_in_queue_reader as u16,
-            max_queued_blocks_writer: self.max_blocks_in_queue_writer as u16,
             max_window_size: self.max_window_size as u16,
             request_timeout: Duration::from_millis(self.request_timeout as u64),
             max_connections: self.max_connections as u16,
@@ -270,6 +273,10 @@ impl ServerCliConfig {
             #[cfg(not(feature = "encryption"))]
             authorized_keys: None,
             require_server_port_change: self.require_server_port_change,
+            #[cfg(feature = "seek")]
+            prefer_seek: self.prefer_seek,
+            #[cfg(not(feature = "seek"))]
+            prefer_seek: false,
         })
     }
 }

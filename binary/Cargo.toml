@@ -1,6 +1,6 @@
 [package]
 name = "tftp-binary"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
@@ -19,7 +19,6 @@ env_logger = "0.10"
 log = "0.4"
 tftp = { path = "..", default-features = false}
 rand = { version = "0.8", optional = false, default-features = false, features = ["getrandom"]}
-# std compile time requirement
 polling = "2"
 socket2 = { version = "~0.5.1", features = ["all"] }
 
@@ -28,19 +27,16 @@ rand = "0.8"
 env_logger = "0.10"
 
 [features]
-default = ["std", "alloc", "encryption", "multi_thread"]
-std = ["tftp/std", "polling/std"]
+default = ["std", "alloc", "encryption", "multi_thread", "seek"]
+std = ["tftp/std"]
 alloc = ["tftp/alloc"]
 encryption = ["tftp/encryption"]
 seek = ["tftp/seek"]
-stack_large_window = ["tftp/stack_large_window"]
 multi_thread = ["tftp/multi_thread"]
 
 [[bin]]
 name = "tftp"
 path = "src/main.rs"
-
-
 
 [build-dependencies]
 cargo-deb = "1"

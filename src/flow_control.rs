@@ -1,12 +1,14 @@
-use core::{
-    cmp::{max, min},
-    ops::Div,
-    time::Duration,
-};
+use core::cmp::max;
+use core::cmp::min;
+use core::time::Duration;
 
-use log::{debug, trace};
+use log::debug;
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use micromath::F32Ext;
 
-use crate::{config::MAX_DATA_BLOCK_SIZE, std_compat::time::Instant, time::InstantCallback};
+use crate::std_compat::time::Instant;
+use crate::time::InstantCallback;
 
 // const MSS: u16 = MAX_DATA_BLOCK_SIZE;
 const INITIAL_TCP_WINDOW: u16 = 4380;
@@ -311,7 +313,7 @@ mod tests {
         rate.end_rtt(1);
 
         rate.acknoledged_data(8000, 8);
-        let transmit_rate = rate.calculate_transmit_rate(
+        let _transmit_rate = rate.calculate_transmit_rate(
             512,
             8,
             Duration::from_millis(80),

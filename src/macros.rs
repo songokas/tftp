@@ -7,24 +7,34 @@ macro_rules! cfg_alloc {
     }
 }
 
-macro_rules! cfg_stack_many_clients {
+macro_rules! cfg_stack {
     ($($item:item)*) => {
         $(
-            #[cfg(all(not(feature = "alloc"), not(feature = "stack_large_window")))]
+            #[cfg(not(feature = "alloc"))]
             $item
         )*
     }
 }
 
-macro_rules! cfg_stack_large_window {
+macro_rules! cfg_encryption {
     ($($item:item)*) => {
         $(
-            #[cfg(feature = "stack_large_window")]
+            #[cfg(feature = "encryption")]
+            $item
+        )*
+    }
+}
+
+macro_rules! cfg_seek {
+    ($($item:item)*) => {
+        $(
+            #[cfg(feature = "seek")]
             $item
         )*
     }
 }
 
 pub(crate) use cfg_alloc;
-pub(crate) use cfg_stack_large_window;
-pub(crate) use cfg_stack_many_clients;
+pub(crate) use cfg_encryption;
+pub(crate) use cfg_seek;
+pub(crate) use cfg_stack;

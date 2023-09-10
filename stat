@@ -135,32 +135,6 @@ measure_localhost_window_size() {
     plot_window_size_image $sender_data $receiver_data $suffix
 }
 
-measure_localhost_queue_size() {
-    local server="$1"
-    local client="$2"
-    local sender_data="$OUTPUT_DIR/sender_queue_localhost"
-    local receiver_data="$OUTPUT_DIR/receiver_queue_localhost"
-
-    rm -rf $TEST_DIR
-    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
-
-    > $sender_data
-    > $receiver_data
-
-    head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
-
-    for queue_size in 1 2 4 8 16 32 64 128 256 512 1000; do
-        local server_pids=()
-        $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 104857600 --allow-overwrite --max-blocks-in-queue-reader $queue_size --max-blocks-in-queue-writer $queue_size & server_pids+=($!)
-        /usr/bin/time -o $sender_data -a -f "$queue_size %e %M %K" $client send 127.0.0.1:9000 $TEST_DIR/client/samples/100M --remote-path samples/100M --window-size 1 --max-blocks-in-queue $queue_size
-        /usr/bin/time -o $receiver_data -a -f "$queue_size %e %M %K" $client receive 127.0.0.1:9000 samples/100M --max-file-size 104857600 --window-size 1 --max-blocks-in-queue $queue_size --local-path $TEST_DIR/client/samples/100M
-        kill "${server_pids[@]}"
-        sleep 1
-    done
-
-    plot_queue_size $sender_data $receiver_data
-}
-
 measure_endpoint_window_size() {
     local client="$1"
     local endpoint="$2"
@@ -290,23 +264,23 @@ produce_info() {
 
     measure_endpoint_window_size $release_bin servas:69 "_no_encryption_alloc"
 
-    cargo build -p tftp-binary --no-default-features --features encryption,stack_large_window
+    cargo build -p tftp-binary --no-default-features --features encryption
 
     server_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
     send_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
     receive_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
 
-    cargo build -p tftp-binary --no-default-features --release --features encryption,stack_large_window
+    cargo build -p tftp-binary --no-default-features --release --features encryption
 
     measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption_stack"
 
-    cargo build -p tftp-binary --no-default-features --features stack_large_window
+    cargo build -p tftp-binary --no-default-features
 
     server_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
     send_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
     receive_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
 
-    cargo build -p tftp-binary --no-default-features --release --features stack_large_window
+    cargo build -p tftp-binary --no-default-features --release
 
     send_dump $release_bin $release_bin "_no_encryption_stack"
     receive_dump $release_bin $release_bin "_no_encryption_stack"

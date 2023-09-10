@@ -1,18 +1,27 @@
-use core::{fmt::Display, mem::size_of, ops::Deref, str::FromStr};
+use core::fmt::Display;
+use core::mem::size_of;
+use core::ops::Deref;
+use core::str::FromStr;
 
-use base64::{engine::GeneralPurpose, Engine};
-use chacha20poly1305::{
-    aead::{Buffer, Error as AeadError, KeyInit, Result as AeadResult},
-    AeadInPlace, Key, XChaCha20Poly1305, XNonce,
-};
-use x25519_dalek::{EphemeralSecret, PublicKey as ExternalPublicKey, StaticSecret};
+use base64::engine::GeneralPurpose;
+use base64::Engine;
+use chacha20poly1305::aead::Buffer;
+use chacha20poly1305::aead::KeyInit;
+use chacha20poly1305::AeadInPlace;
+use chacha20poly1305::Key;
+use chacha20poly1305::XChaCha20Poly1305;
+use chacha20poly1305::XNonce;
+use x25519_dalek::EphemeralSecret;
+use x25519_dalek::PublicKey as ExternalPublicKey;
+use x25519_dalek::StaticSecret;
 
-use crate::{
-    config::{DATA_PACKET_HEADER_SIZE, MAX_EXTENSION_VALUE_SIZE},
-    error::{EncodingErrorType, EncryptionError},
-    packet::PacketType,
-    types::{DataBuffer, DefaultString, ExtensionValue, ShortString},
-};
+use crate::config::DATA_PACKET_HEADER_SIZE;
+use crate::config::MAX_EXTENSION_VALUE_SIZE;
+use crate::error::EncodingErrorType;
+use crate::error::EncryptionError;
+use crate::packet::PacketType;
+use crate::types::DataBuffer;
+use crate::types::ShortString;
 
 pub type PrivateKey = StaticSecret;
 pub type PublicKey = ExternalPublicKey;
@@ -180,7 +189,7 @@ pub fn overwrite_data_packet(
         let mut data: DataBuffer = data_packet.iter().copied().collect();
         callback(&mut data)?;
         buff.truncate(DATA_PACKET_HEADER_SIZE as usize);
-        buff.extend(data.into_iter());
+        buff.extend(data);
     }
     Ok(())
 }
@@ -229,7 +238,7 @@ mod tests {
         let mut data: alloc::vec::Vec<u8> = PacketType::Data
             .to_bytes()
             .into_iter()
-            .chain([2, 32, 32, 2, 1, 11].into_iter())
+            .chain([2, 32, 32, 2, 1, 11])
             .collect();
         #[cfg(not(feature = "alloc"))]
         let mut data: DataBuffer = PacketType::Data

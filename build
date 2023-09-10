@@ -16,15 +16,12 @@ build() {
         cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features std
         cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features alloc
         cp target/$target/release/tftp dist/tftp-alloc
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features alloc,encryption
+        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features alloc,encryption,seek
         cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features std,encryption
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features encryption
+        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features encryption,seek
         cp target/$target/release/tftp dist/tftp-stack-encryption
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features
+        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features seek
         cp target/$target/release/tftp dist/tftp-stack
-
-        # just for testing
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --features seek
     done
 
     # cargo build -p tftp-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
@@ -36,7 +33,7 @@ build() {
 release_bins() {
     for target in ${BIN_RELEASE_TARGETS[@]}; do
 
-        cross build -p tftp-binary --target "$target" --release --no-default-features --features encryption
+        cross build -p tftp-binary --target "$target" --release --no-default-features --features encryption,seek
         cp target/$target/release/tftp dist/tftp-stack-$target
         # deb depends on this target
         cross build -p tftp-binary --target "$target" --release
@@ -46,7 +43,7 @@ release_bins() {
     for target in ${BIN_WINDOWS_TARGETS[@]}; do
         cross build -p tftp-binary --target "$target" --release
         cp target/$target/release/tftp.exe dist/tftp-$target.exe
-        cross build -p tftp-binary --target "$target" --release --no-default-features --features encryption
+        cross build -p tftp-binary --target "$target" --release --no-default-features --features encryption,seek
         cp target/$target/release/tftp.exe dist/tftp-stack-$target.exe
     done
 }

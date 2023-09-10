@@ -2,6 +2,26 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.3.0] - 2023-09-11
+
+### Added
+
+- Seek reader available by default
+- Command line argument --prefer-seek to use seek reader
+- Ability to configure available readers
+
+### Changed
+
+- Separate and improve seek reader
+- Writer reduce memory footprint, write sequentially only
+- Improve code readability, structure
+- Use specific, reader according to window size, preference, availability
+
+### Removed
+
+- Command line argument --max_blocks_in_queue, client will use window-size argument
+- Ability to receive packets in a random order
+
 ## [0.2.0] - 2023-04-22
 
 ### Added

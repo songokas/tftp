@@ -1,6 +1,6 @@
 [package]
 name = "tftp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [profile.release]
@@ -17,21 +17,21 @@ log = "0.4"
 arrayvec = { version = "0.7", optional = false, default-features = false}
 heapless = { version = "0.7", optional = false, default-features = false}
 base64 =  { version = "0.21", optional = true, default-features = false}
-x25519-dalek =  { version = "2.0.0-pre.0", optional = true, default-features = false, features = ["u64_backend"]}
+x25519-dalek =  { version = "2", optional = true, default-features = false, features = ["getrandom", "zeroize", "static_secrets"]}
 chacha20poly1305 = { version = "0.10", optional = true, default-features = false, features = ["heapless", "getrandom"]}
 # heapless depends on 0.2.1
 hash32 = "0.2.1"
 rand = { version = "0.8", optional = false, default-features = false, features = ["getrandom"]}
+micromath = { version = "2", optional = false }
 
 [dev-dependencies]
 rand = "0.8"
 vfs = "0.9"
 
 [features]
-default = ["std", "alloc", "encryption", "multi_thread"]
-std = ["x25519-dalek?/std"]
-alloc = ["chacha20poly1305?/alloc"]
+default = ["alloc", "encryption", "multi_thread", "seek"]
+std = []
+alloc = ["chacha20poly1305?/alloc", "x25519-dalek?/alloc"]
 encryption = ["x25519-dalek", "chacha20poly1305", "base64"]
 seek = []
-stack_large_window = []
-multi_thread = []
+multi_thread = ["std"]

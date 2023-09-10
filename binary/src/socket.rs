@@ -1,33 +1,49 @@
-use core::time::Duration;
+use std::net::SocketAddr as StdSocketAddr;
 use std::net::UdpSocket;
-
 #[cfg(not(target_family = "windows"))]
-use std::os::fd::{AsFd, AsRawFd, RawFd};
+use std::os::fd::AsFd;
+#[cfg(not(target_family = "windows"))]
+use std::os::fd::AsRawFd;
+#[cfg(not(target_family = "windows"))]
+use std::os::fd::RawFd;
 #[cfg(target_family = "windows")]
-use std::os::windows::io::{AsRawSocket, RawSocket};
+use std::os::windows::io::AsRawSocket;
+#[cfg(target_family = "windows")]
+use std::os::windows::io::RawSocket;
 
-use log::{info, trace};
-use polling::{Event, Poller, Source};
-use socket2::{Domain, Protocol, SockAddr, Type};
-use tftp::{
-    config::ConnectionOptions,
-    encryption::EncryptionLevel,
-    error::BoxedResult,
-    socket::*,
-    std_compat::{io, net::SocketAddr},
-    types::DataBuffer,
-};
+use core::time::Duration;
 
-use crate::{
-    cli::{BinError, BinResult, ClientCliConfig},
-    io::from_io_err,
-};
+use log::*;
+use polling::Event;
+use polling::Poller;
+use polling::Source;
+use socket2::Domain;
+use socket2::Protocol;
+use socket2::Socket as Socket2;
+use socket2::Type;
+
+use tftp::error::BoxedResult;
+use tftp::socket::*;
+use tftp::std_compat::io;
+use tftp::std_compat::net::SocketAddr;
+use tftp::types::DataBuffer;
+
+use crate::io::from_io_err;
+use crate::macros::cfg_no_std;
+
+cfg_no_std! {
+    use tftp::std_compat::net::IpVersion;
+    use std::net::SocketAddrV4;
+    use std::net::SocketAddrV6;
+    use std::net::Ipv4Addr;
+    use std::net::Ipv6Addr;
+}
 
 pub fn create_socket(listen: &str, socket_id: usize, reuse: bool) -> BoxedResult<impl Socket> {
-    let address: std::net::SocketAddr = listen
+    let address: StdSocketAddr = listen
         .parse()
         .map_err(|_| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
-    let socket = socket2::Socket::new(
+    let socket = Socket2::new(
         Domain::for_address(address),
         Type::DGRAM,
         Protocol::UDP.into(),
@@ -61,7 +77,7 @@ pub fn create_bound_socket(
     endpoint: SocketAddr,
 ) -> BoxedResult<impl BoundSocket> {
     let endpoint = socket_addr_to_std(endpoint);
-    let socket = socket2::Socket::new(
+    let socket = Socket2::new(
         Domain::for_address(endpoint),
         Type::DGRAM,
         Protocol::UDP.into(),
@@ -72,7 +88,7 @@ pub fn create_bound_socket(
     #[cfg(not(target_family = "windows"))]
     socket.set_reuse_port(true).map_err(from_io_err)?;
 
-    let address: std::net::SocketAddr = listen
+    let address: StdSocketAddr = listen
         .parse()
         .map_err(|_| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
     socket.bind(&address.into()).unwrap();
@@ -251,30 +267,28 @@ impl ToSocketId for StdBoundSocket {
 }
 
 #[cfg(not(feature = "std"))]
-pub fn std_to_socket_addr(addr: std::net::SocketAddr) -> SocketAddr {
+pub fn std_to_socket_addr(addr: StdSocketAddr) -> SocketAddr {
     match addr {
-        std::net::SocketAddr::V4(a) => SocketAddr {
-            ip: tftp::std_compat::net::IpVersion::Ipv4(a.ip().octets()),
+        StdSocketAddr::V4(a) => SocketAddr {
+            ip: IpVersion::Ipv4(a.ip().octets()),
             port: a.port(),
         },
-        std::net::SocketAddr::V6(a) => SocketAddr {
-            ip: tftp::std_compat::net::IpVersion::Ipv6(a.ip().octets()),
+        StdSocketAddr::V6(a) => SocketAddr {
+            ip: IpVersion::Ipv6(a.ip().octets()),
             port: a.port(),
         },
     }
 }
 
-pub fn socket_addr_to_std(addr: SocketAddr) -> std::net::SocketAddr {
+pub fn socket_addr_to_std(addr: SocketAddr) -> StdSocketAddr {
     #[cfg(feature = "std")]
     return addr;
     #[cfg(not(feature = "std"))]
     match addr.ip {
-        tftp::std_compat::net::IpVersion::Ipv4(b) => std::net::SocketAddr::V4(
-            std::net::SocketAddrV4::new(std::net::Ipv4Addr::from(b), addr.port),
-        ),
-        tftp::std_compat::net::IpVersion::Ipv6(b) => std::net::SocketAddr::V6(
-            std::net::SocketAddrV6::new(std::net::Ipv6Addr::from(b), addr.port, 0, 0),
-        ),
+        IpVersion::Ipv4(b) => StdSocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(b), addr.port)),
+        IpVersion::Ipv6(b) => {
+            StdSocketAddr::V6(SocketAddrV6::new(Ipv6Addr::from(b), addr.port, 0, 0))
+        }
     }
 }
 

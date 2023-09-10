@@ -1,13 +1,13 @@
-use core::{
-    array::TryFromSliceError,
-    fmt::{Display, Formatter},
-    str::Utf8Error,
-    time::Duration,
-};
+use core::array::TryFromSliceError;
+use core::fmt::Display;
+use core::fmt::Formatter;
+use core::str::Utf8Error;
+use core::time::Duration;
 
-use crate::{
-    encryption::EncryptionLevel, packet::Extension, std_compat::error::Error, types::DefaultString,
-};
+use crate::encryption::EncryptionLevel;
+use crate::packet::Extension;
+use crate::std_compat::error::Error;
+use crate::types::DefaultString;
 
 #[cfg(all(feature = "std", feature = "alloc"))]
 pub type BoxedError = alloc::boxed::Box<dyn std::error::Error + Send + Sync>;
@@ -26,6 +26,7 @@ pub enum GeneralError {
     ExtensionError(ExtensionError),
     IoError(crate::std_compat::io::Error),
     FmtError(core::fmt::Error),
+    AvailabilityError(AvailabilityError),
     Infallible,
 }
 
@@ -40,6 +41,7 @@ impl Display for GeneralError {
             GeneralError::ExtensionError(s) => s.fmt(f),
             GeneralError::IoError(s) => s.fmt(f),
             GeneralError::FmtError(s) => s.fmt(f),
+            GeneralError::AvailabilityError(s) => s.fmt(f),
             GeneralError::Infallible => write!(f, "unknown error"),
         }
     }
@@ -101,6 +103,13 @@ impl From<core::convert::Infallible> for GeneralError {
     }
 }
 
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+impl From<AvailabilityError> for GeneralError {
+    fn from(source: AvailabilityError) -> Self {
+        GeneralError::AvailabilityError(source)
+    }
+}
+
 #[derive(Debug)]
 pub enum PacketError {
     Invalid,
@@ -140,12 +149,13 @@ pub type PacketResult<T> = Result<T, PacketError>;
 
 #[derive(Debug)]
 pub enum StorageError {
-    CapacityReached,
     File(crate::std_compat::io::Error),
-    AlreadyWriten,
-    FileTooBig,
-    // expected, current
-    ExpectedBlock((u16, u16)),
+    AlreadyWriten(u64),
+    ExpectedBlock {
+        expected: u16,
+        current: u16,
+        current_index: u64,
+    },
 }
 
 impl From<crate::std_compat::io::Error> for StorageError {
@@ -159,11 +169,13 @@ impl Error for StorageError {}
 impl Display for StorageError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            StorageError::CapacityReached => write!(f, "Buffer capacity reached"),
+            // StorageError::CapacityReached => write!(f, "Buffer capacity reached"),
             StorageError::File(s) => s.fmt(f),
-            StorageError::AlreadyWriten => write!(f, "Block has been already written"),
-            StorageError::FileTooBig => write!(f, "File is too big"),
-            StorageError::ExpectedBlock((expected, current)) => {
+            StorageError::AlreadyWriten(_) => write!(f, "Block has been already written"),
+            // StorageError::FileTooBig => write!(f, "File is too big"),
+            StorageError::ExpectedBlock {
+                expected, current, ..
+            } => {
                 write!(f, "Expecting block {expected} current block {current}")
             }
         }
@@ -259,6 +271,21 @@ impl Display for EncryptionError {
             EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
             EncryptionError::Encode(t) => write!(f, "Failed to encode {t}"),
             EncryptionError::Decode(t) => write!(f, "Failed to decode {t}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum AvailabilityError {
+    NoReaderAvailable,
+}
+
+impl Error for AvailabilityError {}
+
+impl Display for AvailabilityError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            AvailabilityError::NoReaderAvailable => write!(f, "No reader available"),
         }
     }
 }

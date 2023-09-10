@@ -1,42 +1,61 @@
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-
 mod cli;
 mod io;
+mod macros;
 mod socket;
 
 use core::time::Duration;
-use std::{cmp::min, path::Path};
+use std::path::Path;
 
 use clap::Parser;
 use cli::ClientCliConfig;
-use env_logger::{Builder, Env};
-use log::{debug, error, warn};
+use env_logger::Builder;
+use env_logger::Env;
+use log::*;
+use macros::cfg_encryption;
+use macros::cfg_no_std;
 use rand::rngs::OsRng;
-use tftp::{
-    client::{receive_file, send_file},
-    config::{ConnectionOptions, MAX_EXTENSION_VALUE_SIZE},
-    encryption::{
-        decode_private_key, decode_public_key, EncryptionKeys, EncryptionLevel, PrivateKey,
-        PublicKey,
-    },
-    error::{BoxedResult, EncryptionError},
-    key_management::{append_to_known_hosts, get_from_known_hosts},
-    server::server,
-    socket::Socket,
-    std_compat::{
-        io::{Read, Seek, Write},
-        net::SocketAddr,
-        time::Instant,
-    },
-    types::FilePath,
-};
+use tftp::client::receive_file;
+use tftp::client::send_file;
+use tftp::config::ConnectionOptions;
+use tftp::encryption::*;
+use tftp::error::BoxedResult;
 
-use crate::{
-    cli::{Args, BinError, BinResult, Commands},
-    io::{create_reader, create_server_reader, create_server_writer, create_writer, *},
-    socket::*,
-};
+use tftp::server::server;
+use tftp::std_compat::io::Read;
+use tftp::std_compat::io::Seek;
+use tftp::std_compat::io::Write;
+use tftp::std_compat::net::SocketAddr;
+use tftp::std_compat::time::Instant;
+use tftp::types::FilePath;
+
+use crate::cli::Args;
+use crate::cli::BinError;
+use crate::cli::BinResult;
+use crate::cli::Commands;
+use crate::io::create_reader;
+use crate::io::create_server_reader;
+use crate::io::create_server_writer;
+use crate::io::create_writer;
+
+cfg_encryption! {
+    use crate::io::create_buff_reader;
+    use crate::io::from_io_err;
+    use tftp::key_management::append_to_known_hosts;
+    use tftp::key_management::get_from_known_hosts;
+    use std::fs::File;
+}
+
+cfg_no_std! {
+    use std::time::SystemTime;
+    use std::time::UNIX_EPOCH;
+    #[cfg(feature = "encryption")]
+    use crate::io::StdCompatFile;
+}
+
+#[cfg(not(feature = "encryption"))]
+use tftp::encryption::EncryptionLevel;
+
+use crate::socket::*;
 
 // tftp send localhost:3000 /tmp/a --remote-path long/a
 // tftp receive localhost:3000 long/a --local-path /tmp/a
@@ -51,16 +70,20 @@ fn main() -> BinResult<()> {
         Commands::Send {
             local_path,
             remote_path,
-            max_blocks_in_queue,
             config,
             ignore_rate_control,
+            #[cfg(feature = "seek")]
+            prefer_seek,
         } => start_send(
             local_path,
             remote_path,
             config,
-            max_blocks_in_queue as u16,
             create_reader,
             ignore_rate_control,
+            #[cfg(feature = "seek")]
+            prefer_seek,
+            #[cfg(not(feature = "seek"))]
+            false,
         )
         .map(|_| ()),
 
@@ -68,15 +91,7 @@ fn main() -> BinResult<()> {
             config,
             local_path,
             remote_path,
-            max_blocks_in_queue,
-        } => start_receive(
-            local_path,
-            remote_path,
-            config,
-            max_blocks_in_queue as u16,
-            create_writer,
-        )
-        .map(|_| ()),
+        } => start_receive(local_path, remote_path, config, create_writer).map(|_| ()),
         Commands::Server(config) => {
             let config = config.try_into()?;
             // init_logger(config.listen);
@@ -98,9 +113,9 @@ fn start_send<CreateReader, R>(
     local_path: FilePath,
     remote_path: Option<FilePath>,
     config: ClientCliConfig,
-    max_blocks_in_queue: u16,
     create_reader: CreateReader,
     ignore_rate_control: bool,
+    prefer_seek: bool,
 ) -> BinResult<usize>
 where
     R: Read + Seek,
@@ -140,7 +155,7 @@ where
             .expect("Invalid local file name"),
     };
     send_file(
-        config.try_into(max_blocks_in_queue)?,
+        config.try_into(ignore_rate_control, prefer_seek)?,
         local_path,
         remote_path,
         options,
@@ -148,7 +163,6 @@ where
         socket,
         instant_callback,
         OsRng,
-        ignore_rate_control,
     )
     .map(|(total, _remote_key)| {
         debug!("Client total sent {}", total);
@@ -163,11 +177,10 @@ fn start_receive<CreateWriter, W>(
     local_path: Option<FilePath>,
     remote_path: FilePath,
     config: ClientCliConfig,
-    max_blocks_in_queue: u16,
     create_writer: CreateWriter,
 ) -> BinResult<usize>
 where
-    W: Write + Seek,
+    W: Write,
     CreateWriter: Fn(&FilePath) -> BoxedResult<W>,
 {
     let socket =
@@ -186,7 +199,7 @@ where
             .map_err(|_| BinError::from("Invalid encryption level specified"))?,
 
         #[cfg(not(feature = "encryption"))]
-        encryption_level: tftp::encryption::EncryptionLevel::None,
+        encryption_level: EncryptionLevel::None,
         window_size: config.window_size as u16,
     };
     #[cfg(feature = "encryption")]
@@ -205,7 +218,7 @@ where
             .expect("Invalid remote file name"),
     };
     receive_file(
-        config.try_into(max_blocks_in_queue)?,
+        config.try_into(false, false)?,
         local_path,
         remote_path,
         options,
@@ -225,11 +238,11 @@ where
 
 fn instant_callback() -> Instant {
     #[cfg(feature = "std")]
-    return std::time::Instant::now();
+    return Instant::now();
     #[cfg(not(feature = "std"))]
     Instant::from_time(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_micros() as u64
     })
@@ -248,13 +261,13 @@ fn handle_hosts_file(
             if let Ok(Some(_)) = get_from_known_hosts(create_buff_reader(f)?, endpoint) {
                 return Ok(());
             }
-            let file = std::fs::File::options()
+            let file = File::options()
                 .create(true)
                 .append(true)
                 .open(f)
                 .map_err(from_io_err)?;
             #[cfg(not(feature = "std"))]
-            let file = crate::io::StdCompatFile(file);
+            let file = StdCompatFile(file);
             append_to_known_hosts(file, endpoint, &k)
         })
         .transpose()
@@ -266,6 +279,7 @@ fn handle_hosts_file(
 
 #[allow(dead_code)]
 fn init_logger(local_addr: SocketAddr) {
+    #[allow(unused_imports)]
     use std::io::Write;
     // builder using box
     Builder::from_env(Env::default().default_filter_or("debug"))
@@ -284,24 +298,24 @@ fn init_logger(local_addr: SocketAddr) {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::Cursor,
-        net::UdpSocket,
-        ops::DerefMut,
-        sync::{Arc, Mutex},
-        thread::{sleep, spawn},
-        time::Duration,
-    };
+    use std::io::Cursor;
+    use std::net::UdpSocket;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::thread::sleep;
+    use std::thread::spawn;
+    use std::time::Duration;
 
-    use tftp::{
-        client::{receive_file, send_file, ClientConfig},
-        config::{ConnectionOptions, MAX_BUFFER_SIZE, MAX_DATA_BLOCK_SIZE},
-        encryption::*,
-        error::{BoxedResult, DefaultBoxedResult},
-        server::{server, AuthorizedKeys, ServerConfig},
-        std_compat::io,
-        types::{DefaultString, ExtensionValue, FilePath, ShortString},
-    };
+    use tftp::config::MAX_DATA_BLOCK_SIZE;
+    use tftp::encryption::*;
+    use tftp::error::DefaultBoxedResult;
+    use tftp::key_management::AuthorizedKeys;
+    use tftp::server::server;
+    use tftp::server::ServerConfig;
+    use tftp::std_compat::io;
+    use tftp::types::FilePath;
+    #[allow(unused_imports)]
+    use tftp::types::ShortString;
 
     use super::*;
     use crate::cli::ClientCliConfig;
@@ -398,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_client_no_encryption() {
-        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
         //     .format_timestamp_micros()
         //     .init();
         client_send(EncryptionLevel::None, None, None, None);
@@ -510,7 +524,7 @@ mod tests {
 
     fn start_send_file(
         server_port: u16,
-        encryption_level: EncryptionLevel,
+        _encryption_level: EncryptionLevel,
         bytes: Vec<u8>,
         #[cfg(feature = "encryption")] server_public_key: Option<ShortString>,
         #[cfg(feature = "encryption")] private_key: Option<ShortString>,
@@ -527,7 +541,7 @@ mod tests {
             #[cfg(feature = "encryption")]
             server_public_key,
             #[cfg(feature = "encryption")]
-            encryption_level: encryption_level.to_string().parse().unwrap(),
+            encryption_level: _encryption_level.to_string().parse().unwrap(),
             #[cfg(feature = "encryption")]
             known_hosts: None,
             window_size: 1,
@@ -539,12 +553,19 @@ mod tests {
         let create_reader =
             |_path: &FilePath| Ok((Some(bytes.len() as u64), CursorReader::new(bytes.clone())));
 
-        start_send(local_file, remote_file, cli_config, 4, create_reader, false)
+        start_send(
+            local_file,
+            remote_file,
+            cli_config,
+            create_reader,
+            false,
+            false,
+        )
     }
 
     fn start_receive_file(
         server_port: u16,
-        encryption_level: EncryptionLevel,
+        _encryption_level: EncryptionLevel,
         bytes: Arc<Mutex<Cursor<Vec<u8>>>>,
         #[cfg(feature = "encryption")] server_public_key: Option<ShortString>,
         #[cfg(feature = "encryption")] private_key: Option<ShortString>,
@@ -561,7 +582,7 @@ mod tests {
             #[cfg(feature = "encryption")]
             server_public_key,
             #[cfg(feature = "encryption")]
-            encryption_level: encryption_level.to_string().parse().unwrap(),
+            encryption_level: _encryption_level.to_string().parse().unwrap(),
             #[cfg(feature = "encryption")]
             known_hosts: None,
             window_size: 1,
@@ -572,7 +593,7 @@ mod tests {
         let remote_file = "to".parse().unwrap();
         let create_writer = |_path: &FilePath| Ok(MutexWriter::new(bytes.clone()));
 
-        start_receive(local_file, remote_file, cli_config, 4, create_writer)
+        start_receive(local_file, remote_file, cli_config, create_writer)
     }
 
     fn start_server(
@@ -589,8 +610,6 @@ mod tests {
             listen,
             directory: "/tmp".parse().unwrap(),
             allow_overwrite: false,
-            max_queued_blocks_reader: 4,
-            max_queued_blocks_writer: 4,
             request_timeout: Duration::from_millis(1000),
             max_connections: 10,
             max_file_size: 2000,
@@ -600,6 +619,7 @@ mod tests {
             required_full_encryption: false,
             require_server_port_change: false,
             max_window_size: 4,
+            prefer_seek: false,
         };
 
         let create_reader = |_path: &FilePath, _config: &ServerConfig| {
@@ -634,6 +654,7 @@ mod tests {
 
     impl io::Write for MutexWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            #[allow(unused_imports)]
             use std::io::Write;
             self.cursor.lock().unwrap().write(buf).unwrap();
             Ok(buf.len())
@@ -653,6 +674,7 @@ mod tests {
 
     impl io::Seek for MutexWriter {
         fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+            #[allow(unused_imports)]
             use std::io::Seek;
             let pos = match pos {
                 io::SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
@@ -690,6 +712,7 @@ mod tests {
     #[cfg(not(feature = "std"))]
     impl io::Read for CursorReader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            #[allow(unused_imports)]
             use std::io::Read;
             self.cursor
                 .read(buf)
@@ -700,6 +723,7 @@ mod tests {
     #[cfg(not(feature = "std"))]
     impl io::Seek for CursorReader {
         fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+            #[allow(unused_imports)]
             use std::io::Seek;
             let pos = match pos {
                 io::SeekFrom::Start(p) => std::io::SeekFrom::Start(p),

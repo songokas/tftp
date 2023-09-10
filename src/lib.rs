@@ -1,7 +1,4 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(unused_mut)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
 
 #[cfg(test)]
 #[macro_use]
@@ -25,7 +22,6 @@ pub mod types {
 
 #[cfg(not(feature = "alloc"))]
 pub mod types {
-    // heapless::Vec resizing is very slow
     pub type DataBuffer = heapless::Vec<u8, { crate::config::MAX_BUFFER_SIZE as usize }>;
     pub type PacketBlock = DataBuffer;
     pub type DataBlock = heapless::Vec<u8, { crate::config::MAX_DATA_BLOCK_SIZE as usize }>;
@@ -58,7 +54,8 @@ pub mod time {
 
 #[cfg(feature = "alloc")]
 mod map {
-    pub use alloc::collections::{btree_map::Entry, BTreeMap as Map};
+    pub use alloc::collections::btree_map::Entry;
+    pub use alloc::collections::BTreeMap as Map;
 }
 
 #[cfg(feature = "std")]
@@ -68,7 +65,14 @@ pub mod std_compat {
     }
 
     pub mod io {
-        pub use std::io::{BufRead, Error, ErrorKind, Read, Result, Seek, SeekFrom, Write};
+        pub use std::io::BufRead;
+        pub use std::io::Error;
+        pub use std::io::ErrorKind;
+        pub use std::io::Read;
+        pub use std::io::Result;
+        pub use std::io::Seek;
+        pub use std::io::SeekFrom;
+        pub use std::io::Write;
     }
 
     pub mod error {
@@ -136,13 +140,15 @@ pub mod error;
 #[cfg(not(feature = "alloc"))]
 mod map;
 
+mod block_mapper;
 mod flow_control;
 mod packet;
+mod readers;
 pub mod server;
 pub mod socket;
 #[cfg(not(feature = "std"))]
 pub mod std_compat;
-mod storage;
+mod writers;
 
 #[cfg(feature = "encryption")]
 pub mod key_management;
@@ -153,4 +159,5 @@ pub mod key_management {
     pub fn read_authorized_keys() {}
     pub fn create_finalized_keys() {}
     pub fn create_initial_keys() {}
+    pub type AuthorizedKeys = ();
 }

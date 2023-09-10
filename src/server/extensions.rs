@@ -1,24 +1,25 @@
 use core::time::Duration;
 
-use log::{debug, error, warn};
-use rand::{CryptoRng, RngCore};
+use log::*;
+use rand::CryptoRng;
+use rand::RngCore;
 
-use crate::{
-    config::{
-        ConnectionOptions, ENCRYPTION_TAG_SIZE, EXTENSION_BLOCK_SIZE_MIN,
-        EXTENSION_TIMEOUT_SIZE_MAX, EXTENSION_TIMEOUT_SIZE_MIN, EXTENSION_WINDOW_SIZE_MIN,
-    },
-    encryption::{
-        decode_public_key, encode_nonce, encode_public_key, EncryptionKeys, EncryptionLevel,
-        FinalizeKeysCallback, FinalizedKeys,
-    },
-    error::ExtensionError,
-    key_management::create_finalized_keys,
-    map::Entry,
-    packet::{Extension, PacketExtensions, PacketType},
-    server::ServerConfig,
-    string::format_str,
-};
+use super::config::ServerConfig;
+use crate::config::ConnectionOptions;
+use crate::config::EXTENSION_BLOCK_SIZE_MIN;
+use crate::config::EXTENSION_TIMEOUT_SIZE_MIN;
+use crate::config::EXTENSION_WINDOW_SIZE_MIN;
+use crate::encryption::*;
+use crate::error::ExtensionError;
+use crate::macros::cfg_encryption;
+use crate::packet::Extension;
+use crate::packet::PacketExtensions;
+use crate::string::format_str;
+
+cfg_encryption! {
+    use crate::key_management::create_finalized_keys;
+    use crate::config::ENCRYPTION_TAG_SIZE;
+}
 
 #[allow(unused_variables)]
 pub fn create_options(
@@ -34,13 +35,13 @@ pub fn create_options(
         let client_block_size: u16 = size.parse().unwrap_or(0);
         if (EXTENSION_BLOCK_SIZE_MIN..=config.max_block_size).contains(&client_block_size) {
             options.block_size = client_block_size;
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::BlockSize,
                 format_str!(ExtensionValue, "{}", options.block_size),
             );
         } else if client_block_size > config.max_block_size {
             options.block_size = config.max_block_size;
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::BlockSize,
                 format_str!(ExtensionValue, "{}", options.block_size),
             );
@@ -53,13 +54,13 @@ pub fn create_options(
         let client_window_size: u16 = window_size.parse().unwrap_or(0);
         if (EXTENSION_WINDOW_SIZE_MIN..=max_window_size).contains(&client_window_size) {
             options.window_size = client_window_size;
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::WindowSize,
                 format_str!(ExtensionValue, "{}", options.window_size),
             );
         } else if client_window_size > max_window_size {
             options.window_size = max_window_size;
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::WindowSize,
                 format_str!(ExtensionValue, "{}", options.window_size),
             );
@@ -77,7 +78,7 @@ pub fn create_options(
             .contains(&(client_retry_seconds as u64))
         {
             options.retry_packet_after_timeout = Duration::from_secs(client_retry_seconds as u64);
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::Timeout,
                 format_str!(ExtensionValue, "{}", client_retry_seconds),
             );
@@ -90,7 +91,7 @@ pub fn create_options(
         match size.parse() {
             Ok(c) => {
                 options.file_size = Some(c);
-                used_extensions.insert(
+                let _ = used_extensions.insert(
                     Extension::TransferSize,
                     format_str!(ExtensionValue, "{}", c),
                 );
@@ -130,11 +131,11 @@ pub fn create_options(
             let remote_public_key = decode_public_key(public.as_bytes())?;
             let final_keys =
                 create_finalized_keys(&config.private_key, &remote_public_key, None, rng);
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::PublicKey,
                 encode_public_key(&final_keys.public).expect("public key encoder"),
             );
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::Nonce,
                 encode_nonce(final_keys.nonce()).expect("nonce encoder"),
             );
@@ -147,7 +148,7 @@ pub fn create_options(
                 EncryptionLevel::OptionalProtocol => EncryptionLevel::Protocol,
                 _ => level,
             };
-            used_extensions.insert(
+            let _ = used_extensions.insert(
                 Extension::EncryptionLevel,
                 format_str!(ExtensionValue, "{}", options.encryption_level),
             );
@@ -168,7 +169,6 @@ pub fn create_options(
     {
         options.block_size -= ENCRYPTION_TAG_SIZE as u16;
     }
-    debug!("Server extensions {:?}", used_extensions);
     Ok((used_extensions, options, finalized_keys))
 }
 
@@ -177,10 +177,8 @@ mod tests {
     use rand::rngs::OsRng;
 
     use super::*;
-    #[cfg(feature = "encryption")]
-    use crate::encryption::{
-        decode_nonce, decode_private_key, FinalizedKeys, InitialKeys, PrivateKey, PublicKey,
-    };
+    #[allow(unused_imports)]
+    use crate::encryption::*;
     use crate::types::FilePath;
 
     #[test]
@@ -193,10 +191,10 @@ mod tests {
 
         let options = ConnectionOptions::default();
         let mut extensions = PacketExtensions::new();
-        extensions.insert(Extension::BlockSize, "500".parse().unwrap());
-        extensions.insert(Extension::TransferSize, "6".parse().unwrap());
-        extensions.insert(Extension::Timeout, "7".parse().unwrap());
-        extensions.insert(Extension::WindowSize, "8".parse().unwrap());
+        let _ = extensions.insert(Extension::BlockSize, "500".parse().unwrap());
+        let _ = extensions.insert(Extension::TransferSize, "6".parse().unwrap());
+        let _ = extensions.insert(Extension::Timeout, "7".parse().unwrap());
+        let _ = extensions.insert(Extension::WindowSize, "8".parse().unwrap());
         let (extensions, options, _) =
             create_options(extensions, options, &create_config(), None, 8, OsRng).unwrap();
         assert_eq!(extensions.len(), 4, "{extensions:?}");
@@ -216,10 +214,10 @@ mod tests {
 
         let options = ConnectionOptions::default();
         let mut extensions = PacketExtensions::new();
-        extensions.insert(Extension::BlockSize, "1".parse().unwrap());
-        extensions.insert(Extension::TransferSize, "a".parse().unwrap());
-        extensions.insert(Extension::Timeout, "0".parse().unwrap());
-        extensions.insert(Extension::WindowSize, "0".parse().unwrap());
+        let _ = extensions.insert(Extension::BlockSize, "1".parse().unwrap());
+        let _ = extensions.insert(Extension::TransferSize, "a".parse().unwrap());
+        let _ = extensions.insert(Extension::Timeout, "0".parse().unwrap());
+        let _ = extensions.insert(Extension::WindowSize, "0".parse().unwrap());
         let (extensions, options, _) =
             create_options(extensions, options, &create_config(), None, 8, OsRng).unwrap();
         assert_eq!(extensions.len(), 0);
@@ -233,25 +231,22 @@ mod tests {
     fn test_parse_extensions_encryption() {
         use chacha20poly1305::aead::OsRng;
 
-        use crate::encryption::{
-            decode_nonce, decode_private_key, EncryptionLevel, Encryptor, FinalizedKeys,
-            InitialKeys,
-        };
+        use crate::encryption::EncryptionLevel;
 
         let options = ConnectionOptions::default();
         let mut extensions = PacketExtensions::new();
-        extensions.insert(
+        let _ = extensions.insert(
             Extension::PublicKey,
             "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY="
                 .parse()
                 .unwrap(),
         );
-        extensions.insert(
+        let _ = extensions.insert(
             Extension::Nonce,
             "Tw2EobyajLuhvFY9WNMfIFK7GGWqOCfI".parse().unwrap(),
         );
 
-        extensions.insert(Extension::EncryptionLevel, "none".parse().unwrap());
+        let _ = extensions.insert(Extension::EncryptionLevel, "none".parse().unwrap());
         let (extensions, options, _) =
             create_options(extensions, options, &create_config(), None, 8, OsRng).unwrap();
         assert_eq!(extensions.len(), 3);
@@ -266,8 +261,6 @@ mod tests {
             listen,
             directory: FilePath::new(),
             allow_overwrite: false,
-            max_queued_blocks_reader: 1,
-            max_queued_blocks_writer: 1,
             request_timeout: Duration::from_secs(10),
             max_connections: 1,
             max_file_size: 1,
@@ -277,6 +270,7 @@ mod tests {
             required_full_encryption: false,
             require_server_port_change: false,
             max_window_size: 8,
+            prefer_seek: false,
         }
     }
 

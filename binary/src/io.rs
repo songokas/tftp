@@ -1,13 +1,37 @@
-use std::{fs::File, path::PathBuf};
+use std::fs::canonicalize;
+use std::fs::create_dir_all;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::BufReader;
+use std::path::PathBuf;
 
-use tftp::{
-    config::{ConnectionOptions, MAX_EXTENSION_VALUE_SIZE},
-    encryption::{decode_private_key, PrivateKey},
-    error::{BoxedResult, EncryptionError, FileError},
-    server::ServerConfig,
-    std_compat::io,
-    types::FilePath,
-};
+use tftp::error::BoxedResult;
+use tftp::error::FileError;
+use tftp::server::ServerConfig;
+use tftp::std_compat::io;
+use tftp::types::FilePath;
+
+use crate::macros::cfg_encryption;
+use crate::macros::cfg_no_std;
+
+cfg_encryption! {
+    use tftp::config::MAX_EXTENSION_VALUE_SIZE;
+    use tftp::encryption::decode_private_key;
+    use tftp::encryption::PrivateKey;
+    use tftp::error::EncryptionError;
+}
+
+cfg_no_std! {
+    use tftp::std_compat::io::BufRead;
+    use std::io::ErrorKind as StdErrorKind;
+    use tftp::types::DefaultString;
+    use std::string::String;
+    use std::io::SeekFrom as StdSeekFrom;
+    // use std::io::Read; for StdCompatFile
+    // use std::io::Seek; for StdCompatFile
+    // use std::io::Write; for StdCompatFile
+    // use use std::io::BufRead; for StdBufReader
+}
 
 pub fn create_writer(path: &FilePath) -> BoxedResult<StdCompatFile> {
     let file = File::create(path.as_str()).map_err(from_io_err)?;
@@ -28,7 +52,6 @@ pub fn create_server_reader(
     path: &FilePath,
     config: &ServerConfig,
 ) -> BoxedResult<(Option<u64>, StdCompatFile)> {
-    use std::fs::canonicalize;
     let dir: PathBuf = config.directory.as_str().parse()?;
     let path = dir.join(path.as_str());
     let real_dir = canonicalize(dir);
@@ -42,7 +65,6 @@ pub fn create_server_reader(
 }
 
 pub fn create_server_writer(path: &FilePath, config: &ServerConfig) -> BoxedResult<StdCompatFile> {
-    use std::fs::{canonicalize, create_dir_all, OpenOptions};
     // TODO alloc in stack PathBuf
     let dir: PathBuf = config.directory.as_str().parse()?;
     let path: PathBuf = dir.join(path.as_str());
@@ -99,9 +121,9 @@ pub fn create_simple_reader(path: &str) -> BoxedResult<StdCompatFile> {
 pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, EncryptionError> {
     #[cfg(feature = "std")]
     use std::io::Read;
-
     #[cfg(not(feature = "std"))]
     use tftp::std_compat::io::Read;
+
     let result = decode_private_key(private.as_bytes());
 
     if result.is_err() {
@@ -118,9 +140,9 @@ pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, Encryptio
 }
 
 #[cfg(feature = "std")]
-pub type StdCompatFile = std::fs::File;
+pub type StdCompatFile = File;
 #[cfg(not(feature = "std"))]
-pub struct StdCompatFile(pub std::fs::File);
+pub struct StdCompatFile(pub File);
 
 #[cfg(not(feature = "std"))]
 impl io::Write for StdCompatFile {
@@ -145,13 +167,13 @@ impl io::Seek for StdCompatFile {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         use std::io::Seek;
         let pos = match pos {
-            io::SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
-            io::SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
-            io::SeekFrom::End(p) => std::io::SeekFrom::End(p),
+            io::SeekFrom::Start(p) => StdSeekFrom::Start(p),
+            io::SeekFrom::Current(p) => StdSeekFrom::Current(p),
+            io::SeekFrom::End(p) => StdSeekFrom::End(p),
         };
         self.0
             .seek(pos)
-            .map_err(|_| tftp::std_compat::io::Error::from(tftp::std_compat::io::ErrorKind::Other))
+            .map_err(|_| io::Error::from(io::ErrorKind::Other))
     }
 }
 
@@ -168,30 +190,30 @@ pub fn from_io_err(err: std::io::Error) -> io::Error {
     return err;
     #[cfg(not(feature = "std"))]
     io::Error::from(match err.kind() {
-        std::io::ErrorKind::NotFound => io::ErrorKind::NotFound,
-        std::io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
-        std::io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,
-        std::io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,
-        std::io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,
-        std::io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,
-        std::io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,
-        std::io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,
-        std::io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,
-        std::io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,
-        std::io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,
-        std::io::ErrorKind::InvalidData => io::ErrorKind::InvalidData,
-        std::io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,
-        std::io::ErrorKind::WriteZero => io::ErrorKind::WriteZero,
-        std::io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,
-        std::io::ErrorKind::UnexpectedEof => io::ErrorKind::UnexpectedEof,
-        std::io::ErrorKind::OutOfMemory => io::ErrorKind::OutOfMemory,
+        StdErrorKind::NotFound => io::ErrorKind::NotFound,
+        StdErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
+        StdErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,
+        StdErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,
+        StdErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,
+        StdErrorKind::NotConnected => io::ErrorKind::NotConnected,
+        StdErrorKind::AddrInUse => io::ErrorKind::AddrInUse,
+        StdErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,
+        StdErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,
+        StdErrorKind::WouldBlock => io::ErrorKind::WouldBlock,
+        StdErrorKind::InvalidInput => io::ErrorKind::InvalidInput,
+        StdErrorKind::InvalidData => io::ErrorKind::InvalidData,
+        StdErrorKind::TimedOut => io::ErrorKind::TimedOut,
+        StdErrorKind::WriteZero => io::ErrorKind::WriteZero,
+        StdErrorKind::Interrupted => io::ErrorKind::Interrupted,
+        StdErrorKind::UnexpectedEof => io::ErrorKind::UnexpectedEof,
+        StdErrorKind::OutOfMemory => io::ErrorKind::OutOfMemory,
         _ => io::ErrorKind::Other,
     })
 }
 
 #[allow(dead_code)]
 pub fn create_buff_reader(path: &str) -> io::Result<StdBufReader> {
-    let file = std::io::BufReader::new(
+    let file = BufReader::new(
         File::options()
             .create(true)
             .read(true)
@@ -205,19 +227,16 @@ pub fn create_buff_reader(path: &str) -> io::Result<StdBufReader> {
 }
 
 #[cfg(feature = "std")]
-pub type StdBufReader = std::io::BufReader<File>;
+pub type StdBufReader = BufReader<File>;
 #[cfg(not(feature = "std"))]
-pub struct StdBufReader(std::io::BufReader<File>);
+pub struct StdBufReader(BufReader<File>);
 
 #[cfg(not(feature = "std"))]
-impl tftp::std_compat::io::BufRead for StdBufReader {
-    fn read_line(
-        &mut self,
-        buf: &mut tftp::types::DefaultString,
-    ) -> tftp::std_compat::io::Result<usize> {
+impl BufRead for StdBufReader {
+    fn read_line(&mut self, buf: &mut DefaultString) -> io::Result<usize> {
         use std::io::BufRead;
         // TODO alloc in stack
-        let mut s = std::string::String::with_capacity(buf.capacity());
+        let mut s = String::with_capacity(buf.capacity());
         let result = self.0.read_line(&mut s).map_err(from_io_err);
         let _result = buf.push_str(s.as_str());
         #[cfg(not(feature = "alloc"))]

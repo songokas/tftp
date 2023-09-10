@@ -1,15 +1,18 @@
-use core::{
-    fmt::{Display, Formatter},
-    hash::Hash,
-    mem::{size_of, size_of_val},
-    str::{from_utf8, FromStr},
-};
+use core::fmt::Display;
+use core::fmt::Formatter;
+use core::hash::Hash;
+use core::mem::size_of;
+use core::mem::size_of_val;
+use core::str::from_utf8;
+use core::str::FromStr;
 
-use crate::{
-    error::{PacketError, PacketResult},
-    map::Map,
-    types::{DefaultString, ExtensionValue, FilePath, PacketBlock},
-};
+use crate::error::PacketError;
+use crate::error::PacketResult;
+use crate::map::Map;
+use crate::types::DefaultString;
+use crate::types::ExtensionValue;
+use crate::types::FilePath;
+use crate::types::PacketBlock;
 
 #[cfg(feature = "alloc")]
 pub type PacketExtensions = Map<Extension, ExtensionValue>;
@@ -68,32 +71,32 @@ impl<'a> ByteConverter<'a> for Packet<'a> {
             Packet::Read(p) => PacketType::Read
                 .to_bytes()
                 .into_iter()
-                .chain(p.to_bytes().into_iter())
+                .chain(p.to_bytes())
                 .collect(),
             Packet::Write(p) => PacketType::Write
                 .to_bytes()
                 .into_iter()
-                .chain(p.to_bytes().into_iter())
+                .chain(p.to_bytes())
                 .collect(),
             Packet::Data(p) => PacketType::Data
                 .to_bytes()
                 .into_iter()
-                .chain(p.to_bytes().into_iter())
+                .chain(p.to_bytes())
                 .collect(),
             Packet::Ack(p) => PacketType::Ack
                 .to_bytes()
                 .into_iter()
-                .chain(p.to_bytes().into_iter())
+                .chain(p.to_bytes())
                 .collect(),
             Packet::Error(p) => PacketType::Error
                 .to_bytes()
                 .into_iter()
-                .chain(p.to_bytes().into_iter())
+                .chain(p.to_bytes())
                 .collect(),
             Packet::OptionalAck(p) => PacketType::OptionalAck
                 .to_bytes()
                 .into_iter()
-                .chain(p.to_bytes().into_iter())
+                .chain(p.to_bytes())
                 .collect(),
         }
     }
@@ -269,7 +272,7 @@ impl<'a> ByteConverter<'a> for OptionalAck {
             };
 
             if let (Ok(extension), Ok(value)) = (name.parse(), value.parse()) {
-                extensions.insert(extension, value);
+                let _ = extensions.insert(extension, value);
             };
 
             match next {
@@ -289,9 +292,9 @@ impl<'a> ByteConverter<'a> for OptionalAck {
                     .as_bytes()
                     .iter()
                     .copied()
-                    .chain([0].into_iter())
+                    .chain([0])
                     .chain(value.as_bytes().iter().copied())
-                    .chain([0].into_iter());
+                    .chain([0]);
                 v.extend(bytes);
                 v
             })
@@ -342,10 +345,10 @@ impl<'a> ByteConverter<'a> for RequestPacket {
         name.as_bytes()
             .iter()
             .copied()
-            .chain([0].into_iter())
+            .chain([0])
             .chain(self.mode.as_str().as_bytes().iter().copied())
-            .chain([0].into_iter())
-            .chain(optional.to_bytes().into_iter())
+            .chain([0])
+            .chain(optional.to_bytes())
             .collect()
     }
 }
@@ -472,7 +475,7 @@ impl<'a> ByteConverter<'a> for ErrorPacket {
             .to_be_bytes()
             .into_iter()
             .chain(self.message.as_bytes().iter().copied())
-            .chain([0].into_iter())
+            .chain([0])
             .collect()
     }
 }

@@ -1,18 +1,26 @@
-use chacha20poly1305::{AeadCore, XChaCha20Poly1305};
-use rand::{CryptoRng, RngCore};
+use chacha20poly1305::AeadCore;
+use chacha20poly1305::XChaCha20Poly1305;
+use rand::CryptoRng;
+use rand::RngCore;
 use x25519_dalek::EphemeralSecret;
 
-use crate::{
-    config::MAX_EXTENSION_VALUE_SIZE,
-    encryption::{
-        decode_private_key, decode_public_key, encode_public_key, EncryptionKeys, FinalizedKeys,
-        InitialKey, InitialKeys, Nonce, PrivateKey, PublicKey,
-    },
-    error::{BoxedError, BoxedResult, EncryptionError},
-    server::AuthorizedKeys,
-    std_compat::io::{BufRead, Write},
-    types::{DefaultString, ExtensionValue},
-};
+use crate::encryption::decode_public_key;
+use crate::encryption::encode_public_key;
+use crate::encryption::FinalizedKeys;
+use crate::encryption::InitialKey;
+use crate::encryption::InitialKeys;
+use crate::encryption::Nonce;
+use crate::encryption::PrivateKey;
+use crate::encryption::PublicKey;
+use crate::error::BoxedError;
+use crate::error::BoxedResult;
+use crate::std_compat::io::BufRead;
+use crate::std_compat::io::Write;
+
+#[cfg(all(feature = "alloc", feature = "encryption"))]
+pub type AuthorizedKeys = alloc::vec::Vec<PublicKey>;
+#[cfg(all(not(feature = "alloc"), feature = "encryption"))]
+pub type AuthorizedKeys = heapless::Vec<PublicKey, { crate::config::MAX_CLIENTS as usize }>;
 
 pub fn create_initial_keys(
     private: &Option<PrivateKey>,
@@ -24,7 +32,7 @@ pub fn create_initial_keys(
             private: InitialKey::Static(k.clone()),
         },
         None => {
-            let random_key = EphemeralSecret::new(&mut rng);
+            let random_key = EphemeralSecret::random_from_rng(&mut rng);
             InitialKeys {
                 public: PublicKey::from(&random_key),
                 private: InitialKey::Ephemeral(random_key),
@@ -37,7 +45,7 @@ pub fn create_finalized_keys(
     private: &Option<PrivateKey>,
     remote_public_key: &PublicKey,
     nonce: Option<Nonce>,
-    mut rng: impl CryptoRng + RngCore + Copy,
+    rng: impl CryptoRng + RngCore + Copy,
 ) -> FinalizedKeys {
     let initial_keys = create_initial_keys(private, rng);
     initial_keys.finalize(
@@ -99,7 +107,8 @@ pub fn append_to_known_hosts(
 #[cfg(test)]
 mod tests {
 
-    use vfs::{MemoryFS, VfsPath};
+    use vfs::MemoryFS;
+    use vfs::VfsPath;
 
     use super::*;
 
