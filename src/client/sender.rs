@@ -185,7 +185,7 @@ where
                 let last_read_length = data_block.data.len();
 
                 debug!(
-                    "Send data block {} data size {last_read_length} retry {} left to send {packets_to_send}",
+                    "Send data block {} data size {last_read_length} retry {} remaining packets {packets_to_send}",
                     data_block.block, data_block.retry
                 );
 
@@ -244,6 +244,7 @@ where
             last_received.elapsed().as_micros(),
             wait_for.unwrap_or(Duration::ZERO).as_millis()
         );
+
         let length = match socket.recv_from(&mut buffer, wait_for) {
             Ok((n, s)) => {
                 if s != endpoint {

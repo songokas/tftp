@@ -35,7 +35,7 @@ pub fn validate_request_options(
         };
 
         let packet = Packet::Error(ErrorPacket::new(
-            ErrorCode::IllegalOperation,
+            ErrorCode::AccessVioliation,
             format_str!(
                 DefaultString,
                 "Missing extension {} while {} provided",
@@ -75,9 +75,8 @@ pub fn handle_file_size(received_size: u64, max_file_size: u64) -> Result<(), Er
         );
         let message = format_str!(
             DefaultString,
-            "Invalid file size received {} expected {}",
+            "Invalid file size received {}",
             received_size,
-            max_file_size
         );
         return Err(ErrorPacket::new(ErrorCode::DiskFull, message));
     }

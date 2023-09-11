@@ -115,7 +115,7 @@ where
 
     let mut clients: Clients<_, _, _> = Clients::new();
 
-    debug!(
+    trace!(
         "Size of all clients in memory {} bytes",
         size_of_val(&clients)
     );
@@ -134,19 +134,19 @@ where
             buffer.set_len(max_buffer_size as usize)
         };
 
-        // let sent_in = instant();
+        let sent_in = instant();
 
         let (sent, recv_next_client_to_send) = send_data_blocks(&mut clients, next_client_to_send);
 
         next_client_to_send = recv_next_client_to_send;
         wait_control.sending(sent);
 
-        // debug!(
-        //     "Sent {sent} next {recv_next_client_to_send} in {}",
-        //     sent_in.elapsed().as_secs_f32()
-        // );
+        trace!(
+            "Sent {sent} next {recv_next_client_to_send} in {}",
+            sent_in.elapsed().as_secs_f32()
+        );
 
-        // let client_received_in = instant();
+        let client_received_in = instant();
 
         let client_received = clients.iter().skip(next_client_to_receive).find_map(
             |(client_socket_addr, (connection, _))| {
@@ -170,13 +170,13 @@ where
             },
         );
 
-        // debug!(
-        //     "Received from client {:?} next {next_client_to_receive} in {}",
-        //     client_received,
-        //     client_received_in.elapsed().as_secs_f32()
-        // );
+        trace!(
+            "Received from client {:?} next {next_client_to_receive} in {}",
+            client_received,
+            client_received_in.elapsed().as_secs_f32()
+        );
 
-        // let received_in = instant();
+        let received_in = instant();
 
         let (received_length, from_client) = match client_received {
             Some(r) => r,
@@ -200,16 +200,16 @@ where
             },
         };
 
-        // debug!(
-        //     "Received connection from {from_client} in {}",
-        //     received_in.elapsed().as_secs_f32(),
-        // );
+        trace!(
+            "Received connection from {from_client} in {}",
+            received_in.elapsed().as_secs_f32(),
+        );
 
         wait_control.receiving();
         buffer.truncate(received_length);
 
         let clients_len = clients.len();
-        // let processed_in = instant();
+        let processed_in = instant();
 
         match clients.entry(from_client) {
             Entry::Occupied(mut entry) => {
@@ -354,10 +354,10 @@ where
             }
         }
 
-        // debug!(
-        //     "Processed connection from {from_client} in {}",
-        //     processed_in.elapsed().as_secs_f32(),
-        // );
+        trace!(
+            "Processed connection from {from_client} in {}",
+            processed_in.elapsed().as_secs_f32(),
+        );
     }
 }
 

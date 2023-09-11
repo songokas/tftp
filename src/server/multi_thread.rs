@@ -4,8 +4,8 @@ use std::thread::JoinHandle;
 use core::num::NonZeroU32;
 use core::time::Duration;
 
-use log::debug;
 use log::info;
+use log::trace;
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -128,7 +128,7 @@ where
                 Err(e) => return Err(e.into()),
             };
 
-        debug!(
+        trace!(
             "Received connection from {from_client} in {} exists {}",
             received_in.elapsed().as_secs_f32(),
             handles.contains_key(&from_client),

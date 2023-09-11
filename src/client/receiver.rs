@@ -185,7 +185,7 @@ where
 
         match Packet::from_bytes(&buffer) {
             Ok(Packet::Data(p)) => {
-                let written = match write_block(
+                match write_block(
                     &socket,
                     endpoint,
                     &mut block_writer,
@@ -194,23 +194,20 @@ where
                     &options,
                     &mut last_block_ack,
                 ) {
-                    Ok(Some(n)) => {
-                        if n > 0 {
-                            timeout = instant();
-                            total += n;
+                    Ok(Some(written)) => {
+                        timeout = instant();
+                        total += written;
+
+                        if written < options.block_size as usize {
+                            info!("Client finished receiving with bytes {}", total);
+                            return Ok((total, options.remote_public_key()));
                         }
-                        n
                     }
                     Ok(None) => continue,
                     Err(e) => return Err(e),
                 };
                 // this would write more than expected but only by a block size maximum
                 handle_file_size(&socket, endpoint, total, config.max_file_size)?;
-
-                if written < options.block_size as usize {
-                    info!("Client finished receiving with bytes {}", total);
-                    return Ok((total, options.remote_public_key()));
-                }
             }
             Ok(Packet::Error(p)) => {
                 return Err(PacketError::RemoteError(p.message).into());

@@ -324,21 +324,25 @@ mod tests {
     #[test]
     fn test_client_full_encryption() {
         // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-        let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-        let key: [u8; 32] = bytes.try_into().unwrap();
-        let server_private_key: PrivateKey = key.into();
-        client_send(
-            EncryptionLevel::Protocol,
-            Some(server_private_key.clone()),
-            None,
-            None,
-        );
-        client_receive(
-            EncryptionLevel::Protocol,
-            Some(server_private_key),
-            None,
-            None,
-        );
+        for w in [1, 4] {
+            let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+            let key: [u8; 32] = bytes.try_into().unwrap();
+            let server_private_key: PrivateKey = key.into();
+            client_send(
+                EncryptionLevel::Protocol,
+                w,
+                Some(server_private_key.clone()),
+                None,
+                None,
+            );
+            client_receive(
+                EncryptionLevel::Protocol,
+                w,
+                Some(server_private_key),
+                None,
+                None,
+            );
+        }
     }
 
     #[allow(unused_must_use)]
@@ -346,36 +350,42 @@ mod tests {
     #[test]
     fn test_client_full_encryption_only_authorized() {
         // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-        let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-        let key: [u8; 32] = bytes.try_into().unwrap();
-        let server_private_key: PrivateKey = key.into();
-        let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-        let key: [u8; 32] = bytes.try_into().unwrap();
-        let client_private_key: PrivateKey = key.into();
-        let mut authorized_keys = AuthorizedKeys::new();
+        for w in [1, 4] {
+            let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+            let key: [u8; 32] = bytes.try_into().unwrap();
+            let server_private_key: PrivateKey = key.into();
+            let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+            let key: [u8; 32] = bytes.try_into().unwrap();
+            let client_private_key: PrivateKey = key.into();
+            let mut authorized_keys = AuthorizedKeys::new();
 
-        authorized_keys.push(PublicKey::from(&client_private_key));
-        client_send(
-            EncryptionLevel::Protocol,
-            Some(server_private_key.clone()),
-            #[cfg(feature = "encryption")]
-            Some(authorized_keys.clone()),
-            Some(client_private_key.clone()),
-        );
-        client_receive(
-            EncryptionLevel::Protocol,
-            Some(server_private_key),
-            #[cfg(feature = "encryption")]
-            Some(authorized_keys),
-            Some(client_private_key),
-        );
+            authorized_keys.push(PublicKey::from(&client_private_key));
+            client_send(
+                EncryptionLevel::Protocol,
+                w,
+                Some(server_private_key.clone()),
+                #[cfg(feature = "encryption")]
+                Some(authorized_keys.clone()),
+                Some(client_private_key.clone()),
+            );
+            client_receive(
+                EncryptionLevel::Protocol,
+                w,
+                Some(server_private_key),
+                #[cfg(feature = "encryption")]
+                Some(authorized_keys),
+                Some(client_private_key),
+            );
+        }
     }
 
     #[cfg(feature = "encryption")]
     #[test]
     fn test_client_protocol_encryption() {
-        client_send(EncryptionLevel::Protocol, None, None, None);
-        client_receive(EncryptionLevel::Protocol, None, None, None);
+        for w in [1, 4] {
+            client_send(EncryptionLevel::Protocol, w, None, None, None);
+            client_receive(EncryptionLevel::Protocol, w, None, None, None);
+        }
     }
 
     #[allow(unused_must_use)]
@@ -383,31 +393,37 @@ mod tests {
     #[test]
     fn test_client_protocol_encryption_authorized() {
         // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-        let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-        let key: [u8; 32] = bytes.try_into().unwrap();
-        let client_private_key: PrivateKey = key.into();
-        let mut authorized_keys = AuthorizedKeys::new();
-        authorized_keys.push(PublicKey::from(&client_private_key));
-        client_send(
-            EncryptionLevel::Protocol,
-            None,
-            Some(authorized_keys.clone()),
-            Some(client_private_key.clone()),
-        );
-        client_receive(
-            EncryptionLevel::Protocol,
-            None,
-            Some(authorized_keys),
-            Some(client_private_key),
-        );
+        for w in [1, 4] {
+            let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+            let key: [u8; 32] = bytes.try_into().unwrap();
+            let client_private_key: PrivateKey = key.into();
+            let mut authorized_keys = AuthorizedKeys::new();
+            authorized_keys.push(PublicKey::from(&client_private_key));
+            client_send(
+                EncryptionLevel::Protocol,
+                w,
+                None,
+                Some(authorized_keys.clone()),
+                Some(client_private_key.clone()),
+            );
+            client_receive(
+                EncryptionLevel::Protocol,
+                w,
+                None,
+                Some(authorized_keys),
+                Some(client_private_key),
+            );
+        }
     }
 
     #[cfg(feature = "encryption")]
     #[test]
     fn test_client_data_encryption() {
         // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-        client_send(EncryptionLevel::Data, None, None, None);
-        client_receive(EncryptionLevel::Data, None, None, None);
+        for w in [1, 4] {
+            client_send(EncryptionLevel::Data, w, None, None, None);
+            client_receive(EncryptionLevel::Data, w, None, None, None);
+        }
     }
 
     #[test]
@@ -415,12 +431,15 @@ mod tests {
         // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
         //     .format_timestamp_micros()
         //     .init();
-        client_send(EncryptionLevel::None, None, None, None);
-        client_receive(EncryptionLevel::None, None, None, None);
+        for w in [1, 4] {
+            client_send(EncryptionLevel::None, w, None, None, None);
+            client_receive(EncryptionLevel::None, w, None, None, None);
+        }
     }
 
     fn client_send(
         encryption_level: EncryptionLevel,
+        window_size: u64,
         server_private_key: Option<PrivateKey>,
         authorized_keys: Option<AuthorizedKeys>,
         _client_private_key: Option<PrivateKey>,
@@ -456,6 +475,7 @@ mod tests {
                 start_send_file(
                     server_port,
                     encryption_level,
+                    window_size,
                     d,
                     #[cfg(feature = "encryption")]
                     server_public_key,
@@ -472,6 +492,7 @@ mod tests {
 
     fn client_receive(
         encryption_level: EncryptionLevel,
+        window_size: u64,
         _server_private_key: Option<PrivateKey>,
         _authorized_keys: Option<AuthorizedKeys>,
         _client_private_key: Option<PrivateKey>,
@@ -508,6 +529,7 @@ mod tests {
                 start_receive_file(
                     server_port,
                     encryption_level,
+                    window_size,
                     d,
                     #[cfg(feature = "encryption")]
                     server_public_key,
@@ -525,6 +547,7 @@ mod tests {
     fn start_send_file(
         server_port: u16,
         _encryption_level: EncryptionLevel,
+        window_size: u64,
         bytes: Vec<u8>,
         #[cfg(feature = "encryption")] server_public_key: Option<ShortString>,
         #[cfg(feature = "encryption")] private_key: Option<ShortString>,
@@ -544,7 +567,7 @@ mod tests {
             encryption_level: _encryption_level.to_string().parse().unwrap(),
             #[cfg(feature = "encryption")]
             known_hosts: None,
-            window_size: 1,
+            window_size,
             allow_server_port_change: false,
         };
 
@@ -566,6 +589,7 @@ mod tests {
     fn start_receive_file(
         server_port: u16,
         _encryption_level: EncryptionLevel,
+        window_size: u64,
         bytes: Arc<Mutex<Cursor<Vec<u8>>>>,
         #[cfg(feature = "encryption")] server_public_key: Option<ShortString>,
         #[cfg(feature = "encryption")] private_key: Option<ShortString>,
@@ -585,7 +609,7 @@ mod tests {
             encryption_level: _encryption_level.to_string().parse().unwrap(),
             #[cfg(feature = "encryption")]
             known_hosts: None,
-            window_size: 1,
+            window_size,
             allow_server_port_change: false,
         };
 

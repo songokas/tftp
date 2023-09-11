@@ -81,10 +81,10 @@ pub fn accept_connection<B: BoundSocket>(
     used_extensions: PacketExtensions,
     encrypt_new_connection: Option<FinalizedKeys>,
 ) -> Option<()> {
-    match connection_type {
-        ConnectionType::Read => {
-            debug!("Server extensions {:?}", used_extensions);
+    debug!("Server extensions {:?}", used_extensions);
 
+    match connection_type {
+        ConnectionType::Write => {
             if !used_extensions.is_empty() {
                 if !connection.send_packet(Packet::OptionalAck(OptionalAck {
                     extensions: used_extensions,
@@ -102,12 +102,8 @@ pub fn accept_connection<B: BoundSocket>(
             print_options("Server writing using", &connection.options);
 
             Some(())
-
-            // Some((connection, ClientType::Writer(client_type)))
         }
-        ConnectionType::Write => {
-            debug!("Server extensions {:?}", used_extensions);
-
+        ConnectionType::Read => {
             if !used_extensions.is_empty()
                 && !connection.send_packet(Packet::OptionalAck(OptionalAck {
                     extensions: used_extensions,

@@ -401,7 +401,6 @@ fn handle_encrypted(
     let remote_key = remote_public_key.into();
     let finalized_keys =
         create_finalized_keys(private_key, &remote_key, Some(remote_nonce.into()), rng);
-    // finalized_keys.encryptor.nonce = remote_nonce.into();
     Ok(Some((
         size_of::<PacketType>() + size_of::<PublicKey>() + size_of::<Nonce>(),
         finalized_keys,
@@ -452,13 +451,6 @@ fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] 
 fn block_writer<W: Write>(writer: W) -> Writers<W> {
     Writers::Single(SingleBlockWriter::new(writer))
 }
-
-// type ConnectionResult<BR, BW, B> = BoxedResult<(
-//     Connection<B>,
-//     ClientType<BR, BW>,
-//     PacketExtensions,
-//     Option<FinalizedKeys>,
-// )>;
 
 #[cfg(test)]
 mod tests {

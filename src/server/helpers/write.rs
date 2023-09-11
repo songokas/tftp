@@ -55,7 +55,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket>(
             #[allow(unused_mut)]
             let mut write_elapsed = instant();
             match write_block(connection, block_writer, p.block, p.data) {
-                Ok(Some(n)) if n > 0 => {
+                Ok(Some(n)) => {
                     connection.last_updated = instant();
                     connection.transfer += n;
                     trace!(

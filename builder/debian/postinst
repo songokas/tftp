@@ -1,4 +1,5 @@
 [ -z "$SERVER_HOME" ] && SERVER_HOME=/opt/tftp
 [ -z "$SERVER_USER" ] && SERVER_USER=tftp
 
-adduser --system $SERVER_USER --home $SERVER_HOME
+useradd --system "$SERVER_USER" --no-create-home --shell /bin/false || true
+install -o "$SERVER_USER" -g "$SERVER_USER" -m 0750 -d "$SERVER_HOME"

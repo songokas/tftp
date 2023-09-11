@@ -4,7 +4,6 @@ use core::time::Duration;
 use log::debug;
 use log::error;
 
-
 use crate::config::ConnectionOptions;
 use crate::config::DEFAULT_DATA_BLOCK_SIZE;
 use crate::encryption::EncryptionLevel;
@@ -46,6 +45,7 @@ pub fn query_server<'a>(
     let mut initial = true;
 
     let request_timeout = config.request_timeout;
+    let buffer_size = buffer.len();
 
     loop {
         let request_packet = RequestPacket {
@@ -55,6 +55,14 @@ pub fn query_server<'a>(
         };
         let packet = create_packet(request_packet);
         let packet_type = packet.packet_type();
+
+        #[cfg(feature = "alloc")]
+        buffer.resize(buffer_size, 0);
+        // TODO heapless vector resizing is super slow
+        #[cfg(not(feature = "alloc"))]
+        unsafe {
+            buffer.set_len(buffer_size)
+        };
 
         let (length, endpoint) = wait_for_initial_packet(
             socket,
@@ -109,7 +117,7 @@ pub fn query_server<'a>(
             }
             (_, Ok(Packet::Error(p))) => {
                 // retry in case server does not support extensions
-                if initial && options.encryption_level == EncryptionLevel::None {
+                if matches!(p.code, ErrorCode::IllegalOperation | ErrorCode::Undefined) && initial && options.encryption_level == EncryptionLevel::None {
                     debug!("Received error {} retrying without extensions", p.message);
                     extensions = PacketExtensions::new();
                     used_extensions = Default::default();

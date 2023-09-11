@@ -52,6 +52,7 @@ depends = "$auto"
 section = "utility"
 priority = "optional"
 maintainer-scripts = "../builder/debian"
+revision=""
 assets = [
     ["target/release/tftp", "usr/bin/", "755"],
     ["../README.md", "usr/share/doc/tftp/README", "644"],

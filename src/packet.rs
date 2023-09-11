@@ -647,6 +647,20 @@ mod tests {
             .as_slice(),
             b"\x00\x05\x00\x01File not found\x00"
         );
+
+        assert_eq!(
+            Packet::Error(ErrorPacket::new(
+                ErrorCode::DiskFull,
+                format_str!(
+                    DefaultString,
+                    "Unable to write file {}",
+                    "some-file-to-test.bin"
+                ),
+            ))
+            .to_bytes()
+            .as_slice(),
+            b"\x00\x05\x00\x03Unable to write file some-file-to-test.bin\x00"
+        );
     }
 
     #[test]
