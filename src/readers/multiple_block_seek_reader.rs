@@ -48,7 +48,7 @@ where
         let mut buffer = {
             let mut d = DataBlock::new();
             #[cfg(feature = "alloc")]
-            let _ = d.resize(self.block_size as usize, 0);
+            d.resize(self.block_size as usize, 0);
             // TODO heapless vector resizing is super slow
             #[cfg(not(feature = "alloc"))]
             unsafe {
@@ -101,6 +101,7 @@ where
             return Ok(None);
         }
 
+        #[allow(clippy::seek_from_current)]
         if matches!(self.reader.seek(SeekFrom::Current(0)), Ok(p) if p != self.last_offset) {
             self.reader.seek(SeekFrom::Start(self.last_offset))?;
         }

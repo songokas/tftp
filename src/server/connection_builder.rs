@@ -89,6 +89,7 @@ impl<'a> ConnectionBuilder<'a> {
                 true
             };
             if can_access {
+                #[allow(clippy::iter_cloned_collect)]
                 let mut data: DataBuffer = buffer[ignore..].iter().copied().collect();
                 if finalized_keys.encryptor.decrypt(&mut data).is_err() {
                     error!("Failed to decrypt initial connection");
@@ -156,12 +157,7 @@ impl<'a> ConnectionBuilder<'a> {
         create_writer: &CreateWriter,
         create_bound_socket: &CreateBoundSocket,
         instant: fn() -> Instant,
-    ) -> BoxedResult<(
-        Connection<B>,
-        Writers<W>,
-        PacketExtensions,
-        Option<FinalizedKeys>,
-    )>
+    ) -> WritersResult<B, W>
     where
         S: Socket,
         B: BoundSocket + ToSocketId,
@@ -217,7 +213,7 @@ impl<'a> ConnectionBuilder<'a> {
             }
         };
         #[cfg(not(feature = "multi_thread"))]
-        if let Err(_) = socket.add_interest(&new_socket) {
+        if socket.add_interest(&new_socket).is_err() {
             warn!("Unable to add socket {} to epoll", new_socket.socket_id());
         }
 
@@ -255,12 +251,7 @@ impl<'a> ConnectionBuilder<'a> {
         create_bound_socket: &CreateBoundSocket,
         instant: fn() -> Instant,
         readers_available: ReadersAvailable,
-    ) -> BoxedResult<(
-        Connection<B>,
-        Readers<R>,
-        PacketExtensions,
-        Option<FinalizedKeys>,
-    )>
+    ) -> ReadersResult<B, R>
     where
         S: Socket,
         B: BoundSocket + ToSocketId,
@@ -329,7 +320,7 @@ impl<'a> ConnectionBuilder<'a> {
             }
         };
         #[cfg(not(feature = "multi_thread"))]
-        if let Err(_) = socket.add_interest(&new_socket) {
+        if socket.add_interest(&new_socket).is_err() {
             warn!("Unable to add socket {} to epoll", new_socket.socket_id());
         }
         let Some(r) = block_reader(
@@ -451,6 +442,20 @@ fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] 
 fn block_writer<W: Write>(writer: W) -> Writers<W> {
     Writers::Single(SingleBlockWriter::new(writer))
 }
+
+type ReadersResult<B, R> = BoxedResult<(
+    Connection<B>,
+    Readers<R>,
+    PacketExtensions,
+    Option<FinalizedKeys>,
+)>;
+
+type WritersResult<B, W> = BoxedResult<(
+    Connection<B>,
+    Writers<W>,
+    PacketExtensions,
+    Option<FinalizedKeys>,
+)>;
 
 #[cfg(test)]
 mod tests {

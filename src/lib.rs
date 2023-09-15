@@ -1,5 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#![allow(clippy::large_enum_variant)]
+#![allow(clippy::result_large_err)]
+
 #[cfg(test)]
 #[macro_use]
 extern crate std;

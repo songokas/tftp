@@ -69,7 +69,7 @@ impl<B: BoundSocket> Connection<B> {
 
         #[cfg(feature = "encryption")]
         if let (Ok(PacketType::Data), EncryptionLevel::Data, Some(encryptor)) = (
-            PacketType::from_bytes(&_buffer),
+            PacketType::from_bytes(_buffer),
             self.options.encryption_level,
             &self.encryptor,
         ) {

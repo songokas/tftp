@@ -186,6 +186,7 @@ pub fn overwrite_data_packet(
         PacketType::from_bytes(buff),
         buff.get(DATA_PACKET_HEADER_SIZE as usize..),
     ) {
+        #[allow(clippy::iter_cloned_collect)]
         let mut data: DataBuffer = data_packet.iter().copied().collect();
         callback(&mut data)?;
         buff.truncate(DATA_PACKET_HEADER_SIZE as usize);

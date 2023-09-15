@@ -73,7 +73,7 @@ where
         let mut buffer = {
             let mut d = DataBlock::new();
             #[cfg(feature = "alloc")]
-            let _ = d.resize(self.block_size as usize, 0);
+            d.resize(self.block_size as usize, 0);
             // TODO heapless vector resizing is super slow
             #[cfg(not(feature = "alloc"))]
             unsafe {

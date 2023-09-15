@@ -94,7 +94,7 @@ pub mod io {
 
     impl Error {
         pub fn kind(&self) -> ErrorKind {
-            self.kind.clone()
+            self.kind
         }
     }
 
@@ -188,17 +188,13 @@ pub mod net {
         {
             match self.ip {
                 IpVersion::Ipv4(b) => {
-                    let bytes: heapless::Vec<u8, 6> = b
-                        .into_iter()
-                        .chain(self.port.to_be_bytes().into_iter())
-                        .collect();
+                    let bytes: heapless::Vec<u8, 6> =
+                        b.into_iter().chain(self.port.to_be_bytes()).collect();
                     state.write(&bytes);
                 }
                 IpVersion::Ipv6(b) => {
-                    let bytes: heapless::Vec<u8, 18> = b
-                        .into_iter()
-                        .chain(self.port.to_be_bytes().into_iter())
-                        .collect();
+                    let bytes: heapless::Vec<u8, 18> =
+                        b.into_iter().chain(self.port.to_be_bytes()).collect();
                     state.write(&bytes);
                 }
             }

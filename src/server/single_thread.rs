@@ -12,6 +12,7 @@ use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
 use crate::macros::cfg_alloc;
 use crate::macros::cfg_encryption;
+use crate::macros::cfg_seek;
 use crate::macros::cfg_stack;
 use crate::map::Entry;
 use crate::map::Map;
@@ -33,7 +34,6 @@ use crate::socket::Socket;
 use crate::socket::ToSocketId;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
-use crate::std_compat::io::Seek;
 use crate::std_compat::io::Write;
 use crate::std_compat::net::SocketAddr;
 use crate::string::format_str;
@@ -57,8 +57,23 @@ cfg_alloc! {
     use crate::writers::block_writer::BlockWriter;
 }
 
+cfg_seek! {
+    use crate::std_compat::io::Seek;
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn server<CreateReader, CreateWriter, R, W, Rng, CreateSocket, CreateBoundSocket, S, B>(
+pub fn server<
+    CreateReader,
+    CreateWriter,
+    #[cfg(not(feature = "seek"))] R: Read,
+    #[cfg(feature = "seek")] R: Read + Seek,
+    W,
+    Rng,
+    CreateSocket,
+    CreateBoundSocket,
+    S,
+    B,
+>(
     config: ServerConfig,
     create_reader: CreateReader,
     create_writer: CreateWriter,
@@ -71,7 +86,6 @@ where
     S: Socket + ToSocketId,
     B: BoundSocket + ToSocketId + Send + 'static,
     Rng: CryptoRng + RngCore + Copy,
-    R: Read + Seek,
     CreateSocket: Fn(&str, usize, bool) -> BoxedResult<S>,
     CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
     CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
@@ -154,10 +168,10 @@ where
                 if socket.notified(&connection.socket) {
                     match connection.recv(&mut buffer, None) {
                         Ok(b) => {
-                            if let Err(_) = socket.modify_interest(
+                            if socket.modify_interest(
                                 connection.socket.socket_id(),
                                 connection.socket.as_raw_fd(),
-                            ) {
+                            ).is_err() {
                                 warn!("Unable to modify epoll");
                             }
                             Some((b, *client_socket_addr))
@@ -374,7 +388,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket>(
         .enumerate()
         .skip(next_client)
         .find_map(|(index, (_, (c, ct)))| match ct {
-            ClientType::Reader(r) => send_data_block(c, r).then(|| index + 1),
+            ClientType::Reader(r) => send_data_block(c, r).then_some(index + 1),
             _ => None,
         });
     if current_client.is_none() {
@@ -386,7 +400,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket>(
             .take(next_client)
             .enumerate()
             .find_map(|(index, (_, (c, ct)))| match ct {
-                ClientType::Reader(r) => send_data_block(c, r).then(|| index + 1),
+                ClientType::Reader(r) => send_data_block(c, r).then_some(index + 1),
                 _ => None,
             });
     }

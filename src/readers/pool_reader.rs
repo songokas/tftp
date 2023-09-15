@@ -40,11 +40,7 @@ impl<'a, R> PoolReader<'a, R> {
     ) -> Option<Self> {
         let index = {
             let p = pool.borrow();
-            if let Some(i) = (0..u16::MAX).into_iter().find(|k| !p.contains_key(k)) {
-                i
-            } else {
-                return None;
-            }
+            (0..u16::MAX).find(|k| !p.contains_key(k))?
         };
         if pool.borrow_mut().insert(index, reader).is_err() {
             return None;
@@ -58,11 +54,7 @@ impl<'a, R> PoolReader<'a, R> {
     ) -> Option<Self> {
         let index = {
             let p = pool.borrow();
-            if let Some(i) = (0..u16::MAX).into_iter().find(|k| !p.contains_key(k)) {
-                i
-            } else {
-                return None;
-            }
+            (0..u16::MAX).find(|k| !p.contains_key(k))?
         };
         if pool.borrow_mut().insert(index, reader).is_err() {
             return None;
@@ -77,11 +69,7 @@ impl<'a, R> PoolReader<'a, R> {
     ) -> Option<Self> {
         let index = {
             let p = pool.borrow();
-            if let Some(i) = (0..u16::MAX).into_iter().find(|k| !p.contains_key(k)) {
-                i
-            } else {
-                return None;
-            }
+            (0..u16::MAX).find(|k| !p.contains_key(k))?
         };
         if pool.borrow_mut().insert(index, reader).is_err() {
             return None;

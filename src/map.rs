@@ -81,7 +81,7 @@ impl<K, V, const CAP: usize> Map<K, V, CAP> {
     where
         K: Eq,
     {
-        if let Some(_) = self.array.iter().find(|(k, _)| k == &entry_key) {
+        if self.array.iter().any(|(k, _)| k == &entry_key) {
             return Entry::Occupied(OccupiedEntry {
                 key: entry_key,
                 parent: &mut self.array,
