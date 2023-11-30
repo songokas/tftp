@@ -17,22 +17,26 @@ readme = "../README.md"
 clap = { version = "4", features = ["derive"] }
 env_logger = "0.10"
 log = "0.4"
-tftp = { path = "..", default-features = false}
-rand = { version = "0.8", optional = false, default-features = false, features = ["getrandom"]}
+tftp = { path = "..", default-features = false }
+rand = { version = "0.8", optional = false, default-features = false, features = [
+    "getrandom",
+] }
 polling = "2"
 socket2 = { version = "~0.5.1", features = ["all"] }
+notify = { version = "6", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
 env_logger = "0.10"
 
 [features]
-default = ["std", "alloc", "encryption", "multi_thread", "seek"]
+default = ["std", "alloc", "encryption", "multi_thread", "seek", "sync"]
 std = ["tftp/std"]
 alloc = ["tftp/alloc"]
 encryption = ["tftp/encryption"]
 seek = ["tftp/seek"]
 multi_thread = ["tftp/multi_thread"]
+sync = ["notify"]
 
 [[bin]]
 name = "tftp"
@@ -52,9 +56,21 @@ depends = "$auto"
 section = "utility"
 priority = "optional"
 maintainer-scripts = "../builder/debian"
-revision=""
+revision = ""
 assets = [
-    ["target/release/tftp", "usr/bin/", "755"],
-    ["../README.md", "usr/share/doc/tftp/README", "644"],
-    ["../builder/debian/service", "lib/systemd/system/tftp.service", "644"],
+    [
+        "target/release/tftp",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "../README.md",
+        "usr/share/doc/tftp/README",
+        "644",
+    ],
+    [
+        "../builder/debian/service",
+        "lib/systemd/system/tftp.service",
+        "644",
+    ],
 ]

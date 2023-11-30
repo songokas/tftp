@@ -66,6 +66,7 @@ impl RateControl {
         }
     }
 
+    #[allow(dead_code)]
     pub fn increment_errors(&mut self) {
         self.error_packets += 1;
         self.new_loss = true;
@@ -112,13 +113,12 @@ impl RateControl {
     }
 
     pub fn timeout_interval(&self, min_retry_timeout: Duration, block_size: u16) -> Duration {
-        let max_duration = Duration::from_secs(1);
-        if min_retry_timeout >= max_duration || self.rtt_estimate == 0.0 {
+        if self.rtt_estimate == 0.0 {
             return min_retry_timeout;
         }
         let timeout = (4.0 * self.rtt_estimate)
             .max(2.0 * block_size as f32 / self.allowed_transmit_rate as f32);
-        min(Duration::from_secs_f32(timeout), max_duration)
+        max(Duration::from_secs_f32(timeout), min_retry_timeout)
     }
 
     fn maximize_set(&mut self, received: u32) {
@@ -213,8 +213,7 @@ impl RateControl {
 
 fn packets_to_send(allowed_rate: u32, time_window: Duration, block_size: u16) -> u32 {
     if allowed_rate > 0 {
-        let packets = (allowed_rate as f32 / block_size as f32 * time_window.as_secs_f32()) as u32;
-        max(packets, 1)
+        (allowed_rate as f32 / block_size as f32 * time_window.as_secs_f32()) as u32
     } else {
         u32::MAX
     }
@@ -420,8 +419,8 @@ mod tests {
             4294967295,
             packets_to_send(0, Duration::from_millis(200), 512)
         );
-        assert_eq!(1, packets_to_send(1, Duration::from_millis(200), 512));
-        assert_eq!(1, packets_to_send(128, Duration::from_millis(200), 512));
+        assert_eq!(0, packets_to_send(1, Duration::from_millis(200), 512));
+        assert_eq!(0, packets_to_send(128, Duration::from_millis(200), 512));
         assert_eq!(3, packets_to_send(10000, Duration::from_millis(200), 512));
 
         assert_eq!(19, packets_to_send(10000, Duration::from_millis(1000), 512));

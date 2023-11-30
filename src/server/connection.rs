@@ -36,7 +36,7 @@ pub struct Connection<B> {
     // conection last updated: valid block received, valid block acknoledged
     pub last_updated: Instant,
     /// last block index acknoledged
-    pub last_acknoledged: u64,
+    pub last_acknowledged: u64,
     // total file size transferred
     pub transfer: usize,
     // multiplier for retry_packet_after_timeout

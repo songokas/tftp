@@ -1,6 +1,6 @@
 use super::block_writer::BlockWriter;
 use crate::block_mapper::BlockMapper;
-use crate::error::StorageError;
+use crate::error::{ExistingBlock, StorageError};
 use crate::std_compat::io::Write;
 
 #[derive(Debug)]
@@ -30,14 +30,16 @@ where
         let expected_index = self.block_written + 1;
 
         if provided_index < expected_index {
-            return Err(StorageError::AlreadyWriten(provided_index));
+            return Err(StorageError::AlreadyWritten(ExistingBlock {
+                current: self.block_mapper.block(self.block_written),
+                current_index: self.block_written,
+            }));
         }
         if provided_index > expected_index {
-            return Err(StorageError::ExpectedBlock {
-                expected: self.block_mapper.block(expected_index),
-                current: block,
-                current_index: provided_index,
-            });
+            return Err(StorageError::ExpectedBlock(ExistingBlock {
+                current: self.block_mapper.block(self.block_written),
+                current_index: self.block_written,
+            }));
         }
         let written = self.writer.write(data)?;
         self.block_written = expected_index;
@@ -64,26 +66,40 @@ mod tests {
         let mut writer = SingleBlockWriter::new(r);
 
         let result = writer.write_block(0, &data[0..5]);
-        assert!(matches!(result, Err(StorageError::AlreadyWriten(0))),);
+        assert!(matches!(
+            result,
+            Err(StorageError::AlreadyWritten(ExistingBlock {
+                current: 0,
+                current_index: 0
+            }))
+        ),);
 
         let written = writer.write_block(1, &data[0..5]).unwrap();
         assert_eq!(written, (5, 1));
 
         let result = writer.write_block(1, &data[0..5]);
         assert!(
-            matches!(result, Err(StorageError::AlreadyWriten(1))),
+            matches!(
+                result,
+                Err(StorageError::AlreadyWritten(ExistingBlock {
+                    current: 1,
+                    current_index: 1
+                }))
+            ),
             "{writer:?}"
         );
 
         let result = writer.write_block(3, &data[0..5]);
-        assert!(matches!(
-            result,
-            Err(StorageError::ExpectedBlock {
-                expected: 2,
-                current: 3,
-                current_index: 3,
-            })
-        ));
+        assert!(
+            matches!(
+                result,
+                Err(StorageError::ExpectedBlock(ExistingBlock {
+                    current: 1,
+                    current_index: 1
+                }))
+            ),
+            "{result:?}"
+        );
 
         let written = writer.write_block(2, &data[5..]).unwrap();
         assert_eq!(written, (5, 2));

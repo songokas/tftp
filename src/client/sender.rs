@@ -1,4 +1,5 @@
 use core::cmp::max;
+use core::num::Wrapping;
 use core::time::Duration;
 
 use log::debug;
@@ -145,7 +146,7 @@ where
 
     let mut stats_calculate = instant();
 
-    let mut no_work: u8 = 0;
+    let mut no_work = Wrapping(0_u8);
     let mut packets_to_send = u32::MAX;
     let flow_control_period = Duration::from_millis(200);
     let mut last_acknowledged = 0;
@@ -169,11 +170,13 @@ where
             );
             stats_calculate = instant();
 
-            // packets_to_send = u32::MAX;
             packets_to_send = if config.ignore_rate_control {
                 u32::MAX
             } else {
-                rate_control.packets_to_send(flow_control_period, options.block_size)
+                max(
+                    options.window_size as u32,
+                    rate_control.packets_to_send(flow_control_period, options.block_size),
+                )
             };
         }
 
@@ -185,10 +188,11 @@ where
                 let last_read_length = data_block.data.len();
 
                 debug!(
-                    "Send data block {} data size {last_read_length} retry {} remaining packets {packets_to_send}",
-                    data_block.block, data_block.retry
+                    "Send data block {} data size {last_read_length} retry {} remaining packets {packets_to_send} timeout {}",
+                    data_block.block, data_block.retry, timeout_interval.as_secs_f32()
                 );
 
+                // TODO rate control
                 let block_index = block_mapper.index(data_block.block);
                 if last_acknowledged + options.window_size as u64 == block_index {
                     if data_block.retry {
@@ -204,23 +208,23 @@ where
                 match socket.send_to(&mut data_packet.to_bytes(), endpoint) {
                     Ok(_) => {
                         last_sent = instant();
-                        no_work = 1;
+                        no_work = Wrapping(1);
                         rate_control.data_sent(last_read_length);
                         total_unconfirmed += last_read_length;
                         packets_to_send -= 1;
                     }
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                        no_work = no_work.wrapping_add(1);
+                        no_work += 1;
                     }
                     Err(e) => {
                         return Err(e.into());
                     }
                 };
             } else {
-                no_work = no_work.wrapping_add(1);
+                no_work += 1;
             }
         } else {
-            no_work = no_work.wrapping_add(1);
+            no_work += 1;
             rate_control.mark_as_data_limited();
         }
 
@@ -232,8 +236,8 @@ where
             buffer.set_len(max_buffer_size as usize)
         };
 
-        let wait_for = if no_work > 2 {
-            Duration::from_millis(no_work as u64).into()
+        let wait_for = if no_work.0 > 2 {
+            Duration::from_millis(no_work.0 as u64).into()
         } else {
             None
         };
@@ -250,7 +254,7 @@ where
                 if s != endpoint {
                     continue;
                 }
-                no_work = 1;
+                no_work = Wrapping(1);
                 last_received = instant();
                 n
             }
@@ -262,7 +266,7 @@ where
                     }
                     return Err(PacketError::Timeout(elapsed).into());
                 }
-                no_work = no_work.wrapping_add(1);
+                no_work += 1;
 
                 continue;
             }

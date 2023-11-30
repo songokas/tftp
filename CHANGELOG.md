@@ -2,6 +2,22 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.3.1] - 2023-11-31
+
+### Added
+
+- Ability to sync folders using inotify
+
+### Changed
+
+- Increased default file limit to 100Mb
+- Rate limit is on by default (disable it by --ignore-rate-limit)
+
+### Fixed
+
+- Flow control honour retry_timeout provided 
+- Receivers returning incorrect block number on existing blocks
+
 ## [0.3.0] - 2023-09-11
 
 ### Added

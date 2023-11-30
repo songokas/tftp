@@ -119,18 +119,18 @@ where
             debug!("Write block {} written size {}", block, w);
             (Some(w), i)
         }
-        Err(StorageError::ExpectedBlock {
-            expected,
-            current,
-            current_index,
-        }) => {
-            debug!("Received unexpected block {} expecting {}", block, expected);
-            block = current;
-            (None, current_index)
+        Err(StorageError::ExpectedBlock(e)) => {
+            debug!(
+                "Received unexpected block {} expecting block after {}",
+                block, e.current
+            );
+            block = e.current;
+            (None, e.current_index)
         }
-        Err(StorageError::AlreadyWriten(current_index)) => {
+        Err(StorageError::AlreadyWritten(e)) => {
             debug!("Received block that was written before {}", block);
-            (None, current_index)
+            block = e.current;
+            (None, e.current_index)
         }
         Err(e) => {
             error!("Failed to write block {} {}", block, e);
@@ -142,13 +142,13 @@ where
     };
 
     if connection.options.window_size <= 1
-        || connection.last_acknoledged + connection.options.window_size as u64 == index
+        || connection.last_acknowledged + connection.options.window_size as u64 == index
         || written.unwrap_or(0) < connection.options.block_size as usize
     {
         if !connection.send_packet(Packet::Ack(AckPacket { block })) {
             error!("Unable to ack block {}", block);
         } else {
-            connection.last_acknoledged = index;
+            connection.last_acknowledged = index;
         }
     }
     Ok(written)

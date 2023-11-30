@@ -40,7 +40,7 @@ where
             return Ok(None);
         }
 
-        // retry from the start
+        // retry from the start if there is a block to retry
         if retry {
             let first_block = self.blocks.iter().next();
             if let Some((index, buffer)) = first_block {

@@ -231,21 +231,21 @@ fn write_block(
 ) -> BoxedResult<Option<usize>> {
     let (written, index) = match block_writer.write_block(block, data) {
         Ok((written, index)) => (Some(written), index),
-        Err(StorageError::ExpectedBlock {
-            expected,
-            current,
-            current_index,
-        }) => {
-            debug!("Received unexpected block {} expecting {}", block, expected);
-            block = current;
-            (None, current_index)
+        Err(StorageError::ExpectedBlock(e)) => {
+            debug!(
+                "Received unexpected block {} expecting block after {}",
+                block, e.current
+            );
+            block = e.current;
+            (None, e.current_index)
         }
-        Err(StorageError::AlreadyWriten(current_index)) => {
+        Err(StorageError::AlreadyWritten(e)) => {
             debug!(
                 "Received block that was written before. Ignoring block {}",
                 block
             );
-            (None, current_index)
+            block = e.current;
+            (None, e.current_index)
         }
         Err(e) => return Err(e.into()),
     };

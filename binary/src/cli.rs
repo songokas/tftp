@@ -120,8 +120,8 @@ pub struct ServerCliConfig {
 
     #[arg(
         long,
-        default_value_t = 10485760,
-        help = "Max file size to receive. default: 10Mb"
+        default_value_t = 104857600,
+        help = "Max file size to receive. default: 100Mb"
     )]
     pub max_file_size: u64,
 
@@ -159,12 +159,30 @@ pub enum Commands {
         #[arg(short, long)]
         remote_path: Option<FilePath>,
 
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         ignore_rate_control: bool,
 
         #[cfg(feature = "seek")]
         #[arg(long, default_value_t = false)]
         prefer_seek: bool,
+    },
+    #[cfg(feature = "sync")]
+    Sync {
+        #[clap(flatten)]
+        config: ClientCliConfig,
+
+        #[arg(
+            long,
+            default_value_t = 1000,
+            help = "Block duration when reading the file in milliseconds. default: 1000"
+        )]
+        block_duration: u64,
+
+        #[arg(long, default_value_t = false)]
+        ignore_rate_control: bool,
+
+        #[arg(value_name = "DIRECTORY")]
+        dir_path: Option<FilePath>,
     },
 
     Receive {

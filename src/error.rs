@@ -148,14 +148,16 @@ impl From<TryFromSliceError> for PacketError {
 pub type PacketResult<T> = Result<T, PacketError>;
 
 #[derive(Debug)]
+pub struct ExistingBlock {
+    pub current: u16,
+    pub current_index: u64,
+}
+
+#[derive(Debug)]
 pub enum StorageError {
     File(crate::std_compat::io::Error),
-    AlreadyWriten(u64),
-    ExpectedBlock {
-        expected: u16,
-        current: u16,
-        current_index: u64,
-    },
+    AlreadyWritten(ExistingBlock),
+    ExpectedBlock(ExistingBlock),
 }
 
 impl From<crate::std_compat::io::Error> for StorageError {
@@ -171,12 +173,10 @@ impl Display for StorageError {
         match self {
             // StorageError::CapacityReached => write!(f, "Buffer capacity reached"),
             StorageError::File(s) => s.fmt(f),
-            StorageError::AlreadyWriten(_) => write!(f, "Block has been already written"),
+            StorageError::AlreadyWritten(_) => write!(f, "Block has been already written"),
             // StorageError::FileTooBig => write!(f, "File is too big"),
-            StorageError::ExpectedBlock {
-                expected, current, ..
-            } => {
-                write!(f, "Expecting block {expected} current block {current}")
+            StorageError::ExpectedBlock(e) => {
+                write!(f, "Expecting block after {}", e.current)
             }
         }
     }

@@ -1,3 +1,5 @@
+#[cfg(feature = "sync")]
+mod blocking_reader;
 mod cli;
 mod io;
 mod macros;
@@ -28,6 +30,8 @@ use tftp::std_compat::net::SocketAddr;
 use tftp::std_compat::time::Instant;
 use tftp::types::FilePath;
 
+#[cfg(feature = "sync")]
+use crate::blocking_reader::create_delayed_reader;
 use crate::cli::Args;
 use crate::cli::BinError;
 use crate::cli::BinResult;
@@ -86,6 +90,13 @@ fn main() -> BinResult<()> {
             false,
         )
         .map(|_| ()),
+        #[cfg(feature = "sync")]
+        Commands::Sync {
+            dir_path,
+            config,
+            block_duration,
+            ignore_rate_control,
+        } => start_sync(config, block_duration, ignore_rate_control, dir_path).map(|_| ()),
 
         Commands::Receive {
             config,
@@ -107,6 +118,72 @@ fn main() -> BinResult<()> {
             .map_err(|e| BinError::from(e.to_string()))
         }
     }
+}
+
+#[cfg(feature = "sync")]
+fn start_sync(
+    config: ClientCliConfig,
+    block_for_ms: u64,
+    ignore_rate_control: bool,
+    dir_path: Option<FilePath>,
+) -> BinResult<()> {
+    use std::sync::mpsc::channel;
+    use std::thread::sleep;
+    use std::thread::spawn;
+
+    use notify::event::CreateKind;
+    use notify::Config;
+    use notify::EventKind;
+    use notify::RecommendedWatcher;
+    use notify::RecursiveMode;
+    use notify::Watcher;
+
+    let (tx, rx) = channel();
+    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
+    let dir = dir_path.unwrap_or_else(|| ".".to_string());
+    let path = Path::new(&dir);
+
+    watcher
+        .watch(path, RecursiveMode::Recursive)
+        .map_err(|e| BinError::from(e.to_string()))?;
+
+    info!("Watching directory {dir}");
+
+    for res in rx {
+        match res {
+            // currently we listen for created file events and expect the file to be written faster than it is read + sent + confirmed
+            // using a blocking reader in case there is a delay
+            Ok(event) if matches!(event.kind, EventKind::Create(CreateKind::File)) => {
+                let Some(local_path) = event.paths.first().map(|f| f.to_string_lossy().to_string())
+                else {
+                    warn!("Unable to retrieve path for a created file. Ignoring");
+                    continue;
+                };
+
+                debug!("File {local_path} created");
+
+                let sender_config = config.clone();
+                let block_thread = Duration::from_millis(block_for_ms);
+
+                spawn(move || {
+                    // give some time for writing
+                    sleep(block_thread);
+                    if let Err(e) = start_send(
+                        local_path,
+                        None,
+                        sender_config,
+                        |f| create_delayed_reader(f, block_thread),
+                        ignore_rate_control,
+                        false,
+                    ) {
+                        error!("Failed to synchronize file: {e}");
+                    }
+                });
+            }
+            _ => continue,
+        }
+    }
+    Ok(())
 }
 
 fn start_send<CreateReader, R>(

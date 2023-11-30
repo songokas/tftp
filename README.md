@@ -10,7 +10,7 @@ Adheres to RFCs:
 - [rfc2349](https://www.rfc-editor.org/rfc/rfc2349)
 - [rfc7440](https://www.rfc-editor.org/rfc/rfc7440)
 
-Additionaly public/private keys and xchacha20poly1305 encryption can be used to
+Additionally public/private keys and xchacha20poly1305 encryption can be used to
 encrypt traffic or data.
 
 ## Installing
@@ -50,6 +50,7 @@ echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin
 * optional stack only functionality (currently lib only)
 * compatible with third party clients,servers
 * large file support
+* ability to synchronize new files in a folder
 
 ### Configuration
 
@@ -59,6 +60,7 @@ Run help to see all available options
 tftp server --help
 tftp send --help
 tftp receive --help
+tftp sync --help
 ```
 
 #### Using encryption with server
