@@ -8,10 +8,9 @@ use std::path::PathBuf;
 
 use env_logger::Builder;
 use env_logger::Env;
+use tftp::encryption::PublicKey;
 use tftp::error::BoxedResult;
 use tftp::error::FileError;
-
-use tftp::encryption::PublicKey;
 use tftp::server::ServerConfig;
 use tftp::std_compat::io;
 use tftp::std_compat::time::Instant;
@@ -38,11 +37,6 @@ cfg_no_std! {
     use std::io::SeekFrom as StdSeekFrom;
     use std::time::UNIX_EPOCH;
     use std::time::SystemTime;
-
-    // use std::io::Read; for StdCompatFile
-    // use std::io::Seek; for StdCompatFile
-    // use std::io::Write; for StdCompatFile
-    // use use std::io::BufRead; for StdBufReader
 }
 
 pub fn create_writer(path: &FilePath) -> BoxedResult<StdCompatFile> {
@@ -133,6 +127,7 @@ pub fn create_simple_reader(path: &str) -> BoxedResult<StdCompatFile> {
 pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, EncryptionError> {
     #[cfg(feature = "std")]
     use std::io::Read;
+
     #[cfg(not(feature = "std"))]
     use tftp::std_compat::io::Read;
 

@@ -168,10 +168,13 @@ where
                 if socket.notified(&connection.socket) {
                     match connection.recv(&mut buffer, None) {
                         Ok(b) => {
-                            if socket.modify_interest(
-                                connection.socket.socket_id(),
-                                connection.socket.as_raw_fd(),
-                            ).is_err() {
+                            if socket
+                                .modify_interest(
+                                    connection.socket.socket_id(),
+                                    connection.socket.as_raw_fd(),
+                                )
+                                .is_err()
+                            {
                                 warn!("Unable to modify epoll");
                             }
                             Some((b, *client_socket_addr))

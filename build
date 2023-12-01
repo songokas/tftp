@@ -5,7 +5,7 @@ set -eEux -o pipefail
 TARGETS=(x86_64-unknown-linux-gnu)
 RELEASE="release"
 
-BIN_RELEASE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf)
+BIN_RELEASE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf x86_64-unknown-linux-musl)
 DEB_RELEASE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf)
 BIN_WINDOWS_TARGETS=(x86_64-pc-windows-gnu)
 
@@ -59,8 +59,11 @@ release_dist() {
 }
 
 release_deb() {
+    if [[ $(docker images -q buster/cargo-deb 2> /dev/null) == "" ]]; then
+        docker build -t buster/cargo-deb builder
+    fi
     for target in ${DEB_RELEASE_TARGETS[@]}; do
-        cargo deb -p tftp-binary --target $target --no-build --no-strip
+        docker run --mount type=bind,source="$(pwd)",target=/volume --rm buster/cargo-deb -p tftp-binary --target $target --no-build --no-strip
         cp target/$target/debian/tftp*.deb dist/
     done
     # cargo deb -p tftp-binary --target x86_64-unknown-linux-musl

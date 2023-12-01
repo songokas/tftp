@@ -2,6 +2,8 @@ use log::info;
 use rand::CryptoRng;
 use rand::RngCore;
 
+use super::encryption_socket::EncryptionBoundSocket;
+use super::ClientConfig;
 use crate::config::ConnectionOptions;
 use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::encryption::encode_public_key;
@@ -12,9 +14,6 @@ use crate::error::BoxedResult;
 use crate::key_management::create_finalized_keys;
 use crate::key_management::create_initial_keys;
 use crate::socket::Socket;
-
-use super::encryption_socket::EncryptionBoundSocket;
-use super::ClientConfig;
 
 pub fn create_initial_socket(
     socket: impl Socket,

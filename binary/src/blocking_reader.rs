@@ -1,11 +1,13 @@
 use core::time::Duration;
-use std::{
-    fs::File,
-    io::{prelude::Read, Result, Seek, SeekFrom},
-    thread::sleep,
-};
+use std::fs::File;
+use std::io::prelude::Read;
+use std::io::Result;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::thread::sleep;
 
-use tftp::{error::BoxedResult, types::FilePath};
+use tftp::error::BoxedResult;
+use tftp::types::FilePath;
 
 pub fn create_delayed_reader(
     path: &FilePath,

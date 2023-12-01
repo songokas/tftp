@@ -1,4 +1,6 @@
+use core::time::Duration;
 use std::net::SocketAddr as StdSocketAddr;
+use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 #[cfg(not(target_family = "windows"))]
 use std::os::fd::AsFd;
@@ -11,8 +13,6 @@ use std::os::windows::io::AsRawSocket;
 #[cfg(target_family = "windows")]
 use std::os::windows::io::RawSocket;
 
-use core::time::Duration;
-
 use log::*;
 use polling::Event;
 use polling::Poller;
@@ -21,7 +21,6 @@ use socket2::Domain;
 use socket2::Protocol;
 use socket2::Socket as Socket2;
 use socket2::Type;
-
 use tftp::error::BoxedResult;
 use tftp::socket::*;
 use tftp::std_compat::io;
@@ -41,8 +40,13 @@ cfg_no_std! {
 
 pub fn create_socket(listen: &str, socket_id: usize, reuse: bool) -> BoxedResult<impl Socket> {
     let address: StdSocketAddr = listen
-        .parse()
-        .map_err(|_| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
+        .to_socket_addrs()
+        .map_err(|e| {
+            error!("Socket parse error: {e}");
+            io::Error::from(io::ErrorKind::AddrNotAvailable)
+        })?
+        .next()
+        .ok_or_else(|| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
     let socket = Socket2::new(
         Domain::for_address(address),
         Type::DGRAM,
@@ -91,7 +95,7 @@ pub fn create_bound_socket(
     let address: StdSocketAddr = listen
         .parse()
         .map_err(|_| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
-    socket.bind(&address.into()).unwrap();
+    socket.bind(&address.into()).map_err(from_io_err)?;
 
     let socket: UdpSocket = socket.into();
     socket.set_nonblocking(true).map_err(from_io_err)?;

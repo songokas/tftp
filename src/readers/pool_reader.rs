@@ -167,13 +167,14 @@ impl<'a, R> Drop for PoolReader<'a, R> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+    use std::vec::Vec;
+
     use super::*;
     use crate::readers::block_reader::BlockReader;
     use crate::std_compat::io::Read;
     use crate::std_compat::io::Seek;
     use crate::std_compat::io::SeekFrom;
-    use std::io::Cursor;
-    use std::vec::Vec;
 
     #[test]
     fn test_pool_reader_single() {

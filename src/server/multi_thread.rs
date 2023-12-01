@@ -1,14 +1,14 @@
-use std::thread::spawn;
-use std::thread::JoinHandle;
-
 use core::num::NonZeroU32;
 use core::time::Duration;
+use std::thread::spawn;
+use std::thread::JoinHandle;
 
 use log::info;
 use log::trace;
 use rand::CryptoRng;
 use rand::RngCore;
 
+use super::config::ServerConfig;
 use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::encryption::encode_public_key;
 use crate::encryption::PublicKey;
@@ -43,8 +43,6 @@ use crate::time::InstantCallback;
 use crate::types::FilePath;
 use crate::writers::block_writer::BlockWriter;
 use crate::writers::Writers;
-
-use super::config::ServerConfig;
 
 cfg_seek! {
     use crate::std_compat::io::Seek;

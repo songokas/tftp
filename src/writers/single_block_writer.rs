@@ -1,6 +1,7 @@
 use super::block_writer::BlockWriter;
 use crate::block_mapper::BlockMapper;
-use crate::error::{ExistingBlock, StorageError};
+use crate::error::ExistingBlock;
+use crate::error::StorageError;
 use crate::std_compat::io::Write;
 
 #[derive(Debug)]

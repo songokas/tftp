@@ -459,18 +459,17 @@ type WritersResult<B, W> = BoxedResult<(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+    #[allow(unused_imports)]
+    use std::vec::Vec;
+
+    use super::*;
     #[allow(unused_imports)]
     use crate::std_compat::io::Read;
     #[allow(unused_imports)]
     use crate::std_compat::io::Seek;
     #[allow(unused_imports)]
     use crate::std_compat::io::SeekFrom;
-
-    use std::io::Cursor;
-    #[allow(unused_imports)]
-    use std::vec::Vec;
-
-    use super::*;
 
     #[test]
     fn test_block_reader_window_size_1() {

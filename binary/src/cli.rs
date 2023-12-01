@@ -3,7 +3,6 @@ use std::net::ToSocketAddrs;
 
 use clap::Parser;
 use clap::Subcommand;
-
 use tftp::client::ClientConfig;
 use tftp::config::DEFAULT_RETRY_PACKET_TIMEOUT;
 use tftp::config::DEFAULT_WINDOW_SIZE;
@@ -49,7 +48,7 @@ pub struct ClientCliConfig {
     #[arg(
         long,
         default_value_t = 15000,
-        help = "Request time out in milliseconds. default: 15000"
+        help = "Request time out in milliseconds"
     )]
     pub request_timeout: u64,
 
@@ -63,15 +62,11 @@ pub struct ClientCliConfig {
         long,
         default_value_t = DEFAULT_RETRY_PACKET_TIMEOUT.as_millis() as u64,
         value_parser = clap::value_parser!(u64).range((EXTENSION_TIMEOUT_SIZE_MIN as u64)..(EXTENSION_TIMEOUT_SIZE_MAX as u64)),
-        help = "Resend packet after timeout in ms. default: 80ms"
+        help = "Resend packet after timeout in ms"
     )]
     pub retry_timeout: u64,
 
-    #[arg(
-        long,
-        default_value_t = 10485760,
-        help = "Max file size to receive. default: 10Mb"
-    )]
+    #[arg(long, default_value_t = 10485760, help = "Max file size to receive")]
     pub max_file_size: u64,
 
     #[cfg(feature = "encryption")]
@@ -83,13 +78,18 @@ pub struct ClientCliConfig {
     pub encryption_level: ShortString,
 
     #[cfg(feature = "encryption")]
-    #[arg(long)]
+    #[arg(long, help = "Private key to use: value or FILE")]
     pub private_key: Option<ShortString>,
+
     #[cfg(feature = "encryption")]
-    #[arg(long)]
+    #[arg(long, help = "Remote server public key to use for encryption")]
     pub server_public_key: Option<ShortString>,
+
     #[cfg(feature = "encryption")]
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Path to a known hosts file where server public key will be retrieved. Format: endpoint public key per line"
+    )]
     pub known_hosts: Option<FilePath>,
 
     #[arg(long)]
@@ -114,14 +114,14 @@ pub struct ServerCliConfig {
     #[arg(
         long,
         default_value_t = 15000,
-        help = "Request time out in milliseconds. default: 15000"
+        help = "Request time out in milliseconds"
     )]
     pub request_timeout: u16,
 
     #[arg(
         long,
         default_value_t = 104857600,
-        help = "Max file size to receive. default: 100Mb"
+        help = "Max file size to receive in bytes"
     )]
     pub max_file_size: u64,
 
@@ -131,8 +131,9 @@ pub struct ServerCliConfig {
     #[cfg(feature = "encryption")]
     #[arg(long)]
     pub authorized_keys: Option<FilePath>,
+
     #[cfg(feature = "encryption")]
-    #[arg(long)]
+    #[arg(long, help = "Private key to use: value or FILE")]
     pub private_key: Option<ShortString>,
 
     #[cfg(feature = "encryption")]
@@ -143,7 +144,7 @@ pub struct ServerCliConfig {
     pub require_server_port_change: bool,
 
     #[cfg(feature = "seek")]
-    #[arg(long, default_value_t = false)]
+    #[arg(long)]
     prefer_seek: bool,
 }
 
@@ -159,11 +160,11 @@ pub enum Commands {
         #[arg(short, long)]
         remote_path: Option<FilePath>,
 
-        #[arg(long, default_value_t = false)]
+        #[arg(long)]
         ignore_rate_control: bool,
 
         #[cfg(feature = "seek")]
-        #[arg(long, default_value_t = false)]
+        #[arg(long)]
         prefer_seek: bool,
     },
     #[cfg(feature = "sync")]
@@ -174,11 +175,11 @@ pub enum Commands {
         #[arg(
             long,
             default_value_t = 1000,
-            help = "Block duration when reading the file in milliseconds. default: 1000"
+            help = "Block duration when reading the file in milliseconds"
         )]
         block_duration: u64,
 
-        #[arg(long, default_value_t = false)]
+        #[arg(long)]
         ignore_rate_control: bool,
 
         #[arg(value_name = "DIRECTORY")]
@@ -226,8 +227,17 @@ impl ClientCliConfig {
         #[cfg(not(feature = "encryption"))]
         let private_key = None;
 
-        let endpoint = self
-            .endpoint
+        let endpoint_str = match self.endpoint.rsplit_once(':') {
+            Some(_) => self.endpoint,
+            None => {
+                use core::fmt::Write;
+                let mut end = DefaultString::new();
+                write!(&mut end, "{}:{}", self.endpoint, 69)
+                    .map_err(|e| BinError::from(e.to_string()))?;
+                end
+            }
+        };
+        let endpoint = endpoint_str
             .as_str()
             .to_socket_addrs()?
             .next()

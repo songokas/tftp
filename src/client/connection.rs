@@ -4,6 +4,10 @@ use core::time::Duration;
 use log::debug;
 use log::error;
 
+use super::extensions::create_extensions;
+use super::extensions::parse_extensions;
+use super::extensions::validate_extensions;
+use super::ClientConfig;
 use crate::config::ConnectionOptions;
 use crate::config::DEFAULT_DATA_BLOCK_SIZE;
 use crate::encryption::EncryptionLevel;
@@ -25,11 +29,6 @@ use crate::time::InstantCallback;
 use crate::types::DataBuffer;
 use crate::types::DefaultString;
 use crate::types::FilePath;
-
-use super::extensions::create_extensions;
-use super::extensions::parse_extensions;
-use super::extensions::validate_extensions;
-use super::ClientConfig;
 
 pub fn query_server<'a>(
     socket: &mut impl Socket,
@@ -117,7 +116,10 @@ pub fn query_server<'a>(
             }
             (_, Ok(Packet::Error(p))) => {
                 // retry in case server does not support extensions
-                if matches!(p.code, ErrorCode::IllegalOperation | ErrorCode::Undefined) && initial && options.encryption_level == EncryptionLevel::None {
+                if matches!(p.code, ErrorCode::IllegalOperation | ErrorCode::Undefined)
+                    && initial
+                    && options.encryption_level == EncryptionLevel::None
+                {
                     debug!("Received error {} retrying without extensions", p.message);
                     extensions = PacketExtensions::new();
                     used_extensions = Default::default();

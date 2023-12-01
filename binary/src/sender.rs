@@ -1,26 +1,22 @@
 use core::time::Duration;
 use std::path::Path;
 
-use crate::cli::ClientCliConfig;
 use log::*;
 use rand::rngs::OsRng;
 use tftp::client::send_file;
 use tftp::config::ConnectionOptions;
+#[cfg(not(feature = "encryption"))]
+use tftp::encryption::EncryptionLevel;
 use tftp::error::BoxedResult;
-
 use tftp::std_compat::io::Read;
 use tftp::std_compat::io::Seek;
 use tftp::types::FilePath;
 
 use crate::cli::BinError;
 use crate::cli::BinResult;
-
+use crate::cli::ClientCliConfig;
 use crate::io::handle_hosts_file;
 use crate::io::instant_callback;
-
-#[cfg(not(feature = "encryption"))]
-use tftp::encryption::EncryptionLevel;
-
 use crate::socket::*;
 
 pub fn start_send<CreateReader, R>(
