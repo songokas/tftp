@@ -1,6 +1,6 @@
 [package]
 name = "tftp-binary"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 
 authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
@@ -22,12 +22,11 @@ rand = { version = "0.8", optional = false, default-features = false, features =
     "getrandom",
 ] }
 polling = "2"
-socket2 = { version = "~0.5.1", features = ["all"] }
+socket2 = { version = "0.5", features = ["all"] }
 notify = { version = "6", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
-env_logger = "0.10"
 
 [features]
 default = ["std", "alloc", "encryption", "multi_thread", "seek", "sync"]

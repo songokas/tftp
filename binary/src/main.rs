@@ -3,35 +3,23 @@ mod blocking_reader;
 mod cli;
 mod io;
 mod macros;
+mod receiver;
+mod sender;
 mod socket;
-
-use core::time::Duration;
-use std::path::Path;
+#[cfg(feature = "sync")]
+mod sync;
 
 use clap::Parser;
-use cli::ClientCliConfig;
 use env_logger::Builder;
 use env_logger::Env;
-use log::*;
-use macros::cfg_encryption;
-use macros::cfg_no_std;
+use io::instant_callback;
 use rand::rngs::OsRng;
-use tftp::client::receive_file;
-use tftp::client::send_file;
-use tftp::config::ConnectionOptions;
-use tftp::encryption::*;
-use tftp::error::BoxedResult;
-
-use tftp::server::server;
-use tftp::std_compat::io::Read;
-use tftp::std_compat::io::Seek;
-use tftp::std_compat::io::Write;
-use tftp::std_compat::net::SocketAddr;
-use tftp::std_compat::time::Instant;
-use tftp::types::FilePath;
-
+use receiver::start_receive;
+use sender::start_send;
 #[cfg(feature = "sync")]
-use crate::blocking_reader::create_delayed_reader;
+use sync::start_sync;
+use tftp::server::server;
+
 use crate::cli::Args;
 use crate::cli::BinError;
 use crate::cli::BinResult;
@@ -40,24 +28,6 @@ use crate::io::create_reader;
 use crate::io::create_server_reader;
 use crate::io::create_server_writer;
 use crate::io::create_writer;
-
-cfg_encryption! {
-    use crate::io::create_buff_reader;
-    use crate::io::from_io_err;
-    use tftp::key_management::append_to_known_hosts;
-    use tftp::key_management::get_from_known_hosts;
-    use std::fs::File;
-}
-
-cfg_no_std! {
-    use std::time::SystemTime;
-    use std::time::UNIX_EPOCH;
-    #[cfg(feature = "encryption")]
-    use crate::io::StdCompatFile;
-}
-
-#[cfg(not(feature = "encryption"))]
-use tftp::encryption::EncryptionLevel;
 
 use crate::socket::*;
 
@@ -118,259 +88,6 @@ fn main() -> BinResult<()> {
             .map_err(|e| BinError::from(e.to_string()))
         }
     }
-}
-
-#[cfg(feature = "sync")]
-fn start_sync(
-    config: ClientCliConfig,
-    block_for_ms: u64,
-    ignore_rate_control: bool,
-    dir_path: Option<FilePath>,
-) -> BinResult<()> {
-    use std::sync::mpsc::channel;
-    use std::thread::sleep;
-    use std::thread::spawn;
-
-    use notify::event::CreateKind;
-    use notify::Config;
-    use notify::EventKind;
-    use notify::RecommendedWatcher;
-    use notify::RecursiveMode;
-    use notify::Watcher;
-
-    let (tx, rx) = channel();
-    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
-    let dir = dir_path.unwrap_or_else(|| ".".to_string());
-    let path = Path::new(&dir);
-
-    watcher
-        .watch(path, RecursiveMode::Recursive)
-        .map_err(|e| BinError::from(e.to_string()))?;
-
-    info!("Watching directory {dir}");
-
-    for res in rx {
-        match res {
-            // currently we listen for created file events and expect the file to be written faster than it is read + sent + confirmed
-            // using a blocking reader in case there is a delay
-            Ok(event) if matches!(event.kind, EventKind::Create(CreateKind::File)) => {
-                let Some(local_path) = event.paths.first().map(|f| f.to_string_lossy().to_string())
-                else {
-                    warn!("Unable to retrieve path for a created file. Ignoring");
-                    continue;
-                };
-
-                debug!("File {local_path} created");
-
-                let sender_config = config.clone();
-                let block_thread = Duration::from_millis(block_for_ms);
-
-                spawn(move || {
-                    // give some time for writing
-                    sleep(block_thread);
-                    if let Err(e) = start_send(
-                        local_path,
-                        None,
-                        sender_config,
-                        |f| create_delayed_reader(f, block_thread),
-                        ignore_rate_control,
-                        false,
-                    ) {
-                        error!("Failed to synchronize file: {e}");
-                    }
-                });
-            }
-            _ => continue,
-        }
-    }
-    Ok(())
-}
-
-fn start_send<CreateReader, R>(
-    local_path: FilePath,
-    remote_path: Option<FilePath>,
-    config: ClientCliConfig,
-    create_reader: CreateReader,
-    ignore_rate_control: bool,
-    prefer_seek: bool,
-) -> BinResult<usize>
-where
-    R: Read + Seek,
-    CreateReader: Fn(&FilePath) -> BoxedResult<(Option<u64>, R)>,
-{
-    let socket = create_socket(config.listen.as_str(), 1, false)
-        .map_err(|e| BinError::from(e.to_string()))?;
-    // init_logger(socket.local_addr().expect("local address"));
-
-    let options = ConnectionOptions {
-        block_size: config.block_size as u16,
-        retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
-        file_size: None,
-        encryption_keys: None,
-        #[cfg(feature = "encryption")]
-        encryption_level: config
-            .encryption_level
-            .parse()
-            .map_err(|_| BinError::from("Invalid encryption level specified"))?,
-        #[cfg(not(feature = "encryption"))]
-        encryption_level: EncryptionLevel::None,
-        window_size: config.window_size as u16,
-    };
-    #[cfg(feature = "encryption")]
-    let known_hosts_file = config.known_hosts.clone();
-    #[cfg(not(feature = "encryption"))]
-    let known_hosts_file: Option<FilePath> = None;
-    let endpoint = config.endpoint.clone();
-
-    let remote_path = match remote_path {
-        Some(p) => p,
-        None => Path::new(local_path.as_str())
-            .file_name()
-            .ok_or("Invalid local filename")?
-            .to_string_lossy()
-            .parse()
-            .expect("Invalid local file name"),
-    };
-    send_file(
-        config.try_into(ignore_rate_control, prefer_seek)?,
-        local_path,
-        remote_path,
-        options,
-        create_reader,
-        socket,
-        instant_callback,
-        OsRng,
-    )
-    .map(|(total, _remote_key)| {
-        debug!("Client total sent {}", total);
-        let file = known_hosts_file.as_deref();
-        handle_hosts_file(file, _remote_key, &endpoint);
-        total
-    })
-    .map_err(|e| BinError::from(e.to_string()))
-}
-
-fn start_receive<CreateWriter, W>(
-    local_path: Option<FilePath>,
-    remote_path: FilePath,
-    config: ClientCliConfig,
-    create_writer: CreateWriter,
-) -> BinResult<usize>
-where
-    W: Write,
-    CreateWriter: Fn(&FilePath) -> BoxedResult<W>,
-{
-    let socket =
-        create_socket(&config.listen, 1, false).map_err(|e| BinError::from(e.to_string()))?;
-    // init_logger(socket.local_addr().expect("local address"));
-
-    let options = ConnectionOptions {
-        block_size: config.block_size as u16,
-        retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
-        file_size: Some(0),
-        encryption_keys: None,
-        #[cfg(feature = "encryption")]
-        encryption_level: config
-            .encryption_level
-            .parse()
-            .map_err(|_| BinError::from("Invalid encryption level specified"))?,
-
-        #[cfg(not(feature = "encryption"))]
-        encryption_level: EncryptionLevel::None,
-        window_size: config.window_size as u16,
-    };
-    #[cfg(feature = "encryption")]
-    let known_hosts_file = config.known_hosts.clone();
-    #[cfg(not(feature = "encryption"))]
-    let known_hosts_file: Option<FilePath> = None;
-    let endpoint = config.endpoint.clone();
-
-    let local_path = match local_path {
-        Some(p) => p,
-        None => Path::new(remote_path.as_str())
-            .file_name()
-            .ok_or("Invalid remote file name")?
-            .to_string_lossy()
-            .parse()
-            .expect("Invalid remote file name"),
-    };
-    receive_file(
-        config.try_into(false, false)?,
-        local_path,
-        remote_path,
-        options,
-        create_writer,
-        socket,
-        instant_callback,
-        OsRng,
-    )
-    .map(|(total, _remote_key)| {
-        debug!("Client total received {}", total);
-        let file = known_hosts_file.as_deref();
-        handle_hosts_file(file, _remote_key, &endpoint);
-        total
-    })
-    .map_err(|e| BinError::from(e.to_string()))
-}
-
-fn instant_callback() -> Instant {
-    #[cfg(feature = "std")]
-    return Instant::now();
-    #[cfg(not(feature = "std"))]
-    Instant::from_time(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_micros() as u64
-    })
-}
-
-#[allow(unused_variables)]
-fn handle_hosts_file(
-    known_hosts_file: Option<&str>,
-    remote_key: Option<PublicKey>,
-    endpoint: &str,
-) {
-    #[cfg(feature = "encryption")]
-    match known_hosts_file
-        .zip(remote_key)
-        .map(|(f, k)| {
-            if let Ok(Some(_)) = get_from_known_hosts(create_buff_reader(f)?, endpoint) {
-                return Ok(());
-            }
-            let file = File::options()
-                .create(true)
-                .append(true)
-                .open(f)
-                .map_err(from_io_err)?;
-            #[cfg(not(feature = "std"))]
-            let file = StdCompatFile(file);
-            append_to_known_hosts(file, endpoint, &k)
-        })
-        .transpose()
-    {
-        Ok(_) => (),
-        Err(e) => warn!("Failed to append to known hosts {}", e),
-    };
-}
-
-#[allow(dead_code)]
-fn init_logger(local_addr: SocketAddr) {
-    #[allow(unused_imports)]
-    use std::io::Write;
-    // builder using box
-    Builder::from_env(Env::default().default_filter_or("debug"))
-        .format(move |buf, record| {
-            writeln!(
-                buf,
-                "[{local_addr} {} {}]: {}",
-                record.level(),
-                buf.timestamp_micros(),
-                record.args()
-            )
-        })
-        .try_init()
-        .unwrap_or_default();
 }
 
 #[cfg(test)]

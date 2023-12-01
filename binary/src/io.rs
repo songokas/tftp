@@ -3,12 +3,18 @@ use std::fs::create_dir_all;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use env_logger::Builder;
+use env_logger::Env;
 use tftp::error::BoxedResult;
 use tftp::error::FileError;
+
+use tftp::encryption::PublicKey;
 use tftp::server::ServerConfig;
 use tftp::std_compat::io;
+use tftp::std_compat::time::Instant;
 use tftp::types::FilePath;
 
 use crate::macros::cfg_encryption;
@@ -19,6 +25,9 @@ cfg_encryption! {
     use tftp::encryption::decode_private_key;
     use tftp::encryption::PrivateKey;
     use tftp::error::EncryptionError;
+    use tftp::key_management::append_to_known_hosts;
+    use tftp::key_management::get_from_known_hosts;
+    use log::warn;
 }
 
 cfg_no_std! {
@@ -27,6 +36,9 @@ cfg_no_std! {
     use tftp::types::DefaultString;
     use std::string::String;
     use std::io::SeekFrom as StdSeekFrom;
+    use std::time::UNIX_EPOCH;
+    use std::time::SystemTime;
+
     // use std::io::Read; for StdCompatFile
     // use std::io::Seek; for StdCompatFile
     // use std::io::Write; for StdCompatFile
@@ -251,4 +263,64 @@ pub fn std_into_path(path: PathBuf) -> FilePath {
     // TODO alloc in stack
     f.push_str(&path.to_string_lossy());
     f
+}
+
+#[allow(unused_variables)]
+pub fn handle_hosts_file(
+    known_hosts_file: Option<&str>,
+    remote_key: Option<PublicKey>,
+    endpoint: &str,
+) {
+    #[cfg(feature = "encryption")]
+    match known_hosts_file
+        .zip(remote_key)
+        .map(|(f, k)| {
+            if let Ok(Some(_)) = get_from_known_hosts(create_buff_reader(f)?, endpoint) {
+                return Ok(());
+            }
+            let file = File::options()
+                .create(true)
+                .append(true)
+                .open(f)
+                .map_err(from_io_err)?;
+            #[cfg(not(feature = "std"))]
+            let file = StdCompatFile(file);
+            append_to_known_hosts(file, endpoint, &k)
+        })
+        .transpose()
+    {
+        Ok(_) => (),
+        Err(e) => warn!("Failed to append to known hosts {}", e),
+    };
+}
+
+#[allow(dead_code)]
+pub fn init_logger(local_addr: SocketAddr) {
+    #[allow(unused_imports)]
+    use std::io::Write;
+    // builder using box
+    Builder::from_env(Env::default().default_filter_or("debug"))
+        .format(move |buf, record| {
+            writeln!(
+                buf,
+                "[{local_addr} {} {}]: {}",
+                record.level(),
+                buf.timestamp_micros(),
+                record.args()
+            )
+        })
+        .try_init()
+        .unwrap_or_default();
+}
+
+pub fn instant_callback() -> Instant {
+    #[cfg(feature = "std")]
+    return Instant::now();
+    #[cfg(not(feature = "std"))]
+    Instant::from_time(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_micros() as u64
+    })
 }

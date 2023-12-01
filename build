@@ -27,8 +27,6 @@ build() {
 
     # cargo build -p tftp-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
     # cp target/x86_64-unknown-linux-musl/release/tftp dist/tftp-static
-
-    build_deb
 }
 
 release_bins() {

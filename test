@@ -69,6 +69,36 @@ test_large_files() {
     cmp -s $TEST_DIR/client/samples/112M $TEST_DIR/server/samples/112M
 }
 
+test_sync() {
+    local server="$1"
+    local client="$2"
+    local window_size="${3:-1}"
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 524288000 & server_pids+=($!)
+    time $client sync 127.0.0.1:9000 $TEST_DIR/client --window-size $window_size & pids+=($!)
+
+    sleep 1
+
+    head -c 11M /dev/urandom > $TEST_DIR/client/samples/11M
+    mkdir $TEST_DIR/client/samples/12
+    head -c 12M /dev/urandom > $TEST_DIR/client/samples/12/12M
+
+    # wait for files to synchronize
+    sleep 7
+
+    kill "${pids[@]}"
+    kill "${server_pids[@]}"
+
+    cmp -s $TEST_DIR/client/samples/11M $TEST_DIR/server/samples/11M
+    cmp -s $TEST_DIR/client/samples/12/12M $TEST_DIR/server/samples/12/12M
+}
+
+
 test_high_load() {
     local server="$1"
     local client="$2"
@@ -289,6 +319,9 @@ test_all() {
 
     test_lib
     test_bin
+
+    test_sync ./target/tftp ./target/tftp 8
+
     for server in ${encryption_targets[@]}; do
         for client in ${encryption_targets[@]}; do
             test_full_config $server $client
