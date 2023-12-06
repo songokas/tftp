@@ -18,6 +18,7 @@ use crate::config::MIN_BUFFER_SIZE;
 use crate::encryption::PublicKey;
 use crate::error::BoxedResult;
 use crate::error::PacketError;
+use crate::error::StorageError;
 use crate::flow_control::RateControl;
 use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
@@ -144,14 +145,11 @@ where
     #[allow(unused_variables)]
     let mut total_unconfirmed = 0;
 
-    let mut stats_calculate = instant();
-
     let mut no_work = Wrapping(0_u8);
     let mut packets_to_send = u32::MAX;
-    let flow_control_period = Duration::from_millis(200);
     let mut last_acknowledged = 0;
 
-    rate_control.acknoledged_data(options.block_size as usize, 1);
+    rate_control.acknowledged_data(options.block_size as usize, 1);
     rate_control.calculate_transmit_rate(
         options.block_size,
         options.window_size,
@@ -159,6 +157,8 @@ where
         initial_rtt,
     );
     let mut block_mapper = BlockMapper::new();
+    let flow_control_period = Duration::from_millis(200);
+    let mut stats_calculate = instant();
 
     loop {
         if stats_calculate.elapsed() > flow_control_period {
@@ -168,64 +168,58 @@ where
                 options.retry_packet_after_timeout,
                 stats_calculate.elapsed(),
             );
-            stats_calculate = instant();
 
-            packets_to_send = if config.ignore_rate_control {
-                u32::MAX
-            } else {
-                max(
-                    options.window_size as u32,
-                    rate_control.packets_to_send(flow_control_period, options.block_size),
-                )
-            };
+            stats_calculate = instant();
         }
 
-        if packets_to_send > 0 {
-            let timeout_interval = rate_control
-                .timeout_interval(options.retry_packet_after_timeout, options.block_size);
-            let retry = last_sent.elapsed() > timeout_interval;
-            if let Some(data_block) = block_reader.next(retry)? {
-                let last_read_length = data_block.data.len();
+        let timeout_interval =
+            rate_control.timeout_interval(options.retry_packet_after_timeout, options.block_size);
+        let retry = last_sent.elapsed() > timeout_interval;
+        let next_block = match block_reader.next(retry) {
+            Ok(b) => b,
+            Err(StorageError::File(e)) if e.kind() == ErrorKind::WouldBlock => {
+                debug!("Reading from a file {local_file_path} would block");
+                None
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(data_block) = next_block {
+            let last_read_length = data_block.data.len();
 
-                debug!(
+            debug!(
                     "Send data block {} data size {last_read_length} retry {} remaining packets {packets_to_send} timeout {}",
                     data_block.block, data_block.retry, timeout_interval.as_secs_f32()
                 );
 
-                // TODO rate control
-                let block_index = block_mapper.index(data_block.block);
-                if last_acknowledged + options.window_size as u64 == block_index {
-                    if data_block.retry {
-                        rate_control.increment_errors();
-                    }
-                    rate_control.start_rtt(data_block.block);
+            let block_index = block_mapper.index(data_block.block);
+            if last_acknowledged + options.window_size as u64 == block_index {
+                if data_block.retry {
+                    rate_control.increment_errors();
                 }
-
-                let data_packet = Packet::Data(DataPacket {
-                    block: data_block.block,
-                    data: &data_block.data,
-                });
-                match socket.send_to(&mut data_packet.to_bytes(), endpoint) {
-                    Ok(_) => {
-                        last_sent = instant();
-                        no_work = Wrapping(1);
-                        rate_control.data_sent(last_read_length);
-                        total_unconfirmed += last_read_length;
-                        packets_to_send -= 1;
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                        no_work += 1;
-                    }
-                    Err(e) => {
-                        return Err(e.into());
-                    }
-                };
-            } else {
-                no_work += 1;
+                rate_control.start_rtt(data_block.block);
             }
+
+            let data_packet = Packet::Data(DataPacket {
+                block: data_block.block,
+                data: &data_block.data,
+            });
+            match socket.send_to(&mut data_packet.to_bytes(), endpoint) {
+                Ok(_) => {
+                    last_sent = instant();
+                    no_work = Wrapping(1);
+                    rate_control.data_sent(last_read_length);
+                    total_unconfirmed += last_read_length;
+                    packets_to_send -= 1;
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    no_work += 1;
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            };
         } else {
             no_work += 1;
-            rate_control.mark_as_data_limited();
         }
 
         #[cfg(feature = "alloc")]
@@ -290,9 +284,9 @@ where
                 let data_length = block_reader.free_block(p.block);
                 last_acknowledged = block_mapper.index(p.block);
 
-                rate_control.acknoledged_data(
+                rate_control.acknowledged_data(
                     data_length,
-                    (data_length / options.block_size as usize) as u32,
+                    (data_length / options.block_size_with_encryption() as usize) as u32,
                 );
                 if let Some(rtt) = rate_control.end_rtt(p.block) {
                     trace!("Rtt for block {} elapsed {}us", p.block, rtt.as_micros());
@@ -303,7 +297,10 @@ where
                 debug!("Acknowledge received {} total {}", p.block, total_confirmed);
 
                 if block_reader.is_finished() {
-                    info!("Client finished sending with bytes {}", total_confirmed);
+                    info!(
+                        "Client finished sending {local_file_path} {} bytes",
+                        total_confirmed
+                    );
                     return Ok((total_confirmed, options.remote_public_key()));
                 }
             }
@@ -324,18 +321,21 @@ fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] 
     prefer_seek: bool,
 ) -> Readers<R> {
     match (options.window_size, prefer_seek) {
-        (1, false) => Readers::Single(SingleBlockReader::new(reader, options.block_size)),
+        (1, false) => Readers::Single(SingleBlockReader::new(
+            reader,
+            options.block_size_with_encryption(),
+        )),
         #[cfg(feature = "seek")]
         (_, true) => Readers::Seek(
             crate::readers::multiple_block_seek_reader::MultipleBlockSeekReader::new(
                 reader,
-                options.block_size,
+                options.block_size_with_encryption(),
                 options.window_size,
             ),
         ),
         _ => Readers::Multiple(MultipleBlockReader::new(
             reader,
-            options.block_size,
+            options.block_size_with_encryption(),
             options.window_size,
         )),
     }

@@ -121,7 +121,7 @@ where
 #[cfg(feature = "alloc")]
 type Blocks = Map<u64, DataBlock>;
 #[cfg(not(feature = "alloc"))]
-type Blocks = Map<u64, DataBlock, { crate::config::MAX_BLOCKS_READER as usize }>;
+type Blocks = Map<u64, DataBlock, { crate::config::MAX_BLOCKS_FOR_MULTI_READER as usize }>;
 
 #[cfg(test)]
 mod tests {

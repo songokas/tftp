@@ -14,6 +14,5 @@ pub struct ClientConfig {
     pub private_key: Option<PrivateKey>,
     pub remote_public_key: Option<PublicKey>,
     pub allow_server_port_change: bool,
-    pub ignore_rate_control: bool,
     pub prefer_seek: bool,
 }

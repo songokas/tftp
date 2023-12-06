@@ -18,8 +18,8 @@ encrypt traffic or data.
 Install deb
 
 ```
-wget https://github.com/songokas/tftp/releases/download/v0.3.1/tftp_0.3.1_amd64.deb \
-  && sudo apt install ./tftp_0.3.1_amd64.deb
+wget https://github.com/songokas/tftp/releases/download/v0.4.0/tftp_0.4.0_amd64.deb \
+  && sudo apt install ./tftp_0.4.0_amd64.deb
 ```
 
 Download binary
@@ -73,7 +73,7 @@ server will generate a random key per client if no private key is provided
 tftp server 127.0.0.1:9000 /tmp
 ```
 
-restrict who is able to access the server 
+restrict who is able to access the server (server public key will be printed in the logs)
 
 ```bash
 # ~/.authorized_keys base64 encoded key per line 1TGOop6cYn8meO0bOtnRbsQ4tfd0zRfGJhaMGCZVZ6M=
@@ -85,7 +85,7 @@ tftp server 127.0.0.1:9000 /tmp --private-key `openssl rand -base64 32` --author
 Encryption is used based on `--encryption-level` argument (default: optional-protocol)
 Client should be able to communicate even if the server does not support encryption.
 
-client will exchange public keys and encrypt the traffic afterwards
+client will exchange public keys and encrypt the traffic afterwards (client public key will be printed in the logs)
 
 ```bash
 echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --encryption-level protocol
@@ -121,6 +121,25 @@ echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --allow-server-port-change
 
 ```bash
 tftp sync 127.0.0.1:9000 /folder
+```
+
+Adding a user service to start on login
+
+```bash
+cat > ~/.config/systemd/tftp-sync-directory <<EOF
+[Unit]
+Description=tfp sync for directory to server
+
+[Install]
+WantedBy=default.target
+
+[Service]
+ExecStart=/usr/bin/tftp sync server /directory
+Restart=on-failure
+EOF
+
+systemctl --user start tftp-sync-directory
+systemctl --user enable tftp-sync-directory
 ```
 
 ### Stats

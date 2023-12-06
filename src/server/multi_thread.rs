@@ -9,7 +9,6 @@ use rand::CryptoRng;
 use rand::RngCore;
 
 use super::config::ServerConfig;
-use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::encryption::encode_public_key;
 use crate::encryption::PublicKey;
 use crate::error::BoxedResult;
@@ -229,14 +228,7 @@ fn spawn_reader<R: BlockReader + Send + 'static, B: BoundSocket + Send + 'static
     request_timeout: Duration,
 ) -> JoinHandle<()> {
     spawn(move || {
-        let mut buffer = create_max_buffer(
-            connection.options.block_size
-                + if connection.options.is_encrypting() {
-                    ENCRYPTION_TAG_SIZE as u16
-                } else {
-                    0
-                },
-        );
+        let mut buffer = create_max_buffer(connection.options.block_size);
         let mut wait_control = WaitControl::new();
         let max_buffer_size = buffer.len();
         loop {
@@ -277,14 +269,7 @@ fn spawn_writer<W: BlockWriter + Send + 'static, B: BoundSocket + Send + 'static
     max_file_size: u64,
 ) -> JoinHandle<()> {
     spawn(move || {
-        let mut buffer = create_max_buffer(
-            connection.options.block_size
-                + if connection.options.is_encrypting() {
-                    ENCRYPTION_TAG_SIZE as u16
-                } else {
-                    0
-                },
-        );
+        let mut buffer = create_max_buffer(connection.options.block_size);
         let max_buffer_size = buffer.len();
         loop {
             if timeout_client(&mut connection, request_timeout) {

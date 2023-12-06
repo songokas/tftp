@@ -18,7 +18,6 @@ use crate::string::format_str;
 
 cfg_encryption! {
     use crate::key_management::create_finalized_keys;
-    use crate::config::ENCRYPTION_TAG_SIZE;
 }
 
 #[allow(unused_variables)]
@@ -160,15 +159,6 @@ pub fn create_options(
         finalized_keys
     };
 
-    #[cfg(feature = "encryption")]
-    if finalized_keys.is_some()
-        && matches!(
-            options.encryption_level,
-            EncryptionLevel::Data | EncryptionLevel::Protocol | EncryptionLevel::Full
-        )
-    {
-        options.block_size -= ENCRYPTION_TAG_SIZE as u16;
-    }
     Ok((used_extensions, options, finalized_keys))
 }
 
@@ -191,7 +181,7 @@ mod tests {
 
         let options = ConnectionOptions::default();
         let mut extensions = PacketExtensions::new();
-        let _ = extensions.insert(Extension::BlockSize, "500".parse().unwrap());
+        let _ = extensions.insert(Extension::BlockSize, "512".parse().unwrap());
         let _ = extensions.insert(Extension::TransferSize, "6".parse().unwrap());
         let _ = extensions.insert(Extension::Timeout, "7".parse().unwrap());
         let _ = extensions.insert(Extension::WindowSize, "8".parse().unwrap());

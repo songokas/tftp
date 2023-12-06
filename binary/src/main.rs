@@ -44,7 +44,6 @@ fn main() -> BinResult<()> {
             local_path,
             remote_path,
             config,
-            ignore_rate_control,
             #[cfg(feature = "seek")]
             prefer_seek,
         } => start_send(
@@ -52,7 +51,6 @@ fn main() -> BinResult<()> {
             remote_path,
             config,
             create_reader,
-            ignore_rate_control,
             #[cfg(feature = "seek")]
             prefer_seek,
             #[cfg(not(feature = "seek"))]
@@ -63,9 +61,9 @@ fn main() -> BinResult<()> {
         Commands::Sync {
             dir_path,
             config,
+            start_on_create,
             block_duration,
-            ignore_rate_control,
-        } => start_sync(config, block_duration, ignore_rate_control, dir_path).map(|_| ()),
+        } => start_sync(config, dir_path, start_on_create, block_duration).map(|_| ()),
 
         Commands::Receive {
             config,
@@ -99,6 +97,7 @@ mod tests {
     use std::thread::spawn;
     use std::time::Duration;
 
+    use tftp::config::DEFAULT_DATA_BLOCK_SIZE;
     use tftp::config::MAX_DATA_BLOCK_SIZE;
     use tftp::encryption::*;
     use tftp::error::DefaultBoxedResult;
@@ -349,7 +348,7 @@ mod tests {
             endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
             listen: "127.0.0.1:0".parse().unwrap(),
             request_timeout: 1000,
-            block_size: 100,
+            block_size: DEFAULT_DATA_BLOCK_SIZE as u64,
             retry_timeout: 1000,
             max_file_size: 2000,
             #[cfg(feature = "encryption")]
@@ -369,14 +368,7 @@ mod tests {
         let create_reader =
             |_path: &FilePath| Ok((Some(bytes.len() as u64), CursorReader::new(bytes.clone())));
 
-        start_send(
-            local_file,
-            remote_file,
-            cli_config,
-            create_reader,
-            false,
-            false,
-        )
+        start_send(local_file, remote_file, cli_config, create_reader, false)
     }
 
     fn start_receive_file(
@@ -391,7 +383,7 @@ mod tests {
             endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
             listen: "127.0.0.1:0".parse().unwrap(),
             request_timeout: 1000,
-            block_size: 100,
+            block_size: DEFAULT_DATA_BLOCK_SIZE as u64,
             retry_timeout: 1000,
             max_file_size: 2000,
             #[cfg(feature = "encryption")]

@@ -122,8 +122,8 @@ where
                 total += w;
             };
 
-            if packet_length != options.block_size as usize {
-                info!("Client finished receiving with bytes {total}");
+            if packet_length != options.block_size_with_encryption() as usize {
+                info!("Client finished receiving {local_file_path} {total} bytes");
                 return Ok((packet_length, None));
             }
         }
@@ -198,8 +198,8 @@ where
                         timeout = instant();
                         total += written;
 
-                        if written < options.block_size as usize {
-                            info!("Client finished receiving with bytes {}", total);
+                        if written < options.block_size_with_encryption() as usize {
+                            info!("Client finished receiving {local_file_path} {total} bytes");
                             return Ok((total, options.remote_public_key()));
                         }
                     }
@@ -252,7 +252,7 @@ fn write_block(
 
     if options.window_size <= 1
         || *last_ack + options.window_size as u64 == index
-        || written.unwrap_or(0) < options.block_size as usize
+        || written.unwrap_or(0) < options.block_size_with_encryption() as usize
     {
         debug!("Ack send {}", block);
         let packet = Packet::Ack(AckPacket { block });

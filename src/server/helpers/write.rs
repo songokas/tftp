@@ -63,7 +63,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket>(
                         p.block,
                         write_elapsed.elapsed().as_micros()
                     );
-                    if n < connection.options.block_size as usize {
+                    if n < connection.options.block_size_with_encryption() as usize {
                         info!(
                             "Client write {} finished with {} bytes",
                             connection.endpoint, connection.transfer
@@ -143,7 +143,7 @@ where
 
     if connection.options.window_size <= 1
         || connection.last_acknowledged + connection.options.window_size as u64 == index
-        || written.unwrap_or(0) < connection.options.block_size as usize
+        || written.unwrap_or(0) < connection.options.block_size_with_encryption() as usize
     {
         if !connection.send_packet(Packet::Ack(AckPacket { block })) {
             error!("Unable to ack block {}", block);

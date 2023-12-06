@@ -5,7 +5,6 @@ use rand::RngCore;
 use super::encryption_socket::EncryptionBoundSocket;
 use super::ClientConfig;
 use crate::config::ConnectionOptions;
-use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::encryption::encode_public_key;
 use crate::encryption::EncryptionKeys;
 use crate::encryption::EncryptionLevel;
@@ -22,7 +21,10 @@ pub fn create_initial_socket(
     rng: impl CryptoRng + RngCore + Copy,
 ) -> BoxedResult<(EncryptionBoundSocket<impl Socket>, Option<InitialKeys>)> {
     if options.encryption_level == EncryptionLevel::None {
-        return Ok((EncryptionBoundSocket::wrap(socket), None));
+        return Ok((
+            EncryptionBoundSocket::wrap(socket, options.block_size as usize),
+            None,
+        ));
     }
 
     if let Some(p) = config.remote_public_key {
@@ -37,6 +39,7 @@ pub fn create_initial_socket(
             Some(keys.encryptor),
             keys.public,
             options.encryption_level,
+            options.block_size as usize,
         );
         return Ok((socket, None));
     }
@@ -46,7 +49,10 @@ pub fn create_initial_socket(
         encode_public_key(&initial_keys.public)?
     );
     options.encryption_keys = Some(EncryptionKeys::ClientKey(initial_keys.public));
-    Ok((EncryptionBoundSocket::wrap(socket), initial_keys.into()))
+    Ok((
+        EncryptionBoundSocket::wrap(socket, options.block_size as usize),
+        initial_keys.into(),
+    ))
 }
 
 pub fn configure_socket(
@@ -54,7 +60,7 @@ pub fn configure_socket(
     initial_keys: Option<InitialKeys>,
     mut options: ConnectionOptions,
 ) -> (impl Socket, ConnectionOptions) {
-    let (socket, mut options) = match (
+    let (mut socket, options) = match (
         options.encryption_level,
         initial_keys,
         options.encryption_keys,
@@ -94,13 +100,7 @@ pub fn configure_socket(
         }
     };
 
-    if socket.encryptor.is_some()
-        && matches!(
-            socket.encryption_level,
-            EncryptionLevel::Data | EncryptionLevel::Protocol | EncryptionLevel::Full
-        )
-    {
-        options.block_size -= ENCRYPTION_TAG_SIZE as u16;
-    }
+    socket.block_size = options.block_size_with_encryption() as usize;
+
     (socket, options)
 }

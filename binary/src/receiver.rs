@@ -63,7 +63,7 @@ where
             .expect("Invalid remote file name"),
     };
     receive_file(
-        config.try_into(false, false)?,
+        config.try_into( false)?,
         local_path,
         remote_path,
         options,

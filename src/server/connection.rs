@@ -17,6 +17,7 @@ use crate::types::DataBuffer;
 
 cfg_encryption! {
     use crate::packet::PacketType;
+    use crate::config::DATA_PACKET_HEADER_SIZE;
 }
 
 pub enum ClientType<R, W> {
@@ -65,6 +66,10 @@ impl<B: BoundSocket> Connection<B> {
                 );
                 return false;
             }
+            if let Err(e) = remove_bit_padding(_buffer) {
+                error!("Failed to remove padding {e}");
+                return false;
+            }
         }
 
         #[cfg(feature = "encryption")]
@@ -101,6 +106,14 @@ impl<B: BoundSocket> Connection<B> {
         if let (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) =
             (self.options.encryption_level, &self.encryptor)
         {
+            if let Err(e) = apply_bit_padding(
+                &mut data,
+                self.options.block_size_with_encryption() as usize
+                    + DATA_PACKET_HEADER_SIZE as usize,
+            ) {
+                error!("Failed to apply padding data {e}");
+                return false;
+            }
             if encryptor.encrypt(&mut data).is_err() {
                 error!("Failed to encrypt data {:x?}", &data);
                 return false;

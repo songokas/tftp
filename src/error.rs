@@ -255,11 +255,29 @@ impl Display for EncodingErrorType {
 }
 
 #[derive(Debug)]
+pub enum PaddingError {
+    EmptyBuffer,
+    MissingPaddingByte,
+    InvalidSizeProvided,
+}
+
+impl Display for PaddingError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PaddingError::EmptyBuffer => write!(f, "empty buffer provided"),
+            PaddingError::MissingPaddingByte => write!(f, "missing padding byte"),
+            PaddingError::InvalidSizeProvided => write!(f, "invalid padding size provided"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum EncryptionError {
     Encrypt,
     Decrypt,
     Encode(EncodingErrorType),
     Decode(EncodingErrorType),
+    Padding(PaddingError),
 }
 
 impl Error for EncryptionError {}
@@ -271,6 +289,7 @@ impl Display for EncryptionError {
             EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
             EncryptionError::Encode(t) => write!(f, "Failed to encode {t}"),
             EncryptionError::Decode(t) => write!(f, "Failed to decode {t}"),
+            EncryptionError::Padding(t) => write!(f, "Failed to pad {t}"),
         }
     }
 }

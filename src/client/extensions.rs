@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn test_parse_extensions() {
         let options = ConnectionOptions {
-            block_size: 500,
+            block_size: 512,
             retry_packet_after_timeout: Duration::from_secs(7),
             file_size: 0.into(),
             encryption_keys: None,
@@ -343,7 +343,7 @@ mod tests {
             window_size: 8,
         };
         let mut extensions = PacketExtensions::new();
-        let _ = extensions.insert(Extension::BlockSize, "101".parse().unwrap());
+        let _ = extensions.insert(Extension::BlockSize, "512".parse().unwrap());
         let _ = extensions.insert(Extension::TransferSize, "6".parse().unwrap());
         let _ = extensions.insert(Extension::Timeout, "6".parse().unwrap());
         let _ = extensions.insert(Extension::WindowSize, "2".parse().unwrap());
@@ -353,7 +353,7 @@ mod tests {
         let result = parse_extensions(extensions, options.clone()).unwrap();
 
         assert_eq!(result.window_size, 2);
-        assert_eq!(result.block_size, 101);
+        assert_eq!(result.block_size, 512);
         assert_eq!(result.file_size, Some(6));
         assert_eq!(result.retry_packet_after_timeout, Duration::from_secs(6));
     }

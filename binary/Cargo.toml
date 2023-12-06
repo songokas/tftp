@@ -1,6 +1,6 @@
 [package]
 name = "tftp-binary"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 
 authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
@@ -35,7 +35,7 @@ alloc = ["tftp/alloc"]
 encryption = ["tftp/encryption"]
 seek = ["tftp/seek"]
 multi_thread = ["tftp/multi_thread"]
-sync = ["notify"]
+sync = ["notify", "std", "alloc"]
 
 [[bin]]
 name = "tftp"

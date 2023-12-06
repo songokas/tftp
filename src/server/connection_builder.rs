@@ -95,13 +95,17 @@ impl<'a> ConnectionBuilder<'a> {
                     error!("Failed to decrypt initial connection");
                     None
                 } else {
-                    *buffer = data;
-                    options.encryption_keys = Some(EncryptionKeys::LocalToRemote(
-                        finalized_keys.public,
-                        remote_public_key,
-                    ));
-                    options.encryption_level = EncryptionLevel::Full;
-                    Some(finalized_keys)
+                    if remove_bit_padding(&mut data).is_err() {
+                        None
+                    } else {
+                        *buffer = data;
+                        options.encryption_keys = Some(EncryptionKeys::LocalToRemote(
+                            finalized_keys.public,
+                            remote_public_key,
+                        ));
+                        options.encryption_level = EncryptionLevel::Full;
+                        Some(finalized_keys)
+                    }
                 }
             } else {
                 None
@@ -372,18 +376,20 @@ fn handle_encrypted(
         Ok(PacketType::InitialEncryption) => (),
         _ => return Ok(None),
     };
-    let remote_public_key: [u8; size_of::<PublicKey>()] = data
-        .get(size_of::<PacketType>()..size_of::<PacketType>() + size_of::<PublicKey>())
+    const PACKET_TYPE_SIZE: usize = size_of::<PacketType>();
+    const PUBLIC_KEY_SIZE: usize = size_of::<PublicKey>();
+    const PUBLIC_KEY_END: usize = PACKET_TYPE_SIZE + PUBLIC_KEY_SIZE;
+    const NONCE_END: usize = PACKET_TYPE_SIZE + PUBLIC_KEY_SIZE + size_of::<Nonce>();
+
+    let remote_public_key: [u8; PUBLIC_KEY_SIZE] = data
+        .get(PACKET_TYPE_SIZE..PUBLIC_KEY_END)
         .map(|n| n.try_into())
         .transpose()
         .map_err(|_| EncryptionError::Decrypt)?
         .ok_or(EncryptionError::Decrypt)?;
 
     let remote_nonce: [u8; size_of::<Nonce>()] = data
-        .get(
-            size_of::<PacketType>() + size_of::<PublicKey>()
-                ..size_of::<PacketType>() + size_of::<PublicKey>() + size_of::<Nonce>(),
-        )
+        .get(PUBLIC_KEY_END..NONCE_END)
         .map(|n| n.try_into())
         .transpose()
         .map_err(|_| EncryptionError::Decrypt)?
@@ -392,11 +398,7 @@ fn handle_encrypted(
     let remote_key = remote_public_key.into();
     let finalized_keys =
         create_finalized_keys(private_key, &remote_key, Some(remote_nonce.into()), rng);
-    Ok(Some((
-        size_of::<PacketType>() + size_of::<PublicKey>() + size_of::<Nonce>(),
-        finalized_keys,
-        remote_key,
-    )))
+    Ok(Some((NONCE_END, finalized_keys, remote_key)))
 }
 
 fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] R: Read + Seek>(
@@ -409,19 +411,23 @@ fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] 
     if _prefer_seek && readers_available.seek() {
         return Readers::Seek(MultipleBlockSeekReader::new(
             reader,
-            options.block_size,
+            options.block_size_with_encryption(),
             options.window_size,
         ))
         .into();
     }
     if options.window_size == 1 && readers_available.single_block() {
-        return Readers::Single(SingleBlockReader::new(reader, options.block_size)).into();
+        return Readers::Single(SingleBlockReader::new(
+            reader,
+            options.block_size_with_encryption(),
+        ))
+        .into();
     }
 
     if readers_available.multi_block() {
         return Readers::Multiple(MultipleBlockReader::new(
             reader,
-            options.block_size,
+            options.block_size_with_encryption(),
             options.window_size,
         ))
         .into();
@@ -431,7 +437,7 @@ fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] 
     if readers_available.seek() {
         return Readers::Seek(MultipleBlockSeekReader::new(
             reader,
-            options.block_size,
+            options.block_size_with_encryption(),
             options.window_size,
         ))
         .into();

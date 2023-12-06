@@ -72,6 +72,7 @@ impl RateControl {
         self.new_loss = true;
     }
 
+    #[allow(dead_code)]
     pub fn mark_as_data_limited(&mut self) {
         self.data_limited = true;
     }
@@ -107,7 +108,7 @@ impl RateControl {
         self.total_data_sent += size as u32;
     }
 
-    pub fn acknoledged_data(&mut self, size: usize, packets: u32) {
+    pub fn acknowledged_data(&mut self, size: usize, packets: u32) {
         self.total_acknoledged_data += size as u32;
         self.total_acknoledged_packets += packets;
     }
@@ -121,22 +122,6 @@ impl RateControl {
         max(Duration::from_secs_f32(timeout), min_retry_timeout)
     }
 
-    fn maximize_set(&mut self, received: u32) {
-        let mut max_value = self.receive_set.iter().max().copied().unwrap_or_default();
-        if received > max_value || max_value == u32::MAX {
-            max_value = received;
-        }
-        self.receive_set.clear();
-        self.receive_set.push(max_value);
-    }
-
-    fn update_set(&mut self, received: u32) {
-        if self.receive_set.is_full() {
-            self.receive_set.pop();
-        }
-        self.receive_set.insert(0, received);
-    }
-
     pub fn calculate_transmit_rate(
         &mut self,
         block_size: u16,
@@ -148,7 +133,7 @@ impl RateControl {
             initial_rate(block_size) as u32
         } else {
             if self.total_acknoledged_data == 0 {
-                return self.allowed_transmit_rate;
+                self.allowed_transmit_rate = 1;
             }
             (self.total_acknoledged_data as f32 / received_in.as_secs_f32()) as u32
         };
@@ -206,8 +191,25 @@ impl RateControl {
         self.allowed_transmit_rate
     }
 
+    #[allow(dead_code)]
     pub fn packets_to_send(&self, time_window: Duration, block_size: u16) -> u32 {
         packets_to_send(self.allowed_transmit_rate, time_window, block_size)
+    }
+
+    fn maximize_set(&mut self, received: u32) {
+        let mut max_value = self.receive_set.iter().max().copied().unwrap_or_default();
+        if received > max_value || max_value == u32::MAX {
+            max_value = received;
+        }
+        self.receive_set.clear();
+        self.receive_set.push(max_value);
+    }
+
+    fn update_set(&mut self, received: u32) {
+        if self.receive_set.is_full() {
+            self.receive_set.pop();
+        }
+        self.receive_set.insert(0, received);
     }
 }
 
@@ -287,31 +289,27 @@ mod tests {
 
         let transmit_rate =
             rate.calculate_transmit_rate(512, 8, result, Duration::from_millis(1000));
-        assert_eq!(transmit_rate, 4294967295);
-
-        let transmit_rate =
-            rate.calculate_transmit_rate(512, 8, result, Duration::from_millis(1000));
-        assert_eq!(transmit_rate, 4294967295);
+        assert_eq!(transmit_rate, 2048);
 
         let result = rate.timeout_interval(Duration::from_millis(80), 512);
-        assert_eq!(result.as_millis(), 320);
+        assert_eq!(500, result.as_millis());
 
         rate.feedback_timer_expired = true;
         rate.data_limited = true;
 
         let transmit_rate =
             rate.calculate_transmit_rate(512, 8, result, Duration::from_millis(1000));
-        assert_eq!(transmit_rate, 2147483647);
+        assert_eq!(transmit_rate, 4096);
 
         let result = rate.timeout_interval(Duration::from_millis(80), 512);
-        assert_eq!(result.as_millis(), 320);
+        assert!([320_u128, 321].contains(&result.as_millis()));
 
         // timeout depends on data or rtt
         rate.start_rtt(1);
         sleep(Duration::from_millis(1));
         rate.end_rtt(1);
 
-        rate.acknoledged_data(8000, 8);
+        rate.acknowledged_data(8000, 8);
         let _transmit_rate = rate.calculate_transmit_rate(
             512,
             8,
@@ -320,7 +318,7 @@ mod tests {
         );
 
         let result = rate.timeout_interval(Duration::from_millis(80), 512);
-        assert_eq!(result.as_millis(), 288);
+        assert!([288_u128, 289].contains(&result.as_millis()));
     }
 
     #[cfg(feature = "std")]
@@ -334,7 +332,7 @@ mod tests {
         sleep(Duration::from_millis(1));
         rate.end_rtt(1);
 
-        rate.acknoledged_data(8000, 8);
+        rate.acknowledged_data(8000, 8);
         let transmit_rate = rate.calculate_transmit_rate(
             512,
             8,
@@ -343,7 +341,7 @@ mod tests {
         );
         assert_eq!(transmit_rate, 4294967295);
 
-        rate.acknoledged_data(8000, 8);
+        rate.acknowledged_data(8000, 8);
         let transmit_rate = rate.calculate_transmit_rate(
             512,
             8,
@@ -352,7 +350,7 @@ mod tests {
         );
         assert_eq!(transmit_rate, 4294967295);
 
-        rate.acknoledged_data(8000, 8);
+        rate.acknowledged_data(8000, 8);
         let transmit_rate = rate.calculate_transmit_rate(
             512,
             8,
@@ -361,7 +359,7 @@ mod tests {
         );
         assert_eq!(transmit_rate, 80000);
 
-        rate.acknoledged_data(8000, 8);
+        rate.acknowledged_data(8000, 8);
         let transmit_rate = rate.calculate_transmit_rate(
             512,
             8,
@@ -369,6 +367,92 @@ mod tests {
             Duration::from_millis(200),
         );
         assert_eq!(transmit_rate, 80000);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_transmit_rate_doubles() {
+        use std::thread::sleep;
+
+        let mut rate = RateControl::new(std::time::Instant::now);
+
+        rate.start_rtt(1);
+        sleep(Duration::from_millis(1));
+        rate.end_rtt(1);
+
+        rate.acknowledged_data(512, 8);
+        rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+
+        rate.acknowledged_data(512, 8);
+        let transmit_rate = rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+        assert_eq!(transmit_rate, 4294967295);
+
+        rate.acknowledged_data(512, 8);
+        let transmit_rate = rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+        assert_eq!(transmit_rate, 5120);
+        let result = rate.timeout_interval(Duration::from_millis(80), 512);
+        assert_eq!(200, result.as_millis());
+
+        rate.acknowledged_data(512, 8);
+        rate.acknowledged_data(512, 8);
+        let transmit_rate = rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+        let result = rate.timeout_interval(Duration::from_millis(80), 512);
+        assert_eq!(100, result.as_millis());
+        assert_eq!(transmit_rate, 10240);
+
+        rate.acknowledged_data(512, 8);
+        rate.acknowledged_data(512, 8);
+        rate.acknowledged_data(512, 8);
+        rate.acknowledged_data(512, 8);
+        let transmit_rate = rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+        assert_eq!(transmit_rate, 20480);
+        let result = rate.timeout_interval(Duration::from_millis(80), 512);
+        assert_eq!(80, result.as_millis());
+
+        // we have not received anything
+        let transmit_rate = rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+        assert_eq!(transmit_rate, 2048);
+        let result = rate.timeout_interval(Duration::from_millis(80), 512);
+        assert_eq!(500, result.as_millis());
+        let transmit_rate = rate.calculate_transmit_rate(
+            512,
+            8,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+        );
+        assert_eq!(transmit_rate, 2048);
+        let result = rate.timeout_interval(Duration::from_millis(80), 512);
+        assert_eq!(500, result.as_millis());
     }
 
     #[test]

@@ -30,18 +30,19 @@ test_full_config() {
         --max-file-size 100000000 --max-block-size 512 --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
     
     time $client send 127.0.0.1:9000 $TEST_DIR/client/file --listen 127.0.0.1:0 --remote-path new-path --request-timeout 10000 \
-        --max-file-size 100000000 --block-size 110 --encryption-level protocol --server-public-key "$public_key" --private-key "$client_private_key" \
+        --max-file-size 100000000 --block-size 512 --encryption-level protocol --server-public-key "$public_key" --private-key "$client_private_key" \
         --known-hosts $TEST_DIR/known
     
     cmp -s $TEST_DIR/client/file $TEST_DIR/server/new-path
     
    time $client receive 127.0.0.1:9000 new-path --local-path $TEST_DIR/delete/file --listen 127.0.0.1:0 --request-timeout 10000 \
-       --max-file-size 100000000 --block-size 120 --encryption-level protocol --private-key "$client_private_key" \
+       --max-file-size 100000000 --block-size 512 --encryption-level protocol --private-key "$client_private_key" \
        --known-hosts $TEST_DIR/known
+
+    kill "${server_pids[@]}"
 
     cmp -s $TEST_DIR/delete/file $TEST_DIR/server/new-path
 
-    kill "${server_pids[@]}"
 }
 
 test_large_files() {
@@ -134,6 +135,7 @@ test_high_load() {
         cmp -s $TEST_DIR/server/samples/$i $TEST_DIR/delete/$i
     done
     kill "${server_pids[@]}"
+
 }
 
 test_encryption_level() {

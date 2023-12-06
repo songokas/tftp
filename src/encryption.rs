@@ -16,9 +16,11 @@ use x25519_dalek::PublicKey as ExternalPublicKey;
 use x25519_dalek::StaticSecret;
 
 use crate::config::DATA_PACKET_HEADER_SIZE;
+use crate::config::ENCRYPTION_PADDING;
 use crate::config::MAX_EXTENSION_VALUE_SIZE;
 use crate::error::EncodingErrorType;
 use crate::error::EncryptionError;
+use crate::error::PaddingError;
 use crate::packet::PacketType;
 use crate::types::DataBuffer;
 use crate::types::ShortString;
@@ -212,10 +214,98 @@ fn decode<Output: From<[u8; CAP]>, const CAP: usize>(
     Ok(remote.into())
 }
 
+// 0010 0200 | 1111 1111 1111 1111
+// 0010 0201 | 0000 0000 0000 0000
+pub fn apply_bit_padding(buf: &mut DataBuffer, expected_size: usize) -> Result<(), PaddingError> {
+    let Some(last_byte) = buf.last() else {
+        return Err(PaddingError::EmptyBuffer);
+    };
+    // lets pad with 0
+    let number_of_bytes = expected_size
+        .checked_sub(buf.len())
+        .ok_or(PaddingError::InvalidSizeProvided)?;
+    let ones = last_byte.trailing_ones();
+    let byte = if ones > 0 { 0 } else { 255 };
+    let random_bytes: DataBuffer = (0..number_of_bytes + ENCRYPTION_PADDING as usize)
+        .map(|_| byte)
+        .collect();
+    buf.extend(random_bytes);
+    Ok(())
+}
+
+// last byte must me a padding byte
+pub fn remove_bit_padding(buf: &mut DataBuffer) -> Result<(), PaddingError> {
+    let Some(last_byte) = buf.last() else {
+        return Err(PaddingError::EmptyBuffer);
+    };
+    let byte: u8 = if last_byte.trailing_ones() == 8 {
+        255
+    } else if last_byte.trailing_zeros() == 8 {
+        0
+    } else {
+        return Err(PaddingError::MissingPaddingByte);
+    };
+    let mut number_of_bytes = 0;
+    for b in buf.iter().rev() {
+        if *b != byte {
+            break;
+        }
+        number_of_bytes += 1;
+    }
+    buf.truncate(buf.len() - number_of_bytes);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::ENCRYPTION_TAG_SIZE;
+
+    #[test]
+    fn test_apply_bit_padding() {
+        let mut buf = DataBuffer::new();
+        let result = apply_bit_padding(&mut buf, 5);
+        assert!(result.is_err());
+        assert_eq!(buf, []);
+
+        buf.extend([255]);
+        apply_bit_padding(&mut buf, 5).unwrap();
+        assert_eq!(buf, [255, 0, 0, 0, 0, 0]);
+
+        let mut buf = DataBuffer::new();
+        // buf.resize(10, 0);
+        buf.extend([0]);
+        apply_bit_padding(&mut buf, 5).unwrap();
+        assert_eq!(buf, [0, 255, 255, 255, 255, 255]);
+
+        let mut buf = DataBuffer::new();
+        buf.extend([0]);
+        apply_bit_padding(&mut buf, 1).unwrap();
+        assert_eq!(buf, [0, 255]);
+
+        let mut buf = DataBuffer::new();
+        buf.extend([0, 1, 2, 3, 0]);
+        let result = apply_bit_padding(&mut buf, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_bit_padding() {
+        let mut buf = DataBuffer::new();
+        let result = remove_bit_padding(&mut buf);
+        assert!(result.is_err());
+        assert_eq!(buf, []);
+
+        buf.extend([2, 0, 0, 0, 0]);
+        remove_bit_padding(&mut buf).unwrap();
+        assert_eq!(buf, [2]);
+
+        let mut buf = DataBuffer::new();
+        // buf.resize(10, 0);
+        buf.extend([1, 255, 255, 255, 255]);
+        remove_bit_padding(&mut buf).unwrap();
+        assert_eq!(buf, [1]);
+    }
 
     #[test]
     fn test_encrypt_decrypt() {

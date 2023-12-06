@@ -10,7 +10,7 @@ use tftp::config::EXTENSION_BLOCK_SIZE_MIN;
 use tftp::config::EXTENSION_TIMEOUT_SIZE_MAX;
 use tftp::config::EXTENSION_TIMEOUT_SIZE_MIN;
 use tftp::config::EXTENSION_WINDOW_SIZE_MIN;
-use tftp::config::MAX_BLOCKS_READER;
+use tftp::config::MAX_BLOCKS_FOR_MULTI_READER;
 use tftp::config::MAX_CLIENTS;
 use tftp::config::MAX_DATA_BLOCK_SIZE;
 use tftp::server::ServerConfig;
@@ -55,7 +55,7 @@ pub struct ClientCliConfig {
     #[arg(long, default_value_t = MAX_DATA_BLOCK_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_BLOCK_SIZE_MIN as u64)..=(MAX_DATA_BLOCK_SIZE as u64)))]
     pub block_size: u64,
 
-    #[arg(long, default_value_t = DEFAULT_WINDOW_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_WINDOW_SIZE_MIN as u64)..=(MAX_BLOCKS_READER as u64)))]
+    #[arg(long, default_value_t = DEFAULT_WINDOW_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_WINDOW_SIZE_MIN as u64)..=(MAX_BLOCKS_FOR_MULTI_READER as u64)))]
     pub window_size: u64,
 
     #[arg(
@@ -78,17 +78,20 @@ pub struct ClientCliConfig {
     pub encryption_level: ShortString,
 
     #[cfg(feature = "encryption")]
-    #[arg(long, help = "Private key to use: value or FILE")]
+    #[arg(long, help = "Base64 encoded private key to use: value or FILE")]
     pub private_key: Option<ShortString>,
 
     #[cfg(feature = "encryption")]
-    #[arg(long, help = "Remote server public key to use for encryption")]
+    #[arg(
+        long,
+        help = "Base64 encoded remote server public key to use for encryption"
+    )]
     pub server_public_key: Option<ShortString>,
 
     #[cfg(feature = "encryption")]
     #[arg(
         long,
-        help = "Path to a known hosts file where server public key will be retrieved. Format: endpoint public key per line"
+        help = "Path to a known hosts file where server public key will be retrieved. Format: endpoint base64(public key) per line"
     )]
     pub known_hosts: Option<FilePath>,
 
@@ -108,7 +111,7 @@ pub struct ServerCliConfig {
     #[arg(long, default_value_t = MAX_CLIENTS as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_CLIENTS as u64)))]
     pub max_connections: u64,
 
-    #[arg(long, default_value_t = MAX_BLOCKS_READER as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_READER) as u64))]
+    #[arg(long, default_value_t = MAX_BLOCKS_FOR_MULTI_READER as u64, value_parser = clap::value_parser!(u64).range(1..=(MAX_BLOCKS_FOR_MULTI_READER) as u64))]
     pub max_window_size: u64,
 
     #[arg(
@@ -116,7 +119,7 @@ pub struct ServerCliConfig {
         default_value_t = 15000,
         help = "Request time out in milliseconds"
     )]
-    pub request_timeout: u16,
+    pub request_timeout: u64,
 
     #[arg(
         long,
@@ -129,15 +132,21 @@ pub struct ServerCliConfig {
     pub max_block_size: u64,
 
     #[cfg(feature = "encryption")]
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Path to a file with authorized public keys. Each line contains base64(public key)"
+    )]
     pub authorized_keys: Option<FilePath>,
 
     #[cfg(feature = "encryption")]
-    #[arg(long, help = "Private key to use: value or FILE")]
+    #[arg(long, help = "Base64 encoded private key to use: value or FILE")]
     pub private_key: Option<ShortString>,
 
     #[cfg(feature = "encryption")]
-    #[arg(long, help = "Require that connection be fully encrypted")]
+    #[arg(
+        long,
+        help = "Require that connections be fully encrypted. This is enabled if authorized keys are provided"
+    )]
     pub required_full_encryption: Option<bool>,
 
     #[arg(long)]
@@ -160,9 +169,6 @@ pub enum Commands {
         #[arg(short, long)]
         remote_path: Option<FilePath>,
 
-        #[arg(long)]
-        ignore_rate_control: bool,
-
         #[cfg(feature = "seek")]
         #[arg(long)]
         prefer_seek: bool,
@@ -174,13 +180,16 @@ pub enum Commands {
 
         #[arg(
             long,
+            help = "Start sending the file once its created. Default is to send once file is written"
+        )]
+        start_on_create: bool,
+
+        #[arg(
+            long,
             default_value_t = 1000,
-            help = "Block duration when reading the file in milliseconds"
+            help = "How long to block before reading the file in milliseconds (only for --start-on-create)"
         )]
         block_duration: u64,
-
-        #[arg(long)]
-        ignore_rate_control: bool,
 
         #[arg(value_name = "DIRECTORY")]
         dir_path: Option<FilePath>,
@@ -201,7 +210,7 @@ pub enum Commands {
 }
 
 impl ClientCliConfig {
-    pub fn try_into(self, ignore_rate_control: bool, prefer_seek: bool) -> BinResult<ClientConfig> {
+    pub fn try_into(self, prefer_seek: bool) -> BinResult<ClientConfig> {
         #[cfg(feature = "encryption")]
         let remote_public_key = match (&self.server_public_key, &self.known_hosts) {
             (Some(p), _) => decode_public_key(p.as_bytes())
@@ -252,7 +261,6 @@ impl ClientCliConfig {
             private_key,
             remote_public_key,
             allow_server_port_change: self.allow_server_port_change,
-            ignore_rate_control,
             prefer_seek,
         })
     }
@@ -273,7 +281,7 @@ impl ServerCliConfig {
             directory: self.directory,
             allow_overwrite: self.allow_overwrite,
             max_window_size: self.max_window_size as u16,
-            request_timeout: Duration::from_millis(self.request_timeout as u64),
+            request_timeout: Duration::from_millis(self.request_timeout),
             max_connections: self.max_connections as u16,
             max_file_size: self.max_file_size,
             max_block_size: self.max_block_size as u16,

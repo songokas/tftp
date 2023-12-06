@@ -9,9 +9,10 @@ use crate::macros::cfg_alloc;
 use crate::macros::cfg_stack;
 
 pub const DEFAULT_DATA_BLOCK_SIZE: u16 = 512;
+// PacketType + block(u16)
 pub const DATA_PACKET_HEADER_SIZE: u8 = 4;
 
-pub const MAX_DATA_BLOCK_SIZE: u16 = 1416;
+pub const MAX_DATA_BLOCK_SIZE: u16 = 1425;
 
 /// maximum size of the packet buffer
 pub const MAX_BUFFER_SIZE: u16 = MAX_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
@@ -22,17 +23,22 @@ pub const ENCRYPTION_TAG_SIZE: u8 = 16;
 #[cfg(not(feature = "encryption"))]
 pub const ENCRYPTION_TAG_SIZE: u8 = 0;
 
+#[cfg(feature = "encryption")]
+pub const ENCRYPTION_PADDING: u8 = 1;
+#[cfg(not(feature = "encryption"))]
+pub const ENCRYPTION_PADDING: u8 = 0;
+
 cfg_alloc!(
     /// how many clients server can manage at once
     pub const MAX_CLIENTS: u16 = 5000;
     /// max window size
-    pub const MAX_BLOCKS_READER: u16 = 1000;
+    pub const MAX_BLOCKS_FOR_MULTI_READER: u16 = 1000;
     pub const DEFAULT_WINDOW_SIZE: u8 = 8;
 );
 
 cfg_stack!(
     pub const MAX_CLIENTS: u16 = 100;
-    pub const MAX_BLOCKS_READER: u16 = 16;
+    pub const MAX_BLOCKS_FOR_MULTI_READER: u16 = 16;
     /// how many single readers available window size = 1
     pub const MAX_SINGLE_READERS: u16 = 50;
     /// how many multi readers available window size > 1
@@ -49,7 +55,7 @@ pub const MAX_FILE_PATH_SIZE: u8 = 150;
 pub const DEFAULT_RETRY_PACKET_TIMEOUT: Duration = Duration::from_millis(80);
 pub const EXTENSION_WINDOW_SIZE_MIN: u16 = 1;
 // pub const EXTENSION_WINDOW_SIZE_MAX: u16 = 65535;
-pub const EXTENSION_BLOCK_SIZE_MIN: u16 = 8 + ENCRYPTION_TAG_SIZE as u16;
+pub const EXTENSION_BLOCK_SIZE_MIN: u16 = DEFAULT_DATA_BLOCK_SIZE;
 // pub const EXTENSION_BULK_SIZE_MAX: u16 = 65464;
 pub const EXTENSION_TIMEOUT_SIZE_MIN: u8 = 1;
 pub const EXTENSION_TIMEOUT_SIZE_MAX: u8 = 255;
@@ -95,6 +101,22 @@ impl ConnectionOptions {
         }
     }
 
+    pub fn block_size_with_encryption(&self) -> u16 {
+        if !self.is_encrypting() {
+            return self.block_size;
+        }
+
+        match self.encryption_level {
+            EncryptionLevel::Data => self.block_size - ENCRYPTION_TAG_SIZE as u16,
+            EncryptionLevel::Full | EncryptionLevel::Protocol => {
+                self.block_size - ENCRYPTION_TAG_SIZE as u16 - ENCRYPTION_PADDING as u16
+            }
+            EncryptionLevel::OptionalData
+            | EncryptionLevel::OptionalProtocol
+            | EncryptionLevel::None => self.block_size,
+        }
+    }
+
     pub fn is_encrypting(&self) -> bool {
         matches!(
             self.encryption_keys,
@@ -107,7 +129,7 @@ pub fn print_options(context: &str, options: &ConnectionOptions) {
     debug!(
         "{} options - block_size: {}, window size: {}, file_size: {} bytes, retry packet: {}ms, encryption level: {}, encrypting: {}",
         context,
-        options.block_size,
+        options.block_size_with_encryption(),
         options.window_size,
         options.file_size.unwrap_or(0),
         options.retry_packet_after_timeout.as_millis(),

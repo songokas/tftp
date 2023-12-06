@@ -6,6 +6,7 @@ User=tftp
 Group=tftp
 WorkingDirectory=/opt/tftp
 ExecStart=/usr/bin/tftp server 0.0.0.0:69 . --allow-overwrite
+Restart=on-failure
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true

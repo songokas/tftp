@@ -24,7 +24,6 @@ pub fn start_send<CreateReader, R>(
     remote_path: Option<FilePath>,
     config: ClientCliConfig,
     create_reader: CreateReader,
-    ignore_rate_control: bool,
     prefer_seek: bool,
 ) -> BinResult<usize>
 where
@@ -65,7 +64,7 @@ where
             .expect("Invalid local file name"),
     };
     send_file(
-        config.try_into(ignore_rate_control, prefer_seek)?,
+        config.try_into(prefer_seek)?,
         local_path,
         remote_path,
         options,

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use env_logger::Builder;
 use env_logger::Env;
+use log::error;
 use tftp::encryption::PublicKey;
 use tftp::error::BoxedResult;
 use tftp::error::FileError;
@@ -20,7 +21,6 @@ use crate::macros::cfg_encryption;
 use crate::macros::cfg_no_std;
 
 cfg_encryption! {
-    use tftp::config::MAX_EXTENSION_VALUE_SIZE;
     use tftp::encryption::decode_private_key;
     use tftp::encryption::PrivateKey;
     use tftp::error::EncryptionError;
@@ -30,9 +30,9 @@ cfg_encryption! {
 }
 
 cfg_no_std! {
+    use tftp::types::DefaultString;
     use tftp::std_compat::io::BufRead;
     use std::io::ErrorKind as StdErrorKind;
-    use tftp::types::DefaultString;
     use std::string::String;
     use std::io::SeekFrom as StdSeekFrom;
     use std::time::UNIX_EPOCH;
@@ -40,18 +40,30 @@ cfg_no_std! {
 }
 
 pub fn create_writer(path: &FilePath) -> BoxedResult<StdCompatFile> {
-    let file = File::create(path.as_str()).map_err(from_io_err)?;
+    let file = match File::create(path.as_str()).map_err(from_io_err) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("Unable to open {path}");
+            return Err(Into::into(e));
+        }
+    };
     #[cfg(not(feature = "std"))]
     let file = StdCompatFile(file);
     Ok(file)
 }
 
 pub fn create_reader(path: &FilePath) -> BoxedResult<(Option<u64>, StdCompatFile)> {
-    let file = File::open(path.as_str()).map_err(from_io_err)?;
-    let file_size = file.metadata().map_err(from_io_err)?.len();
+    let file = match File::open(path.as_str()).map_err(from_io_err) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("Unable to open {path}");
+            return Err(Into::into(e));
+        }
+    };
+    let file_size = file.metadata().ok().map(|m| m.len());
     #[cfg(not(feature = "std"))]
     let file = StdCompatFile(file);
-    Ok(((file_size > 0).then_some(file_size), file))
+    Ok((file_size, file))
 }
 
 pub fn create_server_reader(
@@ -115,29 +127,20 @@ pub fn create_server_writer(path: &FilePath, config: &ServerConfig) -> BoxedResu
     Err(FileError::InvalidFileName.into())
 }
 
-#[allow(dead_code)]
-pub fn create_simple_reader(path: &str) -> BoxedResult<StdCompatFile> {
-    let file = File::open(path).map_err(from_io_err)?;
-    #[cfg(not(feature = "std"))]
-    let file = StdCompatFile(file);
-    Ok(file)
-}
-
 #[cfg(feature = "encryption")]
 pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, EncryptionError> {
     #[cfg(feature = "std")]
-    use std::io::Read;
-
-    #[cfg(not(feature = "std"))]
-    use tftp::std_compat::io::Read;
-
+    use std::io::BufRead;
     let result = decode_private_key(private.as_bytes());
 
     if result.is_err() {
-        if let Ok(mut reader) = create_simple_reader(private) {
-            let mut buf = [0; MAX_EXTENSION_VALUE_SIZE as usize];
-            if let Ok(read) = reader.read(&mut buf) {
-                if let Ok(p) = decode_private_key(&buf[..read]) {
+        if let Ok(mut reader) = create_buff_reader(private) {
+            #[cfg(not(feature = "std"))]
+            let mut buf = tftp::types::DefaultString::new();
+            #[cfg(feature = "std")]
+            let mut buf = String::new();
+            if reader.read_line(&mut buf).is_ok() {
+                if let Ok(p) = decode_private_key(buf.trim_end().as_bytes()) {
                     return Ok(p);
                 }
             }
@@ -220,14 +223,14 @@ pub fn from_io_err(err: std::io::Error) -> io::Error {
 
 #[allow(dead_code)]
 pub fn create_buff_reader(path: &str) -> io::Result<StdBufReader> {
-    let file = BufReader::new(
-        File::options()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(from_io_err)?,
-    );
+    let file = match File::options().read(true).open(path).map_err(from_io_err) {
+        Ok(f) => f,
+        Err(e) => {
+            // error!("Unable to open {path}");
+            return Err(e);
+        }
+    };
+    let file = BufReader::new(file);
     #[cfg(not(feature = "std"))]
     let file = StdBufReader(file);
     Ok(file)
@@ -270,9 +273,12 @@ pub fn handle_hosts_file(
     match known_hosts_file
         .zip(remote_key)
         .map(|(f, k)| {
-            if let Ok(Some(_)) = get_from_known_hosts(create_buff_reader(f)?, endpoint) {
-                return Ok(());
-            }
+            if let Ok(r) = create_buff_reader(f) {
+                if let Ok(Some(_)) = get_from_known_hosts(r, endpoint) {
+                    return Ok(());
+                }
+            };
+
             let file = File::options()
                 .create(true)
                 .append(true)
