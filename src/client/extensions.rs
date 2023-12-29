@@ -86,8 +86,6 @@ pub fn create_extensions(options: &ConnectionOptions) -> PacketExtensions {
             (Some(EncryptionKeys::ClientKey(s)), l) => {
                 let value = encode_public_key(s).expect("invalid key");
                 let _ = extensions.insert(Extension::PublicKey, value);
-                let _ =
-                    extensions.insert(Extension::Nonce, "0".parse().expect("convert to string"));
                 let _ = extensions.insert(
                     Extension::EncryptionLevel,
                     format_str!(ExtensionValue, "{}", l),
@@ -104,8 +102,6 @@ pub fn create_extensions(options: &ConnectionOptions) -> PacketExtensions {
             {
                 let value = encode_public_key(local).expect("invalid key");
                 let _ = extensions.insert(Extension::PublicKey, value);
-                let _ =
-                    extensions.insert(Extension::Nonce, "0".parse().expect("convert to string"));
                 let _ = extensions.insert(
                     Extension::EncryptionLevel,
                     format_str!(ExtensionValue, "{}", l),
@@ -169,9 +165,8 @@ pub fn parse_extensions(
     #[cfg(feature = "encryption")]
     if options.encryption_level != EncryptionLevel::Full {
         let _expected_encryption_level = options.encryption_level;
-        if let (Some(pkey), Some(nonce), Some(Ok(level))) = (
+        if let (Some(pkey), Some(Ok(level))) = (
             extensions.get(&Extension::PublicKey),
-            extensions.get(&Extension::Nonce),
             extensions
                 .get(&Extension::EncryptionLevel)
                 .map(|s| s.parse()),
@@ -179,9 +174,7 @@ pub fn parse_extensions(
             match &options.encryption_keys {
                 Some(EncryptionKeys::ClientKey(_)) => {
                     let remote_public_key = decode_public_key(pkey.as_bytes())?;
-                    let remote_nonce = decode_nonce(nonce.as_bytes())?;
-                    options.encryption_keys =
-                        Some(EncryptionKeys::ServerKey(remote_public_key, remote_nonce));
+                    options.encryption_keys = Some(EncryptionKeys::ServerKey(remote_public_key));
                     options.encryption_level = level;
                 }
                 Some(EncryptionKeys::LocalToRemote(_, r)) => {
@@ -189,9 +182,7 @@ pub fn parse_extensions(
                     if r.as_bytes() != remote_public_key.as_bytes() {
                         return Err(ExtensionError::InvalidExtension(Extension::PublicKey));
                     }
-                    let remote_nonce = decode_nonce(nonce.as_bytes())?;
-                    options.encryption_keys =
-                        Some(EncryptionKeys::ServerKey(remote_public_key, remote_nonce));
+                    options.encryption_keys = Some(EncryptionKeys::ServerKey(remote_public_key));
                     options.encryption_level = level;
                 }
                 _ => return Err(ExtensionError::InvalidExtension(Extension::PublicKey)),
@@ -319,17 +310,13 @@ mod tests {
             window_size: 8,
         };
         let extensions = create_extensions(&options);
-        assert_eq!(extensions.len(), 7);
+        assert_eq!(extensions.len(), 6);
 
         assert_eq!(
             extensions.get(&Extension::EncryptionLevel),
             Some(&"optional-protocol".parse().unwrap())
         );
         assert!(extensions.get(&Extension::PublicKey).is_some(),);
-        assert_eq!(
-            extensions.get(&Extension::Nonce),
-            Some(&"0".parse().unwrap())
-        );
     }
 
     #[test]

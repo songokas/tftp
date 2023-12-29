@@ -1,45 +1,56 @@
 use core::fmt::Display;
 use core::mem::size_of;
-use core::ops::Deref;
 use core::str::FromStr;
 
 use base64::engine::GeneralPurpose;
 use base64::Engine;
+use chacha20poly1305::aead::stream::DecryptorBE32;
+use chacha20poly1305::aead::stream::EncryptorBE32;
 use chacha20poly1305::aead::Buffer;
 use chacha20poly1305::aead::KeyInit;
+use chacha20poly1305::AeadCore;
 use chacha20poly1305::AeadInPlace;
 use chacha20poly1305::Key;
 use chacha20poly1305::XChaCha20Poly1305;
 use chacha20poly1305::XNonce;
+use rand::CryptoRng;
+use rand::RngCore;
 use x25519_dalek::EphemeralSecret;
 use x25519_dalek::PublicKey as ExternalPublicKey;
 use x25519_dalek::StaticSecret;
 
-use crate::config::DATA_PACKET_HEADER_SIZE;
-use crate::config::ENCRYPTION_PADDING;
+use crate::buffer::SliceExt;
+use crate::config::ENCRYPTION_NONCE_SIZE;
+use crate::config::ENCRYPTION_PADDING_SIZE;
 use crate::config::MAX_EXTENSION_VALUE_SIZE;
 use crate::error::EncodingErrorType;
 use crate::error::EncryptionError;
 use crate::error::PaddingError;
-use crate::packet::PacketType;
 use crate::types::DataBuffer;
 use crate::types::ShortString;
 
+pub type EncryptionKey = [u8; ENCRYPTION_KEY_SIZE as usize];
 pub type PrivateKey = StaticSecret;
 pub type PublicKey = ExternalPublicKey;
 pub type Nonce = XNonce;
+pub type StreamNonce = [u8; STREAM_NONCE_SIZE as usize];
 
-pub const ENCODED_PUBLIC_KEY_LENGTH: usize = ((4 * size_of::<PublicKey>() / 3) + 3) & !3;
-pub const ENCODED_NONCE_LENGTH: usize = ((4 * size_of::<Nonce>() / 3) + 3) & !3;
+pub const STREAM_NONCE_SIZE: u8 = 19;
+pub const ENCRYPTION_KEY_SIZE: u8 = size_of::<PrivateKey>() as u8;
+pub const PUBLIC_KEY_SIZE: u8 = size_of::<PublicKey>() as u8;
+pub const STREAM_BLOCK_SIZE: u8 = 2;
+
+pub const ENCODED_PUBLIC_KEY_LENGTH: u8 = ((4 * PUBLIC_KEY_SIZE / 3) + 3) & !3;
+pub const ENCODED_NONCE_LENGTH: u8 = ((4 * ENCRYPTION_NONCE_SIZE / 3) + 3) & !3;
 
 const ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
-pub type FinalizeKeysCallback = fn(&Option<PrivateKey>, &PublicKey) -> FinalizedKeys;
+pub type FinalizeKeysCallback<Rng> = fn(&Option<PrivateKey>, &PublicKey) -> FinalizedKeys<Rng>;
 
 #[derive(Debug, Clone)]
 pub enum EncryptionKeys {
     ClientKey(PublicKey),
-    ServerKey(PublicKey, Nonce),
+    ServerKey(PublicKey),
     // Local, Remote
     LocalToRemote(PublicKey, PublicKey),
 }
@@ -49,41 +60,36 @@ pub enum InitialKey {
     Ephemeral(EphemeralSecret),
 }
 
-pub struct InitialKeys {
+pub struct InitialKeyPair {
     pub public: PublicKey,
     pub private: InitialKey,
 }
 
-impl InitialKeys {
+impl InitialKeyPair {
     pub fn new(public: PublicKey, private: InitialKey) -> Self {
         Self { public, private }
     }
 
-    pub fn finalize(self, remote_public_key: &PublicKey, nonce: Nonce) -> FinalizedKeys {
+    pub fn finalize<R>(self, remote_public_key: &PublicKey, rng: R) -> FinalizedKeys<R> {
         let key = match self.private {
             InitialKey::Static(k) => k.diffie_hellman(remote_public_key),
             InitialKey::Ephemeral(k) => k.diffie_hellman(remote_public_key),
         };
+
         let key: Key = key.to_bytes().into();
         FinalizedKeys {
             encryptor: Encryptor {
                 cipher: XChaCha20Poly1305::new(&key),
-                nonce,
+                rng,
             },
             public: self.public,
         }
     }
 }
 
-pub struct FinalizedKeys {
-    pub encryptor: Encryptor,
+pub struct FinalizedKeys<Rng> {
+    pub encryptor: Encryptor<Rng>,
     pub public: PublicKey,
-}
-
-impl FinalizedKeys {
-    pub fn nonce(&self) -> &Nonce {
-        &self.encryptor.nonce
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,35 +131,111 @@ impl Display for EncryptionLevel {
     }
 }
 
-pub struct Encryptor {
-    pub cipher: XChaCha20Poly1305,
-    pub nonce: Nonce,
+pub struct StreamEncryptor {
+    pub stream_encryptor: Option<EncryptorBE32<XChaCha20Poly1305>>,
 }
 
-impl Encryptor {
+impl StreamEncryptor {
+    pub fn new(key: &EncryptionKey, nonce: &StreamNonce) -> StreamEncryptor {
+        let aead = XChaCha20Poly1305::new(key.into());
+        let stream_encryptor = EncryptorBE32::from_aead(aead, nonce.into());
+        StreamEncryptor {
+            stream_encryptor: stream_encryptor.into(),
+        }
+    }
+}
+
+impl StreamEncryptor {
+    pub fn encrypt(
+        &mut self,
+        data: &mut dyn Buffer,
+        block_size: usize,
+    ) -> Result<(), EncryptionError> {
+        if block_size == data.len() {
+            self.stream_encryptor
+                .as_mut()
+                .ok_or(EncryptionError::NoStream)?
+                .encrypt_next_in_place(&[], data)
+                .map_err(|_| EncryptionError::Encrypt)
+        } else {
+            self.stream_encryptor
+                .take()
+                .ok_or(EncryptionError::NoStream)?
+                .encrypt_last_in_place(&[], data)
+                .map_err(|_| EncryptionError::Encrypt)
+        }
+    }
+}
+
+pub struct StreamDecryptor {
+    pub stream_decryptor: Option<DecryptorBE32<XChaCha20Poly1305>>,
+}
+
+impl StreamDecryptor {
+    pub fn new(key: &EncryptionKey, nonce: &StreamNonce) -> StreamDecryptor {
+        let aead = XChaCha20Poly1305::new(key.into());
+        let stream_decryptor = DecryptorBE32::from_aead(aead, nonce.into());
+        StreamDecryptor {
+            stream_decryptor: stream_decryptor.into(),
+        }
+    }
+}
+
+impl StreamDecryptor {
+    pub fn decrypt(
+        &mut self,
+        data: &mut dyn Buffer,
+        block_size: usize,
+    ) -> Result<(), EncryptionError> {
+        if block_size == data.len() {
+            self.stream_decryptor
+                .as_mut()
+                .ok_or(EncryptionError::NoStream)?
+                .decrypt_next_in_place(&[], data)
+                .map_err(|_| EncryptionError::Decrypt)
+        } else {
+            self.stream_decryptor
+                .take()
+                .ok_or(EncryptionError::NoStream)?
+                .decrypt_last_in_place(&[], data)
+                .map_err(|_| EncryptionError::Decrypt)
+        }
+    }
+}
+
+// always encrypt with random nonce
+// expects nonce at the end for decryption
+pub struct Encryptor<R> {
+    pub cipher: XChaCha20Poly1305,
+    pub rng: R,
+}
+
+impl<R: CryptoRng + RngCore + Clone> Encryptor<R> {
     pub fn encrypt(&self, data: &mut dyn Buffer) -> Result<(), EncryptionError> {
+        let nonce = XChaCha20Poly1305::generate_nonce(self.rng.clone());
         self.cipher
-            .encrypt_in_place(&self.nonce, &[], data)
-            .map_err(|_| EncryptionError::Decrypt)
+            .encrypt_in_place(&nonce, &[], data)
+            .map_err(|_| EncryptionError::Encrypt)?;
+        data.extend_from_slice(&nonce)
+            .map_err(|_| EncryptionError::Nonce)?;
+        Ok(())
     }
 
     pub fn decrypt(&self, data: &mut dyn Buffer) -> Result<(), EncryptionError> {
+        let nonce: Nonce = data
+            .as_ref()
+            .rslice_to_array(0_usize)
+            .ok_or(EncryptionError::Decrypt)?
+            .into();
+        data.truncate(data.len() - nonce.len());
         self.cipher
-            .decrypt_in_place(&self.nonce, &[], data)
+            .decrypt_in_place(&nonce, &[], data)
             .map_err(|_| EncryptionError::Decrypt)
     }
 }
 
-pub fn encode_nonce(nonce: &Nonce) -> Result<ShortString, EncryptionError> {
-    let mut public_bytes = [0; ENCODED_NONCE_LENGTH];
-    ENGINE
-        .encode_slice(nonce.deref(), &mut public_bytes)
-        .map_err(|_| EncryptionError::Encode(EncodingErrorType::Nonce))?;
-    Ok(public_bytes.into_iter().map(|b| b as char).collect())
-}
-
 pub fn encode_public_key(public: &PublicKey) -> Result<ShortString, EncryptionError> {
-    let mut public_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH];
+    let mut public_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH as usize];
     ENGINE
         .encode_slice(public.as_bytes(), &mut public_bytes)
         .map_err(|_| EncryptionError::Encode(EncodingErrorType::PublicKey))?;
@@ -161,9 +243,9 @@ pub fn encode_public_key(public: &PublicKey) -> Result<ShortString, EncryptionEr
 }
 
 pub fn encode_private_key(private: &PrivateKey) -> Result<ShortString, EncryptionError> {
-    let mut private_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH];
+    let mut private_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH as usize];
     ENGINE
-        .encode_slice(private.to_bytes(), &mut private_bytes)
+        .encode_slice(private, &mut private_bytes)
         .map_err(|_| EncryptionError::Encode(EncodingErrorType::PrivateKey))?;
     Ok(private_bytes.into_iter().map(|b| b as char).collect())
 }
@@ -180,40 +262,6 @@ pub fn decode_public_key(data: &[u8]) -> Result<PublicKey, EncryptionError> {
     decode(data, EncodingErrorType::PublicKey)
 }
 
-pub fn overwrite_data_packet(
-    buff: &mut DataBuffer,
-    callback: impl Fn(&mut dyn Buffer) -> Result<(), EncryptionError>,
-) -> Result<(), EncryptionError> {
-    if let (Ok(PacketType::Data), Some(data_packet)) = (
-        PacketType::from_bytes(buff),
-        buff.get(DATA_PACKET_HEADER_SIZE as usize..),
-    ) {
-        #[allow(clippy::iter_cloned_collect)]
-        let mut data: DataBuffer = data_packet.iter().copied().collect();
-        callback(&mut data)?;
-        buff.truncate(DATA_PACKET_HEADER_SIZE as usize);
-        buff.extend(data);
-    }
-    Ok(())
-}
-
-fn decode<Output: From<[u8; CAP]>, const CAP: usize>(
-    data: &[u8],
-    error_type: EncodingErrorType,
-) -> Result<Output, EncryptionError> {
-    let mut remote = [0; { MAX_EXTENSION_VALUE_SIZE as usize }];
-    ENGINE
-        .decode_slice(data, &mut remote)
-        .map_err(|_| EncryptionError::Decode(error_type))?;
-    if remote[CAP] != 0 {
-        return Err(EncryptionError::Decode(error_type));
-    }
-    let remote: [u8; CAP] = remote[..CAP]
-        .try_into()
-        .map_err(|_| EncryptionError::Decode(error_type))?;
-    Ok(remote.into())
-}
-
 // 0010 0200 | 1111 1111 1111 1111
 // 0010 0201 | 0000 0000 0000 0000
 pub fn apply_bit_padding(buf: &mut DataBuffer, expected_size: usize) -> Result<(), PaddingError> {
@@ -226,10 +274,13 @@ pub fn apply_bit_padding(buf: &mut DataBuffer, expected_size: usize) -> Result<(
         .ok_or(PaddingError::InvalidSizeProvided)?;
     let ones = last_byte.trailing_ones();
     let byte = if ones > 0 { 0 } else { 255 };
-    let random_bytes: DataBuffer = (0..number_of_bytes + ENCRYPTION_PADDING as usize)
-        .map(|_| byte)
-        .collect();
-    buf.extend(random_bytes);
+    for _ in 0..number_of_bytes + ENCRYPTION_PADDING_SIZE as usize {
+        #[cfg(feature = "alloc")]
+        buf.push(byte);
+        #[cfg(not(feature = "alloc"))]
+        buf.push(byte)
+            .map_err(|_| PaddingError::InvalidSizeProvided)?;
+    }
     Ok(())
 }
 
@@ -256,8 +307,27 @@ pub fn remove_bit_padding(buf: &mut DataBuffer) -> Result<(), PaddingError> {
     Ok(())
 }
 
+fn decode<Output: From<[u8; CAP]>, const CAP: usize>(
+    data: &[u8],
+    error_type: EncodingErrorType,
+) -> Result<Output, EncryptionError> {
+    let mut remote = [0; { MAX_EXTENSION_VALUE_SIZE as usize }];
+    ENGINE
+        .decode_slice(data, &mut remote)
+        .map_err(|_| EncryptionError::Decode(error_type))?;
+    if remote[CAP] != 0 {
+        return Err(EncryptionError::Decode(error_type));
+    }
+    let remote: [u8; CAP] = remote[..CAP]
+        .try_into()
+        .map_err(|_| EncryptionError::Decode(error_type))?;
+    Ok(remote.into())
+}
+
 #[cfg(test)]
 mod tests {
+    use rand::rngs::ThreadRng;
+
     use super::*;
     use crate::config::ENCRYPTION_TAG_SIZE;
 
@@ -286,6 +356,14 @@ mod tests {
         let mut buf = DataBuffer::new();
         buf.extend([0, 1, 2, 3, 0]);
         let result = apply_bit_padding(&mut buf, 0);
+        assert!(result.is_err());
+
+        let mut buf = DataBuffer::new();
+        buf.extend([0, 1, 2, 3, 0]);
+        let result = apply_bit_padding(&mut buf, 2000);
+        #[cfg(feature = "alloc")]
+        assert!(result.is_ok());
+        #[cfg(not(feature = "alloc"))]
         assert!(result.is_err());
     }
 
@@ -317,38 +395,11 @@ mod tests {
         let expected = data.clone();
         encryptor.encrypt(&mut data).unwrap();
         assert_ne!(data, expected);
-        assert_eq!(data.len(), expected.len() + ENCRYPTION_TAG_SIZE as usize);
+        assert_eq!(
+            data.len(),
+            expected.len() + ENCRYPTION_TAG_SIZE as usize + ENCRYPTION_NONCE_SIZE as usize
+        );
         encryptor.decrypt(&mut data).unwrap();
-        assert_eq!(data, expected);
-    }
-
-    #[test]
-    fn test_overwrite_data() {
-        let encryptor = create_encryptor();
-        #[cfg(feature = "alloc")]
-        let mut data: alloc::vec::Vec<u8> = PacketType::Data
-            .to_bytes()
-            .into_iter()
-            .chain([2, 32, 32, 2, 1, 11])
-            .collect();
-        #[cfg(not(feature = "alloc"))]
-        let mut data: DataBuffer = PacketType::Data
-            .to_bytes()
-            .into_iter()
-            .chain([2, 32, 32, 2, 1, 11].into_iter())
-            .collect();
-        let mut expected = data.clone();
-        overwrite_data_packet(&mut data, |buf| encryptor.encrypt(buf)).unwrap();
-        assert_ne!(data, expected);
-        assert_eq!(data[..4], expected[..4]);
-        assert_eq!(data.len(), expected.len() + ENCRYPTION_TAG_SIZE as usize);
-        overwrite_data_packet(&mut data, |buf| encryptor.decrypt(buf)).unwrap();
-        assert_eq!(data[..4], expected[..4]);
-        assert_eq!(data, expected);
-
-        data[0] = 255;
-        expected[0] = 255;
-        overwrite_data_packet(&mut data, |buf| encryptor.encrypt(buf)).unwrap();
         assert_eq!(data, expected);
     }
 
@@ -360,7 +411,7 @@ mod tests {
         ]
         .into();
         let encoded = encode_public_key(&public).unwrap();
-        assert_eq!(encoded.len(), ENCODED_PUBLIC_KEY_LENGTH);
+        assert_eq!(encoded.len(), ENCODED_PUBLIC_KEY_LENGTH as usize);
         let decoded = decode_public_key(encoded.as_bytes()).unwrap();
         assert_eq!(public, decoded);
     }
@@ -394,18 +445,25 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_nonce() {
-        let public: Nonce = [
-            1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99,
-        ]
-        .into();
-        let encoded = encode_nonce(&public).unwrap();
-        assert_eq!(encoded.len(), ENCODED_NONCE_LENGTH);
-        let decoded = decode_nonce(encoded.as_bytes()).unwrap();
-        assert_eq!(public, decoded);
+    fn test_encrypt_decrypt_stream() {
+        let mut encryptor = create_stream_encryptor();
+        let mut decryptor = create_stream_decryptor();
+        for bytes in [[2, 32], [32, 2], [1, 0]] {
+            #[cfg(feature = "alloc")]
+            let mut data = bytes.to_vec();
+            #[cfg(not(feature = "alloc"))]
+            let mut data: DataBuffer = bytes.into_iter().collect();
+            // data.truncate(2);
+            let expected = data.clone();
+            encryptor.encrypt(&mut data, 2).unwrap();
+            assert_ne!(data, expected);
+            assert_eq!(data.len(), expected.len() + ENCRYPTION_TAG_SIZE as usize);
+            decryptor.decrypt(&mut data, 18).unwrap();
+            assert_eq!(data, expected);
+        }
     }
 
-    fn create_encryptor() -> Encryptor {
+    fn create_encryptor() -> Encryptor<ThreadRng> {
         Encryptor {
             cipher: XChaCha20Poly1305::new(
                 &[
@@ -414,10 +472,29 @@ mod tests {
                 ]
                 .into(),
             ),
-            nonce: [
-                1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99,
+            rng: rand::thread_rng(),
+        }
+    }
+
+    fn create_stream_encryptor() -> StreamEncryptor {
+        StreamEncryptor::new(
+            &[
+                1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233,
+                200, 17, 22, 29, 93, 32, 1,
             ]
             .into(),
-        }
+            &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3].into(),
+        )
+    }
+
+    fn create_stream_decryptor() -> StreamDecryptor {
+        StreamDecryptor::new(
+            &[
+                1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233,
+                200, 17, 22, 29, 93, 32, 1,
+            ]
+            .into(),
+            &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3].into(),
+        )
     }
 }

@@ -24,33 +24,6 @@ pub fn validate_request_options(
     _extensions: &PacketExtensions,
     config: &ServerConfig,
 ) -> BoxedResult<FilePath> {
-    #[cfg(feature = "encryption")]
-    if _extensions.get(&Extension::PublicKey).is_some()
-        != _extensions.get(&Extension::Nonce).is_some()
-    {
-        let (missing, provided) = if _extensions.get(&Extension::Nonce).is_some() {
-            ("public key", "nonce")
-        } else {
-            ("nonce", "public key")
-        };
-
-        let packet = Packet::Error(ErrorPacket::new(
-            ErrorCode::AccessVioliation,
-            format_str!(
-                DefaultString,
-                "Missing extension {} while {} provided",
-                missing,
-                provided
-            ),
-        ));
-        socket.send_to(&mut packet.to_bytes(), client)?;
-        return Err(if _extensions.get(&Extension::Nonce).is_some() {
-            ExtensionError::InvalidPublicKey.into()
-        } else {
-            ExtensionError::InvalidNonce.into()
-        });
-    }
-
     if let Err(e) = handle_file_size(options.file_size.unwrap_or(0), config.max_file_size) {
         let packet = Packet::Error(e);
         socket.send_to(&mut packet.to_bytes(), client)?;

@@ -2,6 +2,17 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.5.0] - 2023-12-28
+
+### Added
+
+- Ability to receive directory list with server --directly-list option
+- Ability to encrypt/decrypt files sent/received using --encryption-key
+
+### Changed
+
+- Including random nonce per encrypted packet (breaking change)
+
 ## [0.4.0] - 2023-11-31
 
 ### Added

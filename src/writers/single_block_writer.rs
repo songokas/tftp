@@ -114,9 +114,7 @@ mod tests {
 
     impl Write for CursorWriter {
         fn write(&mut self, buf: &[u8]) -> crate::std_compat::io::Result<usize> {
-            #[allow(unused_imports)]
-            use std::io::Write;
-            self.cursor.lock().unwrap().write(buf).map_err(|_| {
+            std::io::Write::write(&mut *self.cursor.lock().unwrap(), buf).map_err(|_| {
                 crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
             })
         }

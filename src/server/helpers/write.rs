@@ -2,6 +2,8 @@ use log::debug;
 use log::error;
 use log::info;
 use log::trace;
+use rand::CryptoRng;
+use rand::RngCore;
 
 use crate::error::StorageError;
 use crate::packet::AckPacket;
@@ -18,8 +20,8 @@ use crate::time::InstantCallback;
 use crate::types::DataBuffer;
 use crate::writers::block_writer::BlockWriter;
 
-pub fn handle_write<W: BlockWriter, B: BoundSocket>(
-    connection: &mut Connection<B>,
+pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
+    connection: &mut Connection<B, Rng>,
     block_writer: &mut W,
     buffer: &mut DataBuffer,
     instant: InstantCallback,
@@ -105,8 +107,8 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket>(
     Some(())
 }
 
-fn write_block<W: BlockWriter, B>(
-    connection: &mut Connection<B>,
+fn write_block<W: BlockWriter, B, Rng: CryptoRng + RngCore + Copy>(
+    connection: &mut Connection<B, Rng>,
     block_writer: &mut W,
     mut block: u16,
     data: &[u8],

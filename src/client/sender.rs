@@ -10,6 +10,8 @@ use rand::RngCore;
 
 use super::ClientConfig;
 use crate::block_mapper::BlockMapper;
+use crate::buffer::new_buffer;
+use crate::buffer::resize_buffer;
 use crate::client::connection::query_server;
 use crate::config::print_options;
 use crate::config::ConnectionOptions;
@@ -35,7 +37,6 @@ use crate::socket::Socket;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
 use crate::time::InstantCallback;
-use crate::types::DataBuffer;
 use crate::types::FilePath;
 
 cfg_encryption! {
@@ -67,7 +68,7 @@ pub fn send_file<
 where
     Sock: Socket,
     Rng: CryptoRng + RngCore + Copy,
-    CreateReader: Fn(&FilePath) -> BoxedResult<(Option<u64>, R)>,
+    CreateReader: FnOnce(&FilePath) -> BoxedResult<(Option<u64>, R)>,
 {
     if let Ok(s) = socket.local_addr() {
         info!("Listening on {} connecting to {}", s, config.endpoint);
@@ -90,12 +91,7 @@ where
         options.file_size = file_size;
     }
 
-    #[allow(unused_must_use)]
-    let mut buffer = {
-        let mut d = DataBuffer::new();
-        d.resize(max_buffer_size as usize, 0);
-        d
-    };
+    let mut buffer = new_buffer(max_buffer_size);
 
     let mut rate_control = RateControl::new(instant);
 
@@ -119,7 +115,7 @@ where
     debug!("Initial exchange took {}", initial_rtt.as_secs_f32());
 
     #[cfg(feature = "encryption")]
-    let (mut socket, options) = configure_socket(socket, initial_keys, options);
+    let (mut socket, options) = configure_socket(socket, initial_keys, options, _rng);
 
     print_options("Client using", &options);
 
@@ -222,13 +218,7 @@ where
             no_work += 1;
         }
 
-        #[cfg(feature = "alloc")]
-        buffer.resize(max_buffer_size as usize, 0);
-        // TODO heapless vector resizing is super slow
-        #[cfg(not(feature = "alloc"))]
-        unsafe {
-            buffer.set_len(max_buffer_size as usize)
-        };
+        resize_buffer(&mut buffer, max_buffer_size);
 
         let wait_for = if no_work.0 > 2 {
             Duration::from_millis(no_work.0 as u64).into()

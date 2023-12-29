@@ -62,7 +62,6 @@ impl<'a> ByteConverter<'a> for Packet<'a> {
             PacketType::Ack => Packet::Ack(AckPacket::from_bytes(remaining)?),
             PacketType::Error => Packet::Error(ErrorPacket::from_bytes(remaining)?),
             PacketType::OptionalAck => Packet::OptionalAck(OptionalAck::from_bytes(remaining)?),
-            _ => return Err(PacketError::Invalid),
         })
     }
 
@@ -111,7 +110,6 @@ pub enum PacketType {
     Ack,
     Error,
     OptionalAck,
-    InitialEncryption = 13432,
 }
 
 impl PacketType {
@@ -123,8 +121,6 @@ impl PacketType {
             4 => PacketType::Ack,
             5 => PacketType::Error,
             6 => PacketType::OptionalAck,
-            // TODO randomize
-            13432 => PacketType::InitialEncryption,
             _ => return Err(PacketError::Invalid),
         })
     }
@@ -149,7 +145,6 @@ impl Display for PacketType {
             PacketType::Data => write!(f, "data packet"),
             PacketType::Error => write!(f, "error packet"),
             PacketType::OptionalAck => write!(f, "optional ack packet"),
-            _ => write!(f, "unknown packet"),
         }
     }
 }
@@ -189,8 +184,6 @@ pub enum Extension {
     TransferSize,
     // client/server public key
     PublicKey,
-    // server nonce
-    Nonce,
     // required encryption level
     EncryptionLevel,
     // "1" and "65535"
@@ -209,7 +202,7 @@ impl hash32::Hash for Extension {
 }
 
 impl Extension {
-    pub const SIZE: u8 = 7;
+    pub const SIZE: u8 = 6;
 
     pub fn as_str(&self) -> &str {
         match self {
@@ -217,7 +210,6 @@ impl Extension {
             Self::Timeout => "timeout",
             Self::TransferSize => "tsize",
             Self::PublicKey => "pkey",
-            Self::Nonce => "nonce",
             Self::EncryptionLevel => "enclevel",
             Self::WindowSize => "windowsize",
         }
@@ -239,7 +231,6 @@ impl FromStr for Extension {
             "timeout" | "TIMEOUT" => Self::Timeout,
             "tsize" | "TSIZE" => Self::TransferSize,
             "pkey" | "PKEY" => Self::PublicKey,
-            "nonce" | "NONCE" => Self::Nonce,
             "enclevel" | "ENCLEVEL" => Self::EncryptionLevel,
             "windowsize" | "WINDOWSIZE" => Self::WindowSize,
             _ => return Err(PacketError::Invalid),

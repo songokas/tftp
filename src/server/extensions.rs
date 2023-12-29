@@ -21,14 +21,21 @@ cfg_encryption! {
 }
 
 #[allow(unused_variables)]
-pub fn create_options(
+pub fn create_options<R: CryptoRng + RngCore + Copy>(
     extensions: PacketExtensions,
     mut options: ConnectionOptions,
     config: &ServerConfig,
-    finalized_keys: Option<FinalizedKeys>,
+    finalized_keys: Option<FinalizedKeys<R>>,
     max_window_size: u16,
-    rng: impl CryptoRng + RngCore + Copy,
-) -> Result<(PacketExtensions, ConnectionOptions, Option<FinalizedKeys>), ExtensionError> {
+    rng: R,
+) -> Result<
+    (
+        PacketExtensions,
+        ConnectionOptions,
+        Option<FinalizedKeys<R>>,
+    ),
+    ExtensionError,
+> {
     let mut used_extensions = PacketExtensions::new();
     if let Some(size) = extensions.get(&Extension::BlockSize) {
         let client_block_size: u16 = size.parse().unwrap_or(0);
@@ -120,23 +127,17 @@ pub fn create_options(
             }
         }
 
-        if let (Some(public), Some(nonce), Some(Ok(level))) = (
+        if let (Some(public), Some(Ok(level))) = (
             extensions.get(&Extension::PublicKey),
-            extensions.get(&Extension::Nonce),
             extensions
                 .get(&Extension::EncryptionLevel)
                 .map(|s| s.parse()),
         ) {
             let remote_public_key = decode_public_key(public.as_bytes())?;
-            let final_keys =
-                create_finalized_keys(&config.private_key, &remote_public_key, None, rng);
+            let final_keys = create_finalized_keys(&config.private_key, &remote_public_key, rng);
             let _ = used_extensions.insert(
                 Extension::PublicKey,
                 encode_public_key(&final_keys.public).expect("public key encoder"),
-            );
-            let _ = used_extensions.insert(
-                Extension::Nonce,
-                encode_nonce(final_keys.nonce()).expect("nonce encoder"),
             );
             options.encryption_keys = Some(EncryptionKeys::LocalToRemote(
                 final_keys.public,
@@ -231,15 +232,11 @@ mod tests {
                 .parse()
                 .unwrap(),
         );
-        let _ = extensions.insert(
-            Extension::Nonce,
-            "Tw2EobyajLuhvFY9WNMfIFK7GGWqOCfI".parse().unwrap(),
-        );
 
         let _ = extensions.insert(Extension::EncryptionLevel, "none".parse().unwrap());
         let (extensions, options, _) =
             create_options(extensions, options, &create_config(), None, 8, OsRng).unwrap();
-        assert_eq!(extensions.len(), 3);
+        assert_eq!(extensions.len(), 2);
         assert_eq!(options.encryption_level, EncryptionLevel::None);
     }
 
@@ -261,6 +258,8 @@ mod tests {
             require_server_port_change: false,
             max_window_size: 8,
             prefer_seek: false,
+            directory_list: None,
+            max_directory_depth: 10,
         }
     }
 

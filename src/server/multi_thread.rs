@@ -9,6 +9,7 @@ use rand::CryptoRng;
 use rand::RngCore;
 
 use super::config::ServerConfig;
+use crate::buffer::resize_buffer;
 use crate::encryption::encode_public_key;
 use crate::encryption::PublicKey;
 use crate::error::BoxedResult;
@@ -75,7 +76,7 @@ pub fn server<
 where
     S: Socket + ToSocketId,
     B: BoundSocket + ToSocketId + Send + 'static,
-    Rng: CryptoRng + RngCore + Copy,
+    Rng: CryptoRng + RngCore + Copy + Send + 'static,
     CreateSocket: Fn(&str, usize, bool) -> BoxedResult<S>,
     CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
     CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
@@ -107,13 +108,7 @@ where
     let mut handles = Handles::new();
 
     loop {
-        #[cfg(feature = "alloc")]
-        buffer.resize(max_buffer_size, 0);
-        // TODO heapless vector resizing is super slow
-        #[cfg(not(feature = "alloc"))]
-        unsafe {
-            buffer.set_len(max_buffer_size)
-        };
+        resize_buffer(&mut buffer, max_buffer_size);
 
         let received_in = instant();
         let (received_length, from_client) =
@@ -221,8 +216,12 @@ where
     }
 }
 
-fn spawn_reader<R: BlockReader + Send + 'static, B: BoundSocket + Send + 'static>(
-    mut connection: Connection<B>,
+fn spawn_reader<
+    R: BlockReader + Send + 'static,
+    B: BoundSocket + Send + 'static,
+    Rng: CryptoRng + RngCore + Copy + Send + 'static,
+>(
+    mut connection: Connection<B, Rng>,
     mut reader: R,
     instant: InstantCallback,
     request_timeout: Duration,
@@ -238,13 +237,7 @@ fn spawn_reader<R: BlockReader + Send + 'static, B: BoundSocket + Send + 'static
             let sent = send_data_block(&mut connection, &mut reader);
             wait_control.sending(sent);
 
-            #[cfg(feature = "alloc")]
-            buffer.resize(max_buffer_size, 0);
-            // TODO heapless vector resizing is super slow
-            #[cfg(not(feature = "alloc"))]
-            unsafe {
-                buffer.set_len(max_buffer_size)
-            };
+            resize_buffer(&mut buffer, max_buffer_size);
 
             let received_length = match connection.recv(&mut buffer, wait_control.wait_for(1)) {
                 Ok(connection_received) => connection_received,
@@ -261,8 +254,12 @@ fn spawn_reader<R: BlockReader + Send + 'static, B: BoundSocket + Send + 'static
     })
 }
 
-fn spawn_writer<W: BlockWriter + Send + 'static, B: BoundSocket + Send + 'static>(
-    mut connection: Connection<B>,
+fn spawn_writer<
+    W: BlockWriter + Send + 'static,
+    B: BoundSocket + Send + 'static,
+    Rng: CryptoRng + RngCore + Copy + Send + 'static,
+>(
+    mut connection: Connection<B, Rng>,
     mut block_writer: W,
     instant: InstantCallback,
     request_timeout: Duration,
@@ -275,13 +272,8 @@ fn spawn_writer<W: BlockWriter + Send + 'static, B: BoundSocket + Send + 'static
             if timeout_client(&mut connection, request_timeout) {
                 return;
             }
-            #[cfg(feature = "alloc")]
-            buffer.resize(max_buffer_size, 0);
-            // TODO heapless vector resizing is super slow
-            #[cfg(not(feature = "alloc"))]
-            unsafe {
-                buffer.set_len(max_buffer_size)
-            };
+
+            resize_buffer(&mut buffer, max_buffer_size);
 
             let received_length = match connection.recv(&mut buffer, Duration::from_secs(1).into())
             {

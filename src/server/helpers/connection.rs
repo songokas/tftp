@@ -6,6 +6,7 @@ use log::warn;
 use rand::CryptoRng;
 use rand::RngCore;
 
+use crate::buffer::new_buffer;
 use crate::config::print_options;
 use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::config::MAX_BUFFER_SIZE;
@@ -33,7 +34,7 @@ pub fn create_builder<'a, Rng>(
     buffer: &mut DataBuffer,
     from_client: SocketAddr,
     rng: Rng,
-) -> Option<(ConnectionBuilder<'a>, ConnectionType)>
+) -> Option<(ConnectionBuilder<'a, Rng>, ConnectionType)>
 where
     Rng: CryptoRng + RngCore + Copy,
 {
@@ -75,11 +76,11 @@ where
     }
 }
 
-pub fn accept_connection<B: BoundSocket>(
-    connection: &mut Connection<B>,
+pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
+    connection: &mut Connection<B, Rng>,
     connection_type: ConnectionType,
     used_extensions: PacketExtensions,
-    encrypt_new_connection: Option<FinalizedKeys>,
+    encrypt_new_connection: Option<FinalizedKeys<Rng>>,
 ) -> Option<()> {
     debug!("Server extensions {:?}", used_extensions);
 
@@ -96,7 +97,7 @@ pub fn accept_connection<B: BoundSocket>(
             }
             // new encryption starts only here
             if let Some(keys) = encrypt_new_connection {
-                connection.encryptor = keys.encryptor.into();
+                connection.encryptor = Some(keys.encryptor);
             }
 
             print_options("Server writing using", &connection.options);
@@ -114,7 +115,7 @@ pub fn accept_connection<B: BoundSocket>(
 
             // new encryption starts only here
             if let Some(keys) = encrypt_new_connection {
-                connection.encryptor = keys.encryptor.into();
+                connection.encryptor = Some(keys.encryptor);
             }
 
             print_options("Server reading using", &connection.options);
@@ -130,17 +131,11 @@ pub fn create_max_buffer(max_block_size: u16) -> DataBuffer {
         MIN_BUFFER_SIZE,
     );
     assert!(max_buffer_size <= MAX_BUFFER_SIZE);
-    #[allow(unused_must_use)]
-    let buffer = {
-        let mut d = DataBuffer::new();
-        d.resize(max_buffer_size as usize, 0);
-        d
-    };
-    buffer
+    new_buffer(max_buffer_size)
 }
 
-pub fn timeout_client<B: BoundSocket>(
-    connection: &mut Connection<B>,
+pub fn timeout_client<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
+    connection: &mut Connection<B, Rng>,
     request_timeout: Duration,
 ) -> bool {
     if connection.invalid || connection.finished {

@@ -1,17 +1,15 @@
-use core::mem::size_of;
 use core::time::Duration;
 
 use log::error;
+use rand::CryptoRng;
+use rand::RngCore;
 
 use crate::config::DATA_PACKET_HEADER_SIZE;
-use crate::config::ENCRYPTION_PADDING;
-use crate::config::ENCRYPTION_TAG_SIZE;
-use crate::encryption::apply_bit_padding;
-use crate::encryption::overwrite_data_packet;
-use crate::encryption::remove_bit_padding;
+use crate::encrypted_packet::EncryptedDataPacket;
+use crate::encrypted_packet::EncryptedPacket;
+use crate::encrypted_packet::InitialPacket;
 use crate::encryption::EncryptionLevel;
 use crate::encryption::Encryptor;
-use crate::encryption::Nonce;
 use crate::encryption::PublicKey;
 use crate::packet::PacketType;
 use crate::socket::Socket;
@@ -23,41 +21,35 @@ use crate::std_compat::io::Result;
 use crate::std_compat::net::SocketAddr;
 use crate::types::DataBuffer;
 
-const FULLY_ENCODED_HEADER_SIZE: usize = size_of::<PacketType>()
-    + size_of::<PublicKey>()
-    + size_of::<Nonce>()
-    + ENCRYPTION_TAG_SIZE as usize
-    + ENCRYPTION_PADDING as usize;
-
-pub struct EncryptionBoundSocket<S> {
+pub struct EncryptionBoundSocket<S, Rng> {
     pub socket: S,
-    pub encryptor: Option<Encryptor>,
+    pub connection_encryptor: Option<Encryptor<Rng>>,
     pub encryption_level: EncryptionLevel,
     pub public_key: Option<PublicKey>,
-    pub block_size: usize,
+    pub block_size: u16,
 }
 
-impl<S> EncryptionBoundSocket<S> {
+impl<S, Rng> EncryptionBoundSocket<S, Rng> {
     pub fn new(
         socket: S,
-        encryptor: Option<Encryptor>,
+        connection_encryptor: Option<Encryptor<Rng>>,
         public_key: PublicKey,
         encryption_level: EncryptionLevel,
-        block_size: usize,
+        block_size: u16,
     ) -> Self {
         Self {
             socket,
-            encryptor,
+            connection_encryptor,
             encryption_level,
             public_key: public_key.into(),
             block_size,
         }
     }
 
-    pub fn wrap(socket: S, block_size: usize) -> Self {
+    pub fn wrap(socket: S, block_size: u16) -> Self {
         Self {
             socket,
-            encryptor: None,
+            connection_encryptor: None,
             encryption_level: EncryptionLevel::None,
             public_key: None,
             block_size,
@@ -65,9 +57,10 @@ impl<S> EncryptionBoundSocket<S> {
     }
 }
 
-impl<S> Socket for EncryptionBoundSocket<S>
+impl<S, Rng> Socket for EncryptionBoundSocket<S, Rng>
 where
     S: Socket,
+    Rng: CryptoRng + RngCore + Copy,
 {
     fn recv_from(
         &mut self,
@@ -76,20 +69,21 @@ where
     ) -> Result<(usize, SocketAddr)> {
         let (received_length, s) = self.socket.recv_from(buff, wait_for)?;
         buff.truncate(received_length);
-        match (self.encryption_level, &self.encryptor) {
+
+        match (self.encryption_level, &self.connection_encryptor) {
             (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) => {
-                encryptor.decrypt(buff).map_err(|e| {
+                EncryptedPacket::decrypt(encryptor, buff).map_err(|e| {
                     error!("Failed to decrypt data {e}");
                     Error::from(ErrorKind::InvalidData)
                 })?;
-                remove_bit_padding(buff).map_err(|e| {
-                    error!("Failed to remove padding {e}");
+            }
+            (EncryptionLevel::Data, Some(encryptor))
+                if matches!(PacketType::from_bytes(buff), Ok(PacketType::Data)) =>
+            {
+                EncryptedDataPacket::decrypt(encryptor, buff).map_err(|e| {
+                    error!("Failed to decrypt data {e}");
                     Error::from(ErrorKind::InvalidData)
                 })?;
-            }
-            (EncryptionLevel::Data, Some(encryptor)) => {
-                overwrite_data_packet(buff, |buff| encryptor.decrypt(buff))
-                    .map_err(|_| Error::from(ErrorKind::InvalidData))?;
             }
             _ => (),
         }
@@ -97,55 +91,42 @@ where
     }
 
     fn send_to(&self, buff: &mut DataBuffer, endpoint: SocketAddr) -> Result<usize> {
-        match (self.encryption_level, &self.encryptor) {
+        let packet_type = PacketType::from_bytes(buff);
+        match (self.encryption_level, &self.connection_encryptor) {
             (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) => {
-                let packet_type = PacketType::from_bytes(buff);
-
                 // encrypt initial packet
                 if let Ok(PacketType::Read | PacketType::Write) = packet_type {
-                    apply_bit_padding(
+                    InitialPacket::encrypt(
+                        encryptor,
                         buff,
-                        self.block_size + DATA_PACKET_HEADER_SIZE as usize
-                            - FULLY_ENCODED_HEADER_SIZE,
+                        self.block_size + DATA_PACKET_HEADER_SIZE as u16,
+                        &self
+                            .public_key
+                            .expect("Public key must be set for initial packet"),
                     )
                     .map_err(|e| {
-                        error!("Failed to apply padding {e}");
-                        Error::from(ErrorKind::InvalidData)
-                    })?;
-
-                    encryptor.encrypt(buff).map_err(|e| {
                         error!("Failed to encrypt data {e}");
                         Error::from(ErrorKind::InvalidData)
                     })?;
-                    *buff = PacketType::InitialEncryption
-                        .to_bytes()
-                        .into_iter()
-                        .chain(
-                            self.public_key
-                                .expect("Public key must be set for initial packet")
-                                .as_bytes()
-                                .iter()
-                                .copied(),
-                        )
-                        .chain(encryptor.nonce)
-                        .chain(buff.iter().copied())
-                        .collect();
                 } else {
-                    apply_bit_padding(buff, self.block_size + DATA_PACKET_HEADER_SIZE as usize)
-                        .map_err(|e| {
-                            error!("Failed to apply padding {e}");
-                            Error::from(ErrorKind::InvalidData)
-                        })?;
-
-                    encryptor.encrypt(buff).map_err(|e| {
+                    EncryptedPacket::encrypt(
+                        encryptor,
+                        buff,
+                        self.block_size + DATA_PACKET_HEADER_SIZE as u16,
+                    )
+                    .map_err(|e| {
                         error!("Failed to encrypt data {e}");
                         Error::from(ErrorKind::InvalidData)
                     })?;
                 }
             }
-            (EncryptionLevel::Data, Some(encryptor)) => {
-                overwrite_data_packet(buff, |buff| encryptor.encrypt(buff))
-                    .map_err(|_| Error::from(ErrorKind::InvalidData))?;
+            (EncryptionLevel::Data, Some(encryptor))
+                if matches!(packet_type, Ok(PacketType::Data)) =>
+            {
+                EncryptedDataPacket::encrypt(encryptor, buff).map_err(|e| {
+                    error!("Failed to encrypt data {e}");
+                    Error::from(ErrorKind::InvalidData)
+                })?;
             }
             _ => (),
         }
@@ -170,7 +151,7 @@ where
 }
 
 #[cfg(feature = "encryption")]
-impl<S> ToSocketId for EncryptionBoundSocket<S>
+impl<S, R> ToSocketId for EncryptionBoundSocket<S, R>
 where
     S: ToSocketId,
 {

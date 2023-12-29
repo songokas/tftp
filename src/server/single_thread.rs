@@ -8,6 +8,7 @@ use rand::RngCore;
 
 use super::config::ServerConfig;
 use super::helpers::read::send_data_block;
+use crate::buffer::new_buffer;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
 use crate::macros::cfg_alloc;
@@ -127,7 +128,7 @@ where
     #[cfg(all(not(feature = "alloc"), feature = "seek"))]
     let multi_block_seek_readers = RefCell::new(MultiBlockSeekReaders::new());
 
-    let mut clients: Clients<_, _, _> = Clients::new();
+    let mut clients: Clients<_, _, _, _> = Clients::new();
 
     trace!(
         "Size of all clients in memory {} bytes",
@@ -136,17 +137,11 @@ where
 
     loop {
         if timeout_duration.elapsed() > execute_timeout_client {
-            clients.retain(|_, (c, _)| !timeout_client::<B>(c, config.request_timeout));
+            clients.retain(|_, (c, _)| !timeout_client::<B, Rng>(c, config.request_timeout));
             timeout_duration = instant();
         }
 
-        #[cfg(feature = "alloc")]
-        buffer.resize(max_buffer_size as usize, 0);
-        // TODO heapless vector resizing is super slow
-        #[cfg(not(feature = "alloc"))]
-        unsafe {
-            buffer.set_len(max_buffer_size as usize)
-        };
+        buffer = new_buffer(max_buffer_size);
 
         let sent_in = instant();
 
@@ -378,8 +373,8 @@ where
     }
 }
 
-fn send_data_blocks<R: BlockReader, W, B: BoundSocket>(
-    clients: &mut Clients<R, W, B>,
+fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
+    clients: &mut Clients<R, W, B, Rng>,
     next_client: usize,
 ) -> (bool, usize) {
     let mut current_client: Option<usize> = clients
@@ -414,9 +409,10 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket>(
     )
 }
 
-type ClientConnection<R, W, B> = (Connection<B>, ClientType<R, W>);
+type ClientConnection<R, W, B, Rng> = (Connection<B, Rng>, ClientType<R, W>);
 
 #[cfg(feature = "alloc")]
-type Clients<R, W, B> = Map<SocketAddr, ClientConnection<R, W, B>>;
+type Clients<R, W, B, Rng> = Map<SocketAddr, ClientConnection<R, W, B, Rng>>;
 #[cfg(not(feature = "alloc"))]
-type Clients<R, W, B> = Map<SocketAddr, ClientConnection<R, W, B>, { MAX_CLIENTS as usize }>;
+type Clients<R, W, B, Rng> =
+    Map<SocketAddr, ClientConnection<R, W, B, Rng>, { MAX_CLIENTS as usize }>;

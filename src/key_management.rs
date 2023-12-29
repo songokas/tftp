@@ -1,5 +1,3 @@
-use chacha20poly1305::AeadCore;
-use chacha20poly1305::XChaCha20Poly1305;
 use rand::CryptoRng;
 use rand::RngCore;
 use x25519_dalek::EphemeralSecret;
@@ -8,8 +6,7 @@ use crate::encryption::decode_public_key;
 use crate::encryption::encode_public_key;
 use crate::encryption::FinalizedKeys;
 use crate::encryption::InitialKey;
-use crate::encryption::InitialKeys;
-use crate::encryption::Nonce;
+use crate::encryption::InitialKeyPair;
 use crate::encryption::PrivateKey;
 use crate::encryption::PublicKey;
 use crate::error::BoxedError;
@@ -25,15 +22,15 @@ pub type AuthorizedKeys = heapless::Vec<PublicKey, { crate::config::MAX_CLIENTS 
 pub fn create_initial_keys(
     private: &Option<PrivateKey>,
     mut rng: impl CryptoRng + RngCore,
-) -> InitialKeys {
+) -> InitialKeyPair {
     match private {
-        Some(k) => InitialKeys {
+        Some(k) => InitialKeyPair {
             public: PublicKey::from(k),
             private: InitialKey::Static(k.clone()),
         },
         None => {
             let random_key = EphemeralSecret::random_from_rng(&mut rng);
-            InitialKeys {
+            InitialKeyPair {
                 public: PublicKey::from(&random_key),
                 private: InitialKey::Ephemeral(random_key),
             }
@@ -41,17 +38,13 @@ pub fn create_initial_keys(
     }
 }
 
-pub fn create_finalized_keys(
+pub fn create_finalized_keys<R: CryptoRng + RngCore + Copy>(
     private: &Option<PrivateKey>,
     remote_public_key: &PublicKey,
-    nonce: Option<Nonce>,
-    rng: impl CryptoRng + RngCore + Copy,
-) -> FinalizedKeys {
+    rng: R,
+) -> FinalizedKeys<R> {
     let initial_keys = create_initial_keys(private, rng);
-    initial_keys.finalize(
-        remote_public_key,
-        nonce.unwrap_or_else(|| XChaCha20Poly1305::generate_nonce(rng)),
-    )
+    initial_keys.finalize(remote_public_key, rng)
 }
 
 #[allow(unused_must_use)]

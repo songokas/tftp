@@ -60,7 +60,6 @@ fn test_vector_resizing(b: &mut Bencher) {
     });
 }
 
-// TODO slow
 #[bench]
 fn test_heapless_vector_resizing(b: &mut Bencher) {
     let mut vec: heapless::Vec<u8, { MAX_BUFFER_SIZE as usize }> = heapless::Vec::new();
@@ -115,7 +114,7 @@ fn test_heapless_map_retrieve_256(b: &mut Bencher) {
     let mut map = heapless::FnvIndexMap::<u8, bool, { u8::MAX as usize + 1 }>::new();
     let mut i = 0;
     while i <= u8::MAX {
-        map.insert(i, true);
+        map.insert(i, true).unwrap();
 
         if i == u8::MAX {
             break;
@@ -226,9 +225,10 @@ fn test_encrypt_decrypt(b: &mut Bencher) {
 }
 
 #[cfg(feature = "encryption")]
-fn create_encryptor() -> tftp::encryption::Encryptor {
+fn create_encryptor() -> tftp::encryption::Encryptor<rand::rngs::ThreadRng> {
     use chacha20poly1305::KeyInit;
     use chacha20poly1305::XChaCha20Poly1305;
+    use rand::thread_rng;
     tftp::encryption::Encryptor {
         cipher: XChaCha20Poly1305::new(
             &[
@@ -237,9 +237,6 @@ fn create_encryptor() -> tftp::encryption::Encryptor {
             ]
             .into(),
         ),
-        nonce: [
-            1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99,
-        ]
-        .into(),
+        rng: thread_rng(),
     }
 }

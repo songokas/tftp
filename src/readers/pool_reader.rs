@@ -168,18 +168,13 @@ impl<'a, R> Drop for PoolReader<'a, R> {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::vec::Vec;
 
     use super::*;
     use crate::readers::block_reader::BlockReader;
-    use crate::std_compat::io::Read;
-    use crate::std_compat::io::Seek;
-    use crate::std_compat::io::SeekFrom;
 
     #[test]
     fn test_pool_reader_single() {
         let cursor = Cursor::new(vec![1]);
-        let cursor = CursorReader { cursor };
         let pool = RefCell::new(SingleBlockReaders::new());
         {
             let mut reader =
@@ -196,7 +191,6 @@ mod tests {
     #[test]
     fn test_pool_reader_multi() {
         let cursor = Cursor::new(vec![1]);
-        let cursor = CursorReader { cursor };
         let pool = RefCell::new(MultiBlockReaders::new());
         {
             let mut reader =
@@ -214,7 +208,6 @@ mod tests {
     #[test]
     fn test_pool_reader_seek() {
         let cursor = Cursor::new(vec![1]);
-        let cursor = CursorReader { cursor };
         let pool = RefCell::new(MultiBlockSeekReaders::new());
         {
             let mut reader = PoolReader::from_seek(
@@ -246,32 +239,32 @@ mod tests {
         );
     }
 
-    #[derive(Debug)]
-    struct CursorReader {
-        cursor: Cursor<Vec<u8>>,
-    }
-    impl Read for CursorReader {
-        fn read(&mut self, buf: &mut [u8]) -> crate::std_compat::io::Result<usize> {
-            #[allow(unused_imports)]
-            use std::io::Read;
-            self.cursor.read(buf).map_err(|_| {
-                crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
-            })
-        }
-    }
+    // #[derive(Debug)]
+    // struct CursorReader {
+    //     cursor: Cursor<Vec<u8>>,
+    // }
+    // impl Read for CursorReader {
+    //     fn read(&mut self, buf: &mut [u8]) -> crate::std_compat::io::Result<usize> {
+    //         #[allow(unused_imports)]
+    //         use std::io::Read;
+    //         self.cursor.read(buf).map_err(|_| {
+    //             crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
+    //         })
+    //     }
+    // }
 
-    impl Seek for CursorReader {
-        fn seek(&mut self, pos: SeekFrom) -> crate::std_compat::io::Result<u64> {
-            #[allow(unused_imports)]
-            use std::io::Seek;
-            let pos = match pos {
-                SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
-                SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
-                SeekFrom::End(p) => std::io::SeekFrom::End(p),
-            };
-            self.cursor.seek(pos).map_err(|_| {
-                crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
-            })
-        }
-    }
+    // impl Seek for CursorReader {
+    //     fn seek(&mut self, pos: SeekFrom) -> crate::std_compat::io::Result<u64> {
+    //         #[allow(unused_imports)]
+    //         use std::io::Seek;
+    //         let pos = match pos {
+    //             SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
+    //             SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
+    //             SeekFrom::End(p) => std::io::SeekFrom::End(p),
+    //         };
+    //         self.cursor.seek(pos).map_err(|_| {
+    //             crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
+    //         })
+    //     }
+    // }
 }

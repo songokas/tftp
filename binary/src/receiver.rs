@@ -14,7 +14,9 @@ use tftp::types::FilePath;
 use crate::cli::BinError;
 use crate::cli::BinResult;
 use crate::cli::ClientCliConfig;
-use crate::io::handle_hosts_file;
+#[cfg(feature = "encryption")]
+use crate::encryption_io::create_encryption_writer;
+use crate::encryption_io::handle_hosts_file;
 use crate::io::instant_callback;
 use crate::socket::*;
 
@@ -26,7 +28,7 @@ pub fn start_receive<CreateWriter, W>(
 ) -> BinResult<usize>
 where
     W: Write,
-    CreateWriter: Fn(&FilePath) -> BoxedResult<W>,
+    CreateWriter: FnOnce(&FilePath) -> BoxedResult<W>,
 {
     let socket =
         create_socket(&config.listen, 1, false).map_err(|e| BinError::from(e.to_string()))?;
@@ -62,21 +64,36 @@ where
             .parse()
             .expect("Invalid remote file name"),
     };
-    receive_file(
-        config.try_into( false)?,
-        local_path,
-        remote_path,
-        options,
-        create_writer,
-        socket,
-        instant_callback,
-        OsRng,
-    )
-    .map(|(total, _remote_key)| {
-        debug!("Client total received {}", total);
-        let file = known_hosts_file.as_deref();
-        handle_hosts_file(file, _remote_key, &endpoint);
-        total
-    })
-    .map_err(|e| BinError::from(e.to_string()))
+    let client_config = config.try_into(false)?;
+    let result = match client_config.encryption_key {
+        #[cfg(feature = "encryption")]
+        Some(key) => receive_file(
+            client_config,
+            local_path,
+            remote_path,
+            options,
+            create_encryption_writer(key, create_writer),
+            socket,
+            instant_callback,
+            OsRng,
+        ),
+        _ => receive_file(
+            client_config,
+            local_path,
+            remote_path,
+            options,
+            create_writer,
+            socket,
+            instant_callback,
+            OsRng,
+        ),
+    };
+
+    result
+        .map(|(total, _remote_key)| {
+            debug!("Client total received {}", total);
+            handle_hosts_file(known_hosts_file.as_deref(), _remote_key, &endpoint);
+            total
+        })
+        .map_err(|e| BinError::from(e.to_string()))
 }

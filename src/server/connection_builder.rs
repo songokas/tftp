@@ -42,10 +42,9 @@ use crate::writers::single_block_writer::SingleBlockWriter;
 use crate::writers::Writers;
 
 cfg_encryption! {
-    use core::mem::size_of;
-    use crate::error::EncryptionError;
+    use crate::error::EncryptedPacketError;
+    use crate::encrypted_packet::InitialPacket;
     use crate::key_management::create_finalized_keys;
-    use crate::packet::PacketType;
 }
 
 cfg_seek! {
@@ -53,35 +52,35 @@ cfg_seek! {
     use crate::readers::multiple_block_seek_reader::MultipleBlockSeekReader;
 }
 
-pub struct ConnectionBuilder<'a> {
+pub struct ConnectionBuilder<'a, Rng> {
     config: &'a ServerConfig,
     options: ConnectionOptions,
     used_extensions: PacketExtensions,
     file_name: Option<FilePath>,
-    finalized_keys: Option<FinalizedKeys>,
+    finalized_keys: Option<FinalizedKeys<Rng>>,
     socket_id: usize,
 }
 
-impl<'a> ConnectionBuilder<'a> {
+impl<'a, Rng: CryptoRng + RngCore + Copy> ConnectionBuilder<'a, Rng> {
     #[allow(unused_variables)]
     pub fn from_new_connection(
         config: &'a ServerConfig,
         buffer: &mut DataBuffer,
-        rng: impl CryptoRng + RngCore + Copy,
+        rng: Rng,
         socket_id: usize,
     ) -> Result<Self, ExtensionError> {
         #[allow(unused_mut)]
         let mut options = ConnectionOptions::default();
         #[cfg(feature = "encryption")]
-        let finalized_keys = if let Ok(Some((ignore, finalized_keys, remote_public_key))) =
+        let finalized_keys = if let Ok(Some((finalized_keys, initial_packet))) =
             handle_encrypted(&config.private_key, buffer, rng)
         {
             let can_access = if let Some(keys) = &config.authorized_keys {
-                let result = keys.contains(&remote_public_key);
+                let result = keys.contains(&initial_packet.public_key);
                 if !result {
                     debug!(
-                        "Received new connection however public key was not authorized {:x?}",
-                        remote_public_key
+                        "Received new connection however public key was not authorized {:?}",
+                        initial_packet.public_key
                     );
                 }
                 result
@@ -89,23 +88,18 @@ impl<'a> ConnectionBuilder<'a> {
                 true
             };
             if can_access {
-                #[allow(clippy::iter_cloned_collect)]
-                let mut data: DataBuffer = buffer[ignore..].iter().copied().collect();
-                if finalized_keys.encryptor.decrypt(&mut data).is_err() {
-                    error!("Failed to decrypt initial connection");
-                    None
+                let remote_public_key = initial_packet.public_key;
+                if let Ok(data) = initial_packet.decrypt(&finalized_keys.encryptor) {
+                    *buffer = data;
+                    options.encryption_keys = Some(EncryptionKeys::LocalToRemote(
+                        finalized_keys.public,
+                        remote_public_key,
+                    ));
+                    options.encryption_level = EncryptionLevel::Full;
+                    Some(finalized_keys)
                 } else {
-                    if remove_bit_padding(&mut data).is_err() {
-                        None
-                    } else {
-                        *buffer = data;
-                        options.encryption_keys = Some(EncryptionKeys::LocalToRemote(
-                            finalized_keys.public,
-                            remote_public_key,
-                        ));
-                        options.encryption_level = EncryptionLevel::Full;
-                        Some(finalized_keys)
-                    }
+                    debug!("Ignoring encryption for initial packet");
+                    None
                 }
             } else {
                 None
@@ -137,7 +131,7 @@ impl<'a> ConnectionBuilder<'a> {
         &mut self,
         request: RequestPacket,
         max_window_size: u16,
-        rng: impl CryptoRng + RngCore + Copy,
+        rng: Rng,
     ) -> BoxedResult<()> {
         let (used_extensions, options, finalized_keys) = create_options(
             request.extensions,
@@ -161,7 +155,7 @@ impl<'a> ConnectionBuilder<'a> {
         create_writer: &CreateWriter,
         create_bound_socket: &CreateBoundSocket,
         instant: fn() -> Instant,
-    ) -> WritersResult<B, W>
+    ) -> WritersResult<B, W, Rng>
     where
         S: Socket,
         B: BoundSocket + ToSocketId,
@@ -255,7 +249,7 @@ impl<'a> ConnectionBuilder<'a> {
         create_bound_socket: &CreateBoundSocket,
         instant: fn() -> Instant,
         readers_available: ReadersAvailable,
-    ) -> ReadersResult<B, R>
+    ) -> ReadersResult<B, R, Rng>
     where
         S: Socket,
         B: BoundSocket + ToSocketId,
@@ -366,39 +360,14 @@ impl<'a> ConnectionBuilder<'a> {
 }
 
 #[cfg(feature = "encryption")]
-fn handle_encrypted(
+fn handle_encrypted<'a, R: CryptoRng + RngCore + Copy>(
     private_key: &Option<PrivateKey>,
-    data: &mut DataBuffer,
-    rng: impl CryptoRng + RngCore + Copy,
-) -> Result<Option<(usize, FinalizedKeys, PublicKey)>, EncryptionError> {
-    // as long as we dont use standard packet type this should be good. randomize ?
-    match PacketType::from_bytes(data) {
-        Ok(PacketType::InitialEncryption) => (),
-        _ => return Ok(None),
-    };
-    const PACKET_TYPE_SIZE: usize = size_of::<PacketType>();
-    const PUBLIC_KEY_SIZE: usize = size_of::<PublicKey>();
-    const PUBLIC_KEY_END: usize = PACKET_TYPE_SIZE + PUBLIC_KEY_SIZE;
-    const NONCE_END: usize = PACKET_TYPE_SIZE + PUBLIC_KEY_SIZE + size_of::<Nonce>();
-
-    let remote_public_key: [u8; PUBLIC_KEY_SIZE] = data
-        .get(PACKET_TYPE_SIZE..PUBLIC_KEY_END)
-        .map(|n| n.try_into())
-        .transpose()
-        .map_err(|_| EncryptionError::Decrypt)?
-        .ok_or(EncryptionError::Decrypt)?;
-
-    let remote_nonce: [u8; size_of::<Nonce>()] = data
-        .get(PUBLIC_KEY_END..NONCE_END)
-        .map(|n| n.try_into())
-        .transpose()
-        .map_err(|_| EncryptionError::Decrypt)?
-        .ok_or(EncryptionError::Decrypt)?;
-
-    let remote_key = remote_public_key.into();
-    let finalized_keys =
-        create_finalized_keys(private_key, &remote_key, Some(remote_nonce.into()), rng);
-    Ok(Some((NONCE_END, finalized_keys, remote_key)))
+    data: &'a mut DataBuffer,
+    rng: R,
+) -> Result<Option<(FinalizedKeys<R>, InitialPacket<'a>)>, EncryptedPacketError> {
+    let initial_packet = InitialPacket::from_bytes(data)?;
+    let finalized_keys = create_finalized_keys(private_key, &initial_packet.public_key, rng);
+    Ok(Some((finalized_keys, initial_packet)))
 }
 
 fn block_reader<#[cfg(not(feature = "seek"))] R: Read, #[cfg(feature = "seek")] R: Read + Seek>(
@@ -449,18 +418,18 @@ fn block_writer<W: Write>(writer: W) -> Writers<W> {
     Writers::Single(SingleBlockWriter::new(writer))
 }
 
-type ReadersResult<B, R> = BoxedResult<(
-    Connection<B>,
+type ReadersResult<B, R, Rng> = BoxedResult<(
+    Connection<B, Rng>,
     Readers<R>,
     PacketExtensions,
-    Option<FinalizedKeys>,
+    Option<FinalizedKeys<Rng>>,
 )>;
 
-type WritersResult<B, W> = BoxedResult<(
-    Connection<B>,
+type WritersResult<B, W, Rng> = BoxedResult<(
+    Connection<B, Rng>,
     Writers<W>,
     PacketExtensions,
-    Option<FinalizedKeys>,
+    Option<FinalizedKeys<Rng>>,
 )>;
 
 #[cfg(test)]
@@ -481,8 +450,6 @@ mod tests {
     fn test_block_reader_window_size_1() {
         let options = ConnectionOptions::default();
         let cursor = Cursor::new(vec![1, 2, 3, 4]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
 
         let readers_available = ReadersAvailable::new(1, 1, 1);
         let result = block_reader(cursor.clone(), &options, &readers_available, true);
@@ -512,8 +479,6 @@ mod tests {
         let mut options = ConnectionOptions::default();
         options.window_size = 4;
         let cursor = Cursor::new(vec![1, 2, 3, 4]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
 
         let readers_available = ReadersAvailable::new(1, 1, 1);
         let result = block_reader(cursor.clone(), &options, &readers_available, true);
@@ -535,30 +500,14 @@ mod tests {
     }
 
     #[cfg(not(feature = "std"))]
-    #[derive(Debug, Clone)]
-    struct CursorReader {
-        cursor: Cursor<Vec<u8>>,
-    }
-    #[cfg(not(feature = "std"))]
-    impl Read for CursorReader {
-        fn read(&mut self, buf: &mut [u8]) -> crate::std_compat::io::Result<usize> {
-            use std::io::Read;
-            self.cursor.read(buf).map_err(|_| {
-                crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
-            })
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
-    impl Seek for CursorReader {
+    impl Seek for Cursor<Vec<u8>> {
         fn seek(&mut self, pos: SeekFrom) -> crate::std_compat::io::Result<u64> {
-            use std::io::Seek;
             let pos = match pos {
                 SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
                 SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
                 SeekFrom::End(p) => std::io::SeekFrom::End(p),
             };
-            self.cursor.seek(pos).map_err(|_| {
+            std::io::Seek::seek(self, pos).map_err(|_| {
                 crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
             })
         }

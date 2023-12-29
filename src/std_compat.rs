@@ -125,6 +125,7 @@ pub mod io {
         UnexpectedEof,
         OutOfMemory,
         Other,
+        Unsupported,
     }
 
     impl ErrorKind {
@@ -150,6 +151,7 @@ pub mod io {
                 UnexpectedEof => "unexpected end of file",
                 OutOfMemory => "out of memory",
                 Other => "other error",
+                Unsupported => "operation not supported",
             }
         }
     }

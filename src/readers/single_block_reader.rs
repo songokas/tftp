@@ -99,8 +99,6 @@ mod tests {
     #[test]
     fn test_next_read_and_repeat() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = SingleBlockReader::new(cursor, 2);
 
         let block = reader.next(false).unwrap().unwrap();
@@ -123,8 +121,6 @@ mod tests {
     #[test]
     fn test_read_until_finished() {
         let cursor = Cursor::new(vec![1, 2, 3]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = SingleBlockReader::new(cursor, 2);
 
         reader.next(false).unwrap().unwrap();
@@ -149,8 +145,6 @@ mod tests {
     #[test]
     fn test_free_block_invalid() {
         let cursor = Cursor::new(vec![1, 2, 3]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = SingleBlockReader::new(cursor, 2);
 
         assert_eq!(0, reader.free_block(1));
@@ -170,8 +164,6 @@ mod tests {
     #[test]
     fn test_next_file_size_matches_block_size() {
         let cursor = Cursor::new(vec![1, 2, 3, 4]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = SingleBlockReader::new(cursor, 2);
 
         reader.next(false).unwrap().unwrap();
@@ -201,15 +193,9 @@ mod tests {
     }
 
     #[cfg(not(feature = "std"))]
-    #[derive(Debug)]
-    struct CursorReader {
-        cursor: Cursor<Vec<u8>>,
-    }
-    #[cfg(not(feature = "std"))]
-    impl Read for CursorReader {
+    impl Read for Cursor<Vec<u8>> {
         fn read(&mut self, buf: &mut [u8]) -> crate::std_compat::io::Result<usize> {
-            use std::io::Read;
-            self.cursor.read(buf).map_err(|_| {
+            std::io::Read::read(self, buf).map_err(|_| {
                 crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
             })
         }

@@ -27,8 +27,8 @@ use tftp::std_compat::io;
 use tftp::std_compat::net::SocketAddr;
 use tftp::types::DataBuffer;
 
-use crate::io::from_io_err;
 use crate::macros::cfg_no_std;
+use crate::std_compat::io::from_io_err;
 
 cfg_no_std! {
     use tftp::std_compat::net::IpVersion;

@@ -16,13 +16,13 @@ use tftp::config::MAX_DATA_BLOCK_SIZE;
 use tftp::server::ServerConfig;
 use tftp::types::DefaultString;
 use tftp::types::FilePath;
+use tftp::types::ShortString;
 
 use crate::macros::cfg_encryption;
 
 cfg_encryption! {
     use tftp::encryption::*;
     use tftp::key_management::*;
-    use tftp::types::ShortString;
     use crate::io::create_buff_reader;
 }
 
@@ -97,6 +97,13 @@ pub struct ClientCliConfig {
 
     #[arg(long)]
     pub allow_server_port_change: bool,
+
+    #[cfg(feature = "encryption")]
+    #[arg(
+        long,
+        help = "Encrypt/decrypt file when sending/receiving. Key should be 32 chars long"
+    )]
+    pub encryption_key: Option<ShortString>,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -155,6 +162,12 @@ pub struct ServerCliConfig {
     #[cfg(feature = "seek")]
     #[arg(long)]
     prefer_seek: bool,
+
+    #[arg(long, help = "Retrieving specified file provides directory list")]
+    directory_list: Option<ShortString>,
+
+    #[arg(long, default_value_t = 10, help = "Maximum directory depth")]
+    max_directory_depth: u16,
 }
 
 #[derive(Subcommand, Debug)]
@@ -230,7 +243,7 @@ impl ClientCliConfig {
         let private_key = self
             .private_key
             .as_deref()
-            .map(crate::io::read_private_value_or_file)
+            .map(crate::encryption_io::read_private_value_or_file)
             .transpose()
             .map_err(|e| BinError::from(e.to_string()))?;
         #[cfg(not(feature = "encryption"))]
@@ -253,6 +266,19 @@ impl ClientCliConfig {
             .ok_or_else(|| BinError::from("Unable to resolve endpoint address"))?;
         #[cfg(not(feature = "std"))]
         let endpoint = crate::socket::std_to_socket_addr(endpoint);
+
+        #[cfg(feature = "encryption")]
+        let encryption_key: Option<EncryptionKey> = self
+            .encryption_key
+            .as_deref()
+            .map(crate::encryption_io::read_private_value_or_file)
+            .transpose()
+            .map_err(|e| BinError::from(e.to_string()))?
+            .map(|s| s.to_bytes());
+
+        #[cfg(not(feature = "encryption"))]
+        let encryption_key = None;
+
         Ok(ClientConfig {
             listen: self.listen,
             endpoint,
@@ -262,6 +288,7 @@ impl ClientCliConfig {
             remote_public_key,
             allow_server_port_change: self.allow_server_port_change,
             prefer_seek,
+            encryption_key,
         })
     }
 }
@@ -289,7 +316,7 @@ impl ServerCliConfig {
             private_key: self
                 .private_key
                 .as_deref()
-                .map(crate::io::read_private_value_or_file)
+                .map(crate::encryption_io::read_private_value_or_file)
                 .transpose()
                 .map_err(|e| BinError::from(e.to_string()))?,
             #[cfg(not(feature = "encryption"))]
@@ -313,6 +340,8 @@ impl ServerCliConfig {
             prefer_seek: self.prefer_seek,
             #[cfg(not(feature = "seek"))]
             prefer_seek: false,
+            directory_list: self.directory_list,
+            max_directory_depth: self.max_directory_depth,
         })
     }
 }

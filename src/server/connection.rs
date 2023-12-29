@@ -3,8 +3,11 @@ use core::time::Duration;
 
 use log::debug;
 use log::error;
+use rand::CryptoRng;
+use rand::RngCore;
 
 use crate::config::ConnectionOptions;
+
 use crate::encryption::*;
 use crate::macros::cfg_encryption;
 use crate::packet::ByteConverter;
@@ -16,6 +19,8 @@ use crate::std_compat::time::Instant;
 use crate::types::DataBuffer;
 
 cfg_encryption! {
+    use crate::encrypted_packet::EncryptedDataPacket;
+    use crate::encrypted_packet::EncryptedPacket;
     use crate::packet::PacketType;
     use crate::config::DATA_PACKET_HEADER_SIZE;
 }
@@ -30,10 +35,10 @@ pub enum ConnectionType {
     Write,
 }
 
-pub struct Connection<B> {
+pub struct Connection<B, Rng> {
     pub socket: B,
     pub options: ConnectionOptions,
-    pub encryptor: Option<Encryptor>,
+    pub encryptor: Option<Encryptor<Rng>>,
     // conection last updated: valid block received, valid block acknoledged
     pub last_updated: Instant,
     /// last block index acknoledged
@@ -47,7 +52,7 @@ pub struct Connection<B> {
     pub invalid: bool,
 }
 
-impl<B: BoundSocket> Connection<B> {
+impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
     pub fn recv(&self, buffer: &mut DataBuffer, wait_for: Option<Duration>) -> io::Result<usize> {
         self.socket.recv(buffer, wait_for)
     }
@@ -57,17 +62,13 @@ impl<B: BoundSocket> Connection<B> {
         if let (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) =
             (self.options.encryption_level, &self.encryptor)
         {
-            if encryptor.decrypt(_buffer).is_err() {
+            if EncryptedPacket::decrypt(encryptor, _buffer).is_err() {
                 debug!(
-                    "Failed to decrypt packet from {} {} {:x?}",
+                    "Failed to decrypt packet from {} {} {:?}",
                     self.endpoint,
                     &_buffer.len(),
                     &_buffer
                 );
-                return false;
-            }
-            if let Err(e) = remove_bit_padding(_buffer) {
-                error!("Failed to remove padding {e}");
                 return false;
             }
         }
@@ -78,7 +79,7 @@ impl<B: BoundSocket> Connection<B> {
             self.options.encryption_level,
             &self.encryptor,
         ) {
-            if overwrite_data_packet(_buffer, |buf| encryptor.decrypt(buf)).is_err() {
+            if EncryptedDataPacket::decrypt(encryptor, _buffer).is_err() {
                 debug!(
                     "Failed to decrypt data from {} {} {:x?}",
                     self.endpoint,
@@ -106,24 +107,22 @@ impl<B: BoundSocket> Connection<B> {
         if let (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) =
             (self.options.encryption_level, &self.encryptor)
         {
-            if let Err(e) = apply_bit_padding(
+            if EncryptedPacket::encrypt(
+                encryptor,
                 &mut data,
-                self.options.block_size_with_encryption() as usize
-                    + DATA_PACKET_HEADER_SIZE as usize,
-            ) {
-                error!("Failed to apply padding data {e}");
-                return false;
-            }
-            if encryptor.encrypt(&mut data).is_err() {
+                self.options.block_size_with_encryption() + DATA_PACKET_HEADER_SIZE as u16,
+            )
+            .is_err()
+            {
                 error!("Failed to encrypt data {:x?}", &data);
                 return false;
             }
         }
         #[cfg(feature = "encryption")]
-        if let (EncryptionLevel::Data, Some(encryptor)) =
-            (self.options.encryption_level, &self.encryptor)
+        if let (EncryptionLevel::Data, Some(encryptor), PacketType::Data) =
+            (self.options.encryption_level, &self.encryptor, packet_name)
         {
-            if overwrite_data_packet(&mut data, |buf| encryptor.encrypt(buf)).is_err() {
+            if EncryptedDataPacket::encrypt(encryptor, &mut data).is_err() {
                 error!("Failed to encrypt data {:x?}", &data);
                 return false;
             }

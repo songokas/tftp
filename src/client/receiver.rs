@@ -8,6 +8,8 @@ use rand::CryptoRng;
 use rand::RngCore;
 
 use super::ClientConfig;
+use crate::buffer::new_buffer;
+use crate::buffer::resize_buffer;
 use crate::client::connection::query_server;
 use crate::client::connection::send_error;
 use crate::config::print_options;
@@ -31,7 +33,6 @@ use crate::std_compat::io::Write;
 use crate::std_compat::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
-use crate::types::DataBuffer;
 use crate::types::FilePath;
 use crate::writers::block_writer::BlockWriter;
 use crate::writers::single_block_writer::SingleBlockWriter;
@@ -56,7 +57,7 @@ where
     W: Write,
     Rng: CryptoRng + RngCore + Copy,
     Sock: Socket,
-    CreateWriter: Fn(&FilePath) -> BoxedResult<W>,
+    CreateWriter: FnOnce(&FilePath) -> BoxedResult<W>,
 {
     let max_buffer_size = max(
         options.block_size + DATA_PACKET_HEADER_SIZE as u16,
@@ -73,12 +74,7 @@ where
     #[cfg(feature = "encryption")]
     let (mut socket, initial_keys) = create_initial_socket(socket, &config, &mut options, _rng)?;
 
-    #[allow(unused_must_use)]
-    let mut buffer = {
-        let mut d = DataBuffer::new();
-        d.resize(max_buffer_size as usize, 0);
-        d
-    };
+    let mut buffer = new_buffer(max_buffer_size);
 
     let initial_rtt = instant();
     #[allow(unused_mut)]
@@ -98,7 +94,7 @@ where
     );
 
     #[cfg(feature = "encryption")]
-    let (mut socket, options) = configure_socket(socket, initial_keys, options);
+    let (mut socket, options) = configure_socket(socket, initial_keys, options, _rng);
 
     let writer = create_writer(&local_file_path)?;
     let mut block_writer = SingleBlockWriter::new(writer);
@@ -143,13 +139,7 @@ where
     let mut timeout = instant();
 
     loop {
-        #[cfg(feature = "alloc")]
-        buffer.resize(max_buffer_size as usize, 0);
-        // TODO heapless vector resizing is super slow
-        #[cfg(not(feature = "alloc"))]
-        unsafe {
-            buffer.set_len(max_buffer_size as usize)
-        };
+        resize_buffer(&mut buffer, max_buffer_size);
 
         let length = match socket.recv_from(&mut buffer, Duration::from_secs(1).into()) {
             Ok((n, s)) => {

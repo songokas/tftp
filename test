@@ -138,6 +138,31 @@ test_high_load() {
 
 }
 
+test_double_encryption() {
+    local server="$1"
+    local client="$2"
+    local data=$(openssl rand -base64 2000)
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server & pids+=($!)
+
+    for level in data optional-data protocol optional-protocol none; do
+        local remote_path=$(openssl rand -hex 12)
+        local encryption_key=$(openssl rand -base64 32)
+        echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --encryption-level $level --encryption-key "$encryption_key"
+        local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --encryption-level $level --encryption-key "$encryption_key")
+        if [[ "$data" != "$received" ]]; then
+            exit 1
+        fi
+    done;
+
+    kill "${pids[@]}"
+}
+
 test_encryption_level() {
     local server="$1"
     local client="$2"
@@ -155,6 +180,37 @@ test_encryption_level() {
         echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --encryption-level $level
         local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --encryption-level $level)
         if [[ "$data" != "$received" ]]; then
+            exit 1
+        fi
+    done;
+
+    kill "${pids[@]}"
+}
+
+test_directory_list() {
+    local server="$1"
+    local client="$2"
+    local data="hello"
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    echo "$data" > $TEST_DIR/server/samples/a
+    echo "$data" > $TEST_DIR/server/b
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server --directory-list dir & pids+=($!)
+
+    for level in data optional-data protocol optional-protocol none; do
+        local received=$($client receive 127.0.0.1:9000 dir --local-path /dev/stdout --encryption-level $level)
+        local expected="b
+samples/"
+        if [ "$expected" != "$received" ]; then
+            exit 1
+        fi
+        local received=$($client receive 127.0.0.1:9000 samples/dir --local-path /dev/stdout --encryption-level $level)
+        if [[ "samples/a" != "$received" ]]; then
             exit 1
         fi
     done;
@@ -334,6 +390,8 @@ test_all() {
             test_encryption_level $server $client
             test_encryption_authorized_only $server $client
             test_standard_tftp $server $client
+            test_double_encryption $server $client
+            test_directory_list $server $client
         done
     done
 

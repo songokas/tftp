@@ -86,28 +86,28 @@ pub mod std_compat {
     }
 }
 
+mod buffer;
 pub mod client;
 pub mod config;
+#[cfg(feature = "encryption")]
+pub mod encrypted_packet;
 #[cfg(feature = "encryption")]
 pub mod encryption;
 mod macros;
 #[cfg(not(feature = "encryption"))]
 pub mod encryption {
-    pub type InitialKeys = ();
+    use core::marker::PhantomData;
+
     pub type PublicKey = ();
     pub type Nonce = ();
-    pub type Encryptor = ();
-    pub struct FinalizedKeys {
-        pub encryptor: Encryptor,
-    }
+
     pub type PrivateKey = ();
-    pub type InitialKey = ();
-    pub type FinalizeKeysCallback = fn((), ()) -> ();
-    pub fn overwrite_data_packet() {}
-    pub fn encode_public_key() {}
-    pub fn encode_nonce() {}
-    pub fn decode_public_key() {}
-    pub fn decode_private_key() {}
+    pub type EncryptionKey = ();
+
+    pub type Encryptor<Rng> = PhantomData<Rng>;
+    pub struct FinalizedKeys<Rng> {
+        pub encryptor: Encryptor<Rng>,
+    }
 
     #[derive(Clone, Debug)]
     pub enum EncryptionKeys {
@@ -127,14 +127,7 @@ pub mod encryption {
     }
     impl core::fmt::Display for EncryptionLevel {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match self {
-                EncryptionLevel::Data => write!(f, "data"),
-                EncryptionLevel::Protocol => write!(f, "protocol"),
-                EncryptionLevel::Full => write!(f, "full"),
-                EncryptionLevel::OptionalData => write!(f, "optional-data"),
-                EncryptionLevel::OptionalProtocol => write!(f, "optional-protocol"),
-                EncryptionLevel::None => write!(f, "none"),
-            }
+            write!(f, "none")
         }
     }
 }
@@ -145,12 +138,12 @@ mod map;
 mod block_mapper;
 mod flow_control;
 mod packet;
-mod readers;
+pub mod readers;
 pub mod server;
 pub mod socket;
 #[cfg(not(feature = "std"))]
 pub mod std_compat;
-mod writers;
+pub mod writers;
 
 #[cfg(feature = "encryption")]
 pub mod key_management;

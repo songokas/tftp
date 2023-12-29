@@ -8,6 +8,7 @@ use super::extensions::create_extensions;
 use super::extensions::parse_extensions;
 use super::extensions::validate_extensions;
 use super::ClientConfig;
+use crate::buffer::resize_buffer;
 use crate::config::ConnectionOptions;
 use crate::config::DEFAULT_DATA_BLOCK_SIZE;
 use crate::encryption::EncryptionLevel;
@@ -55,13 +56,7 @@ pub fn query_server<'a>(
         let packet = create_packet(request_packet);
         let packet_type = packet.packet_type();
 
-        #[cfg(feature = "alloc")]
-        buffer.resize(buffer_size, 0);
-        // TODO heapless vector resizing is super slow
-        #[cfg(not(feature = "alloc"))]
-        unsafe {
-            buffer.set_len(buffer_size)
-        };
+        resize_buffer(buffer, buffer_size);
 
         let (length, endpoint) = wait_for_initial_packet(
             socket,

@@ -1,5 +1,6 @@
 use core::time::Duration;
 
+use crate::encryption::EncryptionKey;
 use crate::encryption::PrivateKey;
 use crate::encryption::PublicKey;
 use crate::std_compat::net::SocketAddr;
@@ -15,4 +16,5 @@ pub struct ClientConfig {
     pub remote_public_key: Option<PublicKey>,
     pub allow_server_port_change: bool,
     pub prefer_seek: bool,
+    pub encryption_key: Option<EncryptionKey>,
 }

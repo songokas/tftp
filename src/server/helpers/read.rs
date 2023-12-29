@@ -3,6 +3,8 @@ use core::num::NonZeroU16;
 use log::debug;
 use log::error;
 use log::info;
+use rand::CryptoRng;
+use rand::RngCore;
 
 use crate::packet::ByteConverter;
 use crate::packet::DataPacket;
@@ -17,8 +19,8 @@ use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;
 
-pub fn send_data_block<R: BlockReader, B: BoundSocket>(
-    connection: &mut Connection<B>,
+pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
+    connection: &mut Connection<B, Rng>,
     block_reader: &mut R,
 ) -> bool {
     let retry = connection.last_updated.elapsed()
@@ -45,8 +47,8 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket>(
     }))
 }
 
-pub fn handle_read<R: BlockReader, B: BoundSocket>(
-    connection: &mut Connection<B>,
+pub fn handle_read<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
+    connection: &mut Connection<B, Rng>,
     block_reader: &mut R,
     buffer: &mut DataBuffer,
     instant: InstantCallback,

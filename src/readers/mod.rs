@@ -4,6 +4,8 @@ use self::multiple_block_seek_reader::MultipleBlockSeekReader;
 use self::single_block_reader::SingleBlockReader;
 
 pub mod block_reader;
+#[cfg(feature = "encryption")]
+pub mod encrypted_stream_reader;
 pub mod multiple_block_reader;
 #[cfg(feature = "seek")]
 pub mod multiple_block_seek_reader;
@@ -39,3 +41,6 @@ impl<T: self::block_reader::BlockReader + ?Sized> self::block_reader::BlockReade
         self.as_ref().is_finished()
     }
 }
+
+#[cfg(feature = "encryption")]
+pub use encrypted_stream_reader::StreamReader;

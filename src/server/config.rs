@@ -4,6 +4,7 @@ use crate::encryption::PrivateKey;
 use crate::key_management::AuthorizedKeys;
 use crate::std_compat::net::SocketAddr;
 use crate::types::FilePath;
+use crate::types::ShortString;
 
 pub struct ServerConfig {
     pub listen: SocketAddr,
@@ -19,4 +20,6 @@ pub struct ServerConfig {
     pub required_full_encryption: bool,
     pub require_server_port_change: bool,
     pub prefer_seek: bool,
+    pub directory_list: Option<ShortString>,
+    pub max_directory_depth: u16,
 }

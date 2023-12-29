@@ -1,6 +1,21 @@
 #[cfg(feature = "sync")]
 mod blocking_reader;
 mod cli;
+#[cfg(feature = "encryption")]
+mod encryption_io;
+
+#[cfg(not(feature = "encryption"))]
+mod encryption_io {
+    use tftp::encryption::PublicKey;
+
+    pub fn handle_hosts_file(
+        _known_hosts_file: Option<&str>,
+        _remote_key: Option<PublicKey>,
+        _endpoint: &str,
+    ) {
+    }
+}
+
 mod io;
 mod macros;
 mod receiver;
@@ -29,6 +44,39 @@ use crate::io::create_server_reader;
 use crate::io::create_server_writer;
 use crate::io::create_writer;
 use crate::socket::*;
+
+#[cfg(feature = "std")]
+pub mod std_compat {
+    pub mod fs {
+        pub use std::fs::File;
+    }
+    pub mod io {
+        pub use std::io::BufReader;
+        pub use std::io::Cursor;
+        pub use std::io::Error;
+
+        pub type BytesCursor = Cursor<Vec<u8>>;
+
+        pub trait AnyReader:
+            tftp::std_compat::io::Read + tftp::std_compat::io::Seek + Send + 'static
+        {
+        }
+
+        impl<T> AnyReader for T where
+            T: tftp::std_compat::io::Read + tftp::std_compat::io::Seek + Send + 'static
+        {
+        }
+
+        pub type BoxedReader = Box<dyn AnyReader>;
+
+        pub fn from_io_err(err: Error) -> Error {
+            err
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+pub mod std_compat;
 
 // tftp send localhost:3000 /tmp/a --remote-path long/a
 // tftp receive localhost:3000 long/a --local-path /tmp/a
@@ -361,6 +409,8 @@ mod tests {
             known_hosts: None,
             window_size,
             allow_server_port_change: false,
+            #[cfg(feature = "encryption")]
+            encryption_key: None,
         };
 
         let local_file = "from".parse().unwrap();
@@ -396,6 +446,8 @@ mod tests {
             known_hosts: None,
             window_size,
             allow_server_port_change: false,
+            #[cfg(feature = "encryption")]
+            encryption_key: None,
         };
 
         let local_file = "from".parse().ok();
@@ -429,6 +481,8 @@ mod tests {
             require_server_port_change: false,
             max_window_size: 4,
             prefer_seek: false,
+            directory_list: None,
+            max_directory_depth: 10,
         };
 
         let create_reader = |_path: &FilePath, _config: &ServerConfig| {

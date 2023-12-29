@@ -1,6 +1,8 @@
 use self::single_block_writer::SingleBlockWriter;
 
 pub mod block_writer;
+#[cfg(feature = "encryption")]
+pub mod encrypted_stream_writer;
 pub mod single_block_writer;
 
 pub enum Writers<W> {

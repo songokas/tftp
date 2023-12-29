@@ -24,9 +24,14 @@ pub const ENCRYPTION_TAG_SIZE: u8 = 16;
 pub const ENCRYPTION_TAG_SIZE: u8 = 0;
 
 #[cfg(feature = "encryption")]
-pub const ENCRYPTION_PADDING: u8 = 1;
+pub const ENCRYPTION_PADDING_SIZE: u8 = 1;
 #[cfg(not(feature = "encryption"))]
-pub const ENCRYPTION_PADDING: u8 = 0;
+pub const ENCRYPTION_PADDING_SIZE: u8 = 0;
+
+#[cfg(feature = "encryption")]
+pub const ENCRYPTION_NONCE_SIZE: u8 = 24;
+#[cfg(not(feature = "encryption"))]
+pub const ENCRYPTION_NONCE_SIZE: u8 = 0;
 
 cfg_alloc!(
     /// how many clients server can manage at once
@@ -107,9 +112,14 @@ impl ConnectionOptions {
         }
 
         match self.encryption_level {
-            EncryptionLevel::Data => self.block_size - ENCRYPTION_TAG_SIZE as u16,
+            EncryptionLevel::Data => {
+                self.block_size - ENCRYPTION_TAG_SIZE as u16 - ENCRYPTION_NONCE_SIZE as u16
+            }
             EncryptionLevel::Full | EncryptionLevel::Protocol => {
-                self.block_size - ENCRYPTION_TAG_SIZE as u16 - ENCRYPTION_PADDING as u16
+                self.block_size
+                    - ENCRYPTION_TAG_SIZE as u16
+                    - ENCRYPTION_PADDING_SIZE as u16
+                    - ENCRYPTION_NONCE_SIZE as u16
             }
             EncryptionLevel::OptionalData
             | EncryptionLevel::OptionalProtocol

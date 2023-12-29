@@ -126,16 +126,12 @@ type Blocks = Map<u64, DataBlock, { crate::config::MAX_BLOCKS_FOR_MULTI_READER a
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    #[allow(unused_imports)]
-    use std::vec::Vec;
 
     use super::*;
 
     #[test]
     fn test_next_read_and_repeat() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 2);
 
         let block = reader.next(false).unwrap().unwrap();
@@ -166,8 +162,6 @@ mod tests {
     #[test]
     fn test_read_until_finished() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 2);
 
         reader.next(false).unwrap().unwrap();
@@ -195,8 +189,6 @@ mod tests {
     #[test]
     fn test_next_read_from_released() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 2);
 
         let block = reader.next(false).unwrap().unwrap();
@@ -229,8 +221,6 @@ mod tests {
     #[test]
     fn test_next_nothing_to_read() {
         let cursor = Cursor::new(vec![1, 2, 3]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 2);
 
         reader.next(false).unwrap().unwrap();
@@ -253,8 +243,6 @@ mod tests {
     #[test]
     fn test_free_block() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 2);
 
         reader.next(false).unwrap().unwrap();
@@ -270,8 +258,6 @@ mod tests {
     #[test]
     fn test_free_block_while_rereading() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 4);
 
         reader.next(false).unwrap().unwrap();
@@ -292,8 +278,6 @@ mod tests {
     #[test]
     fn test_free_block_invalid() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 2);
 
         assert_eq!(0, reader.free_block(1));
@@ -315,8 +299,6 @@ mod tests {
     #[test]
     fn test_next_file_reading_finished() {
         let cursor = Cursor::new(vec![1, 2, 3]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 3);
 
         reader.next(false).unwrap().unwrap();
@@ -329,8 +311,6 @@ mod tests {
     #[test]
     fn test_next_file_size_matches_block_size() {
         let cursor = Cursor::new(vec![1, 2, 3, 4]);
-        #[cfg(not(feature = "std"))]
-        let cursor = CursorReader { cursor };
         let mut reader = MultipleBlockReader::new(cursor, 2, 3);
 
         reader.next(false).unwrap().unwrap();
@@ -355,20 +335,5 @@ mod tests {
             expected_size,
             std::mem::size_of::<MultipleBlockReader<std::fs::File>>()
         );
-    }
-
-    #[cfg(not(feature = "std"))]
-    #[derive(Debug)]
-    struct CursorReader {
-        cursor: Cursor<Vec<u8>>,
-    }
-    #[cfg(not(feature = "std"))]
-    impl Read for CursorReader {
-        fn read(&mut self, buf: &mut [u8]) -> crate::std_compat::io::Result<usize> {
-            use std::io::Read;
-            self.cursor.read(buf).map_err(|_| {
-                crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
-            })
-        }
     }
 }

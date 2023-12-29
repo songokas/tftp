@@ -264,9 +264,9 @@ pub enum PaddingError {
 impl Display for PaddingError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            PaddingError::EmptyBuffer => write!(f, "empty buffer provided"),
-            PaddingError::MissingPaddingByte => write!(f, "missing padding byte"),
-            PaddingError::InvalidSizeProvided => write!(f, "invalid padding size provided"),
+            PaddingError::EmptyBuffer => write!(f, "Empty buffer provided"),
+            PaddingError::MissingPaddingByte => write!(f, "Missing padding byte"),
+            PaddingError::InvalidSizeProvided => write!(f, "Invalid padding size provided"),
         }
     }
 }
@@ -275,6 +275,8 @@ impl Display for PaddingError {
 pub enum EncryptionError {
     Encrypt,
     Decrypt,
+    Nonce,
+    NoStream,
     Encode(EncodingErrorType),
     Decode(EncodingErrorType),
     Padding(PaddingError),
@@ -287,6 +289,8 @@ impl Display for EncryptionError {
         match self {
             EncryptionError::Encrypt => write!(f, "Failed to encrypt"),
             EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
+            EncryptionError::Nonce => write!(f, "Invalid nonce"),
+            EncryptionError::NoStream => write!(f, "Stream has been used"),
             EncryptionError::Encode(t) => write!(f, "Failed to encode {t}"),
             EncryptionError::Decode(t) => write!(f, "Failed to decode {t}"),
             EncryptionError::Padding(t) => write!(f, "Failed to pad {t}"),
@@ -305,6 +309,45 @@ impl Display for AvailabilityError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             AvailabilityError::NoReaderAvailable => write!(f, "No reader available"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum EncryptedPacketError {
+    Padding(PaddingError),
+    PublicKey,
+    Nonce,
+    InvalidData,
+    Tag,
+    CipherText,
+    Encryption(EncryptionError),
+}
+
+impl Error for EncryptedPacketError {}
+
+impl From<PaddingError> for EncryptedPacketError {
+    fn from(source: PaddingError) -> Self {
+        EncryptedPacketError::Padding(source)
+    }
+}
+
+impl From<EncryptionError> for EncryptedPacketError {
+    fn from(source: EncryptionError) -> Self {
+        EncryptedPacketError::Encryption(source)
+    }
+}
+
+impl Display for EncryptedPacketError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EncryptedPacketError::Padding(t) => t.fmt(f),
+            EncryptedPacketError::PublicKey => write!(f, "Invalid public key"),
+            EncryptedPacketError::Nonce => write!(f, "Invalid nonce"),
+            EncryptedPacketError::CipherText => write!(f, "Invalid cipher text"),
+            EncryptedPacketError::InvalidData => write!(f, "Invalid data"),
+            EncryptedPacketError::Tag => write!(f, "Invalid encryption tag"),
+            EncryptedPacketError::Encryption(t) => t.fmt(f),
         }
     }
 }

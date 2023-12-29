@@ -1,6 +1,6 @@
 [package]
 name = "tftp"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 
 [profile.release]
@@ -23,6 +23,7 @@ x25519-dalek = { version = "2", optional = true, default-features = false, featu
 chacha20poly1305 = { version = "0.10", optional = true, default-features = false, features = [
     "heapless",
     "getrandom",
+    "stream",
 ] }
 # heapless depends on 0.2.1
 hash32 = "0.2.1"
