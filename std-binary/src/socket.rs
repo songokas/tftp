@@ -1,4 +1,6 @@
+use core::num::NonZeroUsize;
 use core::time::Duration;
+use std::collections::HashSet;
 use std::net::SocketAddr as StdSocketAddr;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
@@ -6,17 +8,14 @@ use std::net::UdpSocket;
 use std::os::fd::AsFd;
 #[cfg(not(target_family = "windows"))]
 use std::os::fd::AsRawFd;
-#[cfg(not(target_family = "windows"))]
-use std::os::fd::RawFd;
 #[cfg(target_family = "windows")]
 use std::os::windows::io::AsRawSocket;
-#[cfg(target_family = "windows")]
-use std::os::windows::io::RawSocket;
 
 use log::*;
 use polling::Event;
+use polling::Events;
 use polling::Poller;
-use polling::Source;
+// use polling::Source;
 use socket2::Domain;
 use socket2::Protocol;
 use socket2::Socket as Socket2;
@@ -38,7 +37,12 @@ cfg_no_std! {
     use std::net::Ipv6Addr;
 }
 
-pub fn create_socket(listen: &str, socket_id: usize, reuse: bool) -> BoxedResult<impl Socket> {
+pub fn create_socket(
+    listen: &str,
+    socket_id: usize,
+    reuse: bool,
+    capacity: usize,
+) -> BoxedResult<impl Socket> {
     let address: StdSocketAddr = listen
         .to_socket_addrs()
         .map_err(|e| {
@@ -63,14 +67,21 @@ pub fn create_socket(listen: &str, socket_id: usize, reuse: bool) -> BoxedResult
     socket.set_nonblocking(true).map_err(from_io_err)?;
 
     let poller = Poller::new().map_err(from_io_err)?;
-    poller
-        .add(&socket, Event::readable(socket_id))
-        .map_err(from_io_err)?;
-    let socket = StdSocket {
+    unsafe {
+        poller
+            .add(&socket, Event::readable(socket_id))
+            .map_err(from_io_err)?;
+    }
+
+    let events = Events::with_capacity(NonZeroUsize::new(capacity).expect("not empty capacity"));
+    let notified = HashSet::with_capacity(capacity);
+
+    let socket = UdpUnboundSocket {
         socket,
         poller,
         socket_id,
-        events: Vec::new(),
+        events,
+        notified,
     };
     Ok(socket)
 }
@@ -101,10 +112,12 @@ pub fn create_bound_socket(
     socket.set_nonblocking(true).map_err(from_io_err)?;
     socket.connect(endpoint).map_err(from_io_err)?;
     let poller = Poller::new().map_err(from_io_err)?;
-    poller
-        .add(&socket, Event::readable(socket_id))
-        .map_err(from_io_err)?;
-    let socket = StdBoundSocket {
+    unsafe {
+        poller
+            .add(&socket, Event::readable(socket_id))
+            .map_err(from_io_err)?;
+    }
+    let socket = UdpBoundSocket {
         socket,
         poller,
         socket_id,
@@ -112,24 +125,28 @@ pub fn create_bound_socket(
     Ok(socket)
 }
 
-pub struct StdSocket {
+pub struct UdpUnboundSocket {
     socket: UdpSocket,
     poller: Poller,
     socket_id: usize,
     // TODO alloc in stack
-    events: Vec<Event>,
+    events: Events,
+    notified: HashSet<usize>,
+    //
 }
 
-impl Socket for StdSocket {
+impl Socket for UdpUnboundSocket {
     fn recv_from(
         &mut self,
         buff: &mut DataBuffer,
         wait_for: Option<Duration>,
     ) -> io::Result<(usize, SocketAddr)> {
+        self.events.clear();
         self.modify_interest(self.socket_id(), self.as_raw_fd())?;
         self.poller
             .wait(&mut self.events, wait_for.or_else(|| Duration::ZERO.into()))
             .map_err(from_io_err)?;
+        self.notified.extend(self.events.iter().map(|e| e.key));
 
         #[cfg(feature = "std")]
         let result = self.socket.recv_from(buff);
@@ -168,47 +185,36 @@ impl Socket for StdSocket {
     }
 
     fn notified(&self, socket: &impl ToSocketId) -> bool {
-        self.events.iter().any(|e| e.key == socket.socket_id())
+        self.notified.contains(&socket.socket_id())
     }
 
     fn add_interest(&self, socket: &impl ToSocketId) -> io::Result<()> {
-        self.poller
-            .add(
-                RawCInt(socket.as_raw_fd()),
-                Event::readable(socket.socket_id()),
-            )
-            .map_err(from_io_err)
+        unsafe {
+            self.poller
+                .add(socket.as_raw_fd(), Event::readable(socket.socket_id()))
+                .map_err(from_io_err)
+        }
     }
 
     fn modify_interest(&mut self, socket_id: usize, raw_fd: SocketRawFd) -> io::Result<()> {
-        self.events.retain(|e| e.key != socket_id);
+        self.notified.remove(&socket_id);
         self.poller
-            .modify(RawCInt(raw_fd), Event::readable(socket_id))
+            .modify(
+                #[cfg(target_family = "windows")]
+                unsafe {
+                    std::os::windows::io::BorrowedSocket::borrow_raw(raw_fd)
+                },
+                #[cfg(not(target_family = "windows"))]
+                unsafe {
+                    std::os::fd::BorrowedFd::borrow_raw(raw_fd.as_raw_fd())
+                },
+                Event::readable(socket_id),
+            )
             .map_err(from_io_err)
     }
 }
 
-#[cfg(target_family = "windows")]
-struct RawCInt(u64);
-
-#[cfg(target_family = "windows")]
-impl Source for RawCInt {
-    fn raw(&self) -> RawSocket {
-        self.0 as RawSocket
-    }
-}
-
-#[cfg(not(target_family = "windows"))]
-struct RawCInt(i32);
-
-#[cfg(not(target_family = "windows"))]
-impl Source for RawCInt {
-    fn raw(&self) -> RawFd {
-        self.0 as RawFd
-    }
-}
-
-impl ToSocketId for StdSocket {
+impl ToSocketId for UdpUnboundSocket {
     fn as_raw_fd(&self) -> SocketRawFd {
         #[cfg(target_family = "windows")]
         return self.socket.as_raw_socket();
@@ -221,20 +227,20 @@ impl ToSocketId for StdSocket {
     }
 }
 
-pub struct StdBoundSocket {
+pub struct UdpBoundSocket {
     socket: UdpSocket,
     poller: Poller,
     socket_id: usize,
 }
 
-impl BoundSocket for StdBoundSocket {
+impl BoundSocket for UdpBoundSocket {
     fn recv(&self, buff: &mut DataBuffer, wait_for: Option<Duration>) -> io::Result<usize> {
         if let Some(d) = wait_for {
             self.poller
                 .modify(&self.socket, Event::readable(self.socket_id))
                 .map_err(from_io_err)?;
             // TODO alloc in stack
-            let mut events = Vec::new();
+            let mut events = Events::with_capacity(NonZeroUsize::new(1).unwrap());
             self.poller
                 .wait(&mut events, d.into())
                 .map_err(from_io_err)?;
@@ -257,7 +263,7 @@ impl BoundSocket for StdBoundSocket {
     }
 }
 
-impl ToSocketId for StdBoundSocket {
+impl ToSocketId for UdpBoundSocket {
     fn as_raw_fd(&self) -> SocketRawFd {
         #[cfg(target_family = "windows")]
         return self.socket.as_raw_socket();
@@ -304,8 +310,8 @@ mod tests {
 
     #[test]
     fn test_receive_wait_for() {
-        let mut socket_r = create_socket("127.0.0.1:9000", 1, false).unwrap();
-        let socket_s = create_socket("127.0.0.1:0", 0, false).unwrap();
+        let mut socket_r = create_socket("127.0.0.1:9000", 1, false, 1).unwrap();
+        let socket_s = create_socket("127.0.0.1:0", 0, false, 1).unwrap();
         let mut buf = DataBuffer::new();
         #[allow(unused_must_use)]
         {

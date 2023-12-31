@@ -24,9 +24,9 @@ use notify::Watcher;
 use tftp::types::FilePath;
 
 use crate::blocking_reader::create_delayed_reader;
-use crate::cli::BinError;
-use crate::cli::BinResult;
 use crate::cli::ClientCliConfig;
+use crate::error::BinError;
+use crate::error::BinResult;
 use crate::io::create_reader;
 use crate::sender::start_send;
 

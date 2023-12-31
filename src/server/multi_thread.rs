@@ -77,7 +77,7 @@ where
     S: Socket + ToSocketId,
     B: BoundSocket + ToSocketId + Send + 'static,
     Rng: CryptoRng + RngCore + Copy + Send + 'static,
-    CreateSocket: Fn(&str, usize, bool) -> BoxedResult<S>,
+    CreateSocket: Fn(&str, usize, bool, usize) -> BoxedResult<S>,
     CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
     CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
     W: Write + Send + 'static,
@@ -103,7 +103,7 @@ where
         &config.listen.port()
     );
     let mut client_socket_id = NonZeroU32::new(1).expect("Socket id must be more than zero");
-    let mut socket = create_socket(&listen, 0, true)?;
+    let mut socket = create_socket(&listen, 0, true, config.max_connections as usize)?;
 
     let mut handles = Handles::new();
 

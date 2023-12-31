@@ -332,14 +332,14 @@ test_hpa_tftp_server() {
 }
 
 test_bin() {
-    cargo test -p tftp-binary
-    cargo test -p tftp-binary --no-default-features --features std
-    cargo test -p tftp-binary --no-default-features --features alloc
-    cargo test -p tftp-binary --no-default-features --features encryption
-    cargo test -p tftp-binary --no-default-features --features std,alloc
-    cargo test -p tftp-binary --no-default-features --features alloc,encryption
-    cargo test -p tftp-binary --no-default-features --features std,encryption
-    cargo test -p tftp-binary --no-default-features
+    cargo test -p tftp-std-binary
+    cargo test -p tftp-std-binary --no-default-features --features std
+    cargo test -p tftp-std-binary --no-default-features --features alloc
+    cargo test -p tftp-std-binary --no-default-features --features encryption
+    cargo test -p tftp-std-binary --no-default-features --features std,alloc
+    cargo test -p tftp-std-binary --no-default-features --features alloc,encryption
+    cargo test -p tftp-std-binary --no-default-features --features std,encryption
+    cargo test -p tftp-std-binary --no-default-features
 }
 
 
@@ -356,16 +356,16 @@ test_lib() {
 }
 
 build_debug_targets() {
-    cargo build -p tftp-binary
+    cargo build -p tftp-std-binary
     cp ./target/debug/tftp ./target/tftp
 
-    cargo build -p tftp-binary --no-default-features --features encryption,seek
+    cargo build -p tftp-std-binary --no-default-features --features encryption,seek
     cp ./target/debug/tftp ./target/tftp-stack-encryption
 
-    cargo build -p tftp-binary --no-default-features --features alloc,seek
+    cargo build -p tftp-std-binary --no-default-features --features alloc,seek
     cp ./target/debug/tftp ./target/tftp-alloc
 
-    cargo build -p tftp-binary --no-default-features --features seek
+    cargo build -p tftp-std-binary --no-default-features --features seek
     cp ./target/debug/tftp ./target/tftp-stack
 }
 

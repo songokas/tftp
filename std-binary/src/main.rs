@@ -16,6 +16,8 @@ mod encryption_io {
     }
 }
 
+mod config;
+mod error;
 mod io;
 mod macros;
 mod receiver;
@@ -36,9 +38,9 @@ use sync::start_sync;
 use tftp::server::server;
 
 use crate::cli::Args;
-use crate::cli::BinError;
-use crate::cli::BinResult;
 use crate::cli::Commands;
+use crate::error::BinError;
+use crate::error::BinResult;
 use crate::io::create_reader;
 use crate::io::create_server_reader;
 use crate::io::create_server_writer;

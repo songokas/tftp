@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# complete remote directory name for receiver
+
 # TODO currently this script relies on the endpoint directory being the last arguments
 
 COMP_WORDBREAKS=" "

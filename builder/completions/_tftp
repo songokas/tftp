@@ -1,0 +1,237 @@
+#compdef tftp
+
+autoload -U is-at-least
+
+_tftp() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" \
+'-v+[]:VERBOSITY: ' \
+'--verbosity=[]:VERBOSITY: ' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_tftp_commands" \
+"*::: :->tftp" \
+&& ret=0
+    case $state in
+    (tftp)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:tftp-command-$line[1]:"
+        case $line[1] in
+            (send)
+_arguments "${_arguments_options[@]}" \
+'-l+[]:LISTEN:_hosts' \
+'--listen=[]:LISTEN:_hosts' \
+'--request-timeout=[Request time out in milliseconds]:REQUEST_TIMEOUT: ' \
+'--block-size=[]:BLOCK_SIZE: ' \
+'--window-size=[]:WINDOW_SIZE: ' \
+'--retry-timeout=[Resend packet after timeout in ms]:RETRY_TIMEOUT: ' \
+'--max-file-size=[Max file size to receive]:MAX_FILE_SIZE: ' \
+'--encryption-level=[Available values protocol, data, optional-data, optional-protocol, none]:ENCRYPTION_LEVEL: ' \
+'--private-key=[Base64 encoded private key to use\: value or FILE]:PRIVATE_KEY: ' \
+'--server-public-key=[Base64 encoded remote server public key to use for encryption]:SERVER_PUBLIC_KEY: ' \
+'--known-hosts=[Path to a known hosts file where server public key will be retrieved. Format\: endpoint base64(public key) per line]:KNOWN_HOSTS:_files' \
+'--encryption-key=[Encrypt/decrypt file when sending/receiving. Key should be 32 chars long]:ENCRYPTION_KEY: ' \
+'-r+[]:REMOTE_PATH: ' \
+'--remote-path=[]:REMOTE_PATH: ' \
+'--allow-server-port-change[]' \
+'--prefer-seek[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':endpoint:_hosts' \
+':local_path:_files' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" \
+'-l+[]:LISTEN:_hosts' \
+'--listen=[]:LISTEN:_hosts' \
+'--request-timeout=[Request time out in milliseconds]:REQUEST_TIMEOUT: ' \
+'--block-size=[]:BLOCK_SIZE: ' \
+'--window-size=[]:WINDOW_SIZE: ' \
+'--retry-timeout=[Resend packet after timeout in ms]:RETRY_TIMEOUT: ' \
+'--max-file-size=[Max file size to receive]:MAX_FILE_SIZE: ' \
+'--encryption-level=[Available values protocol, data, optional-data, optional-protocol, none]:ENCRYPTION_LEVEL: ' \
+'--private-key=[Base64 encoded private key to use\: value or FILE]:PRIVATE_KEY: ' \
+'--server-public-key=[Base64 encoded remote server public key to use for encryption]:SERVER_PUBLIC_KEY: ' \
+'--known-hosts=[Path to a known hosts file where server public key will be retrieved. Format\: endpoint base64(public key) per line]:KNOWN_HOSTS:_files' \
+'--encryption-key=[Encrypt/decrypt file when sending/receiving. Key should be 32 chars long]:ENCRYPTION_KEY: ' \
+'--block-duration=[How long to block before reading the file in milliseconds (only for --start-on-create)]:BLOCK_DURATION: ' \
+'--allow-server-port-change[]' \
+'--start-on-create[Start sending the file once its created. Default is to send once file is written]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':endpoint:_hosts' \
+'::dir_path:_files -/' \
+&& ret=0
+;;
+(receive)
+_arguments "${_arguments_options[@]}" \
+'-l+[]:LISTEN:_hosts' \
+'--listen=[]:LISTEN:_hosts' \
+'--request-timeout=[Request time out in milliseconds]:REQUEST_TIMEOUT: ' \
+'--block-size=[]:BLOCK_SIZE: ' \
+'--window-size=[]:WINDOW_SIZE: ' \
+'--retry-timeout=[Resend packet after timeout in ms]:RETRY_TIMEOUT: ' \
+'--max-file-size=[Max file size to receive]:MAX_FILE_SIZE: ' \
+'--encryption-level=[Available values protocol, data, optional-data, optional-protocol, none]:ENCRYPTION_LEVEL: ' \
+'--private-key=[Base64 encoded private key to use\: value or FILE]:PRIVATE_KEY: ' \
+'--server-public-key=[Base64 encoded remote server public key to use for encryption]:SERVER_PUBLIC_KEY: ' \
+'--known-hosts=[Path to a known hosts file where server public key will be retrieved. Format\: endpoint base64(public key) per line]:KNOWN_HOSTS:_files' \
+'--encryption-key=[Encrypt/decrypt file when sending/receiving. Key should be 32 chars long]:ENCRYPTION_KEY: ' \
+'--local-path=[]:LOCAL_PATH:_files' \
+'--allow-server-port-change[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':endpoint:_hosts' \
+':remote_path:' \
+&& ret=0
+;;
+(server)
+_arguments "${_arguments_options[@]}" \
+'--max-connections=[]:MAX_CONNECTIONS: ' \
+'--max-window-size=[]:MAX_WINDOW_SIZE: ' \
+'--request-timeout=[Request time out in milliseconds]:REQUEST_TIMEOUT: ' \
+'--max-file-size=[Max file size to receive in bytes]:MAX_FILE_SIZE: ' \
+'--max-block-size=[]:MAX_BLOCK_SIZE: ' \
+'--authorized-keys=[Path to a file with authorized public keys. Each line contains base64(public key)]:AUTHORIZED_KEYS:_files' \
+'--private-key=[Base64 encoded private key to use\: value or FILE]:PRIVATE_KEY: ' \
+'--required-full-encryption=[Require that connections be fully encrypted. This is enabled if authorized keys are provided]:REQUIRED_FULL_ENCRYPTION:(true false)' \
+'--directory-list=[Retrieving specified file provides directory list]:DIRECTORY_LIST: ' \
+'--max-directory-depth=[Maximum directory depth]:MAX_DIRECTORY_DEPTH: ' \
+'-a[]' \
+'--allow-overwrite[]' \
+'--require-server-port-change[]' \
+'--prefer-seek[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':listen:_hosts' \
+':directory:_files -/' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" \
+":: :_tftp__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:tftp-help-command-$line[1]:"
+        case $line[1] in
+            (send)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(receive)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(server)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_tftp_commands] )) ||
+_tftp_commands() {
+    local commands; commands=(
+'send:' \
+'sync:' \
+'receive:' \
+'server:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'tftp commands' commands "$@"
+}
+(( $+functions[_tftp__help_commands] )) ||
+_tftp__help_commands() {
+    local commands; commands=(
+'send:' \
+'sync:' \
+'receive:' \
+'server:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'tftp help commands' commands "$@"
+}
+(( $+functions[_tftp__help__help_commands] )) ||
+_tftp__help__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp help help commands' commands "$@"
+}
+(( $+functions[_tftp__help__receive_commands] )) ||
+_tftp__help__receive_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp help receive commands' commands "$@"
+}
+(( $+functions[_tftp__receive_commands] )) ||
+_tftp__receive_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp receive commands' commands "$@"
+}
+(( $+functions[_tftp__help__send_commands] )) ||
+_tftp__help__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp help send commands' commands "$@"
+}
+(( $+functions[_tftp__send_commands] )) ||
+_tftp__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp send commands' commands "$@"
+}
+(( $+functions[_tftp__help__server_commands] )) ||
+_tftp__help__server_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp help server commands' commands "$@"
+}
+(( $+functions[_tftp__server_commands] )) ||
+_tftp__server_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp server commands' commands "$@"
+}
+(( $+functions[_tftp__help__sync_commands] )) ||
+_tftp__help__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp help sync commands' commands "$@"
+}
+(( $+functions[_tftp__sync_commands] )) ||
+_tftp__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'tftp sync commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_tftp" ]; then
+    _tftp "$@"
+else
+    compdef _tftp tftp
+fi

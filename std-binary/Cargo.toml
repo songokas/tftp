@@ -1,6 +1,6 @@
 [package]
-name = "tftp-binary"
-version = "0.5.0"
+name = "tftp-std-binary"
+version = "0.5.1"
 edition = "2021"
 
 authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
@@ -21,7 +21,8 @@ tftp = { path = "..", default-features = false }
 rand = { version = "0.8", optional = false, default-features = false, features = [
     "getrandom",
 ] }
-polling = "2"
+# alloc requirement for events
+polling = "3"
 socket2 = { version = "0.5", features = ["all"] }
 notify = { version = "6", optional = true }
 
@@ -30,6 +31,7 @@ rand = "0.8"
 
 [features]
 default = ["std", "alloc", "encryption", "multi_thread", "seek", "sync"]
+# no std is still using std dependency for filesystem, sockets, std::io
 std = ["tftp/std"]
 alloc = ["tftp/alloc"]
 encryption = ["tftp/encryption"]
@@ -43,6 +45,10 @@ path = "src/main.rs"
 
 [build-dependencies]
 cargo-deb = "1"
+# uncomment for autocomplete generation and remove build.rs.autocomplete
+# clap = { version = "4", features = ["derive"] }
+# clap_complete = "4"
+# tftp = { path = "..", default-features = false }
 
 [package.metadata.deb]
 name = "tftp"

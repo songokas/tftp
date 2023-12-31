@@ -2,6 +2,16 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.5.1] - 2023-12-31
+
+### Added
+
+- Autocomplete scripts
+
+### Changed
+
+- Upgrade polling to latest version
+
 ## [0.5.0] - 2023-12-28
 
 ### Added

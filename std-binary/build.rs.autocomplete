@@ -1,0 +1,24 @@
+use clap::CommandFactory;
+use clap::ValueEnum;
+use clap_complete::generate_to;
+use clap_complete::Shell;
+use std::env;
+use std::io::Error;
+
+include!("src/cli.rs");
+
+fn main() -> Result<(), Error> {
+    let outdir = match env::var_os("COMPLETION_DIR") {
+        None => return Ok(()),
+        Some(outdir) => outdir,
+    };
+
+    let mut cmd = Args::command();
+    for &shell in Shell::value_variants() {
+        let path = generate_to(shell, &mut cmd, "tftp", outdir.clone())?;
+
+        println!("cargo:warning=completion file is generated: {path:?}");
+    }
+
+    Ok(())
+}

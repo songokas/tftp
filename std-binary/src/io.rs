@@ -99,7 +99,11 @@ pub fn create_server_reader(
             return if list_dir {
                 list_directory(&d, &p).map(|(s, l)| (s, ReaderCreator::from_list(l)))
             } else {
-                create_reader(&std_into_path(p)).map(|(s, f)| (s, ReaderCreator::from_file(f)))
+                let file_path = p
+                    .to_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or(FileError::InvalidFileName)?;
+                create_reader(&file_path).map(|(s, f)| (s, ReaderCreator::from_file(f)))
             };
         }
     }
@@ -163,14 +167,6 @@ pub fn create_buff_reader(path: &str) -> io::Result<BufReader<StdFile>> {
     };
     let file = BufReader::new(file);
     Ok(file)
-}
-
-#[allow(unused_must_use)]
-pub fn std_into_path(path: PathBuf) -> FilePath {
-    let mut f = FilePath::new();
-    // TODO alloc in stack
-    f.push_str(&path.to_string_lossy());
-    f
 }
 
 #[allow(dead_code)]

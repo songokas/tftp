@@ -242,45 +242,45 @@ produce_info() {
     local release_bin="./target/release/tftp"
     local debug_bin="./target/debug/tftp"
 
-    cargo build -p tftp-binary
+    cargo build -p tftp-std-binary
     server_flamegraph $debug_bin $debug_bin
     send_flamegraph $debug_bin $debug_bin
     receive_flamegraph $debug_bin $debug_bin
 
-    cargo build -p tftp-binary --release
+    cargo build -p tftp-std-binary --release
 
     send_dump $release_bin $release_bin "_delayed_encryption"
     receive_dump $release_bin $release_bin "_delayed_encryption"
     send_receive_full_encryption_dump $release_bin $release_bin
     measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption"
 
-    cargo build -p tftp-binary --no-default-features --features alloc
+    cargo build -p tftp-std-binary --no-default-features --features alloc
 
     server_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
     send_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
     receive_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
 
-    cargo build -p tftp-binary --no-default-features --features alloc --release
+    cargo build -p tftp-std-binary --no-default-features --features alloc --release
 
     measure_endpoint_window_size $release_bin servas:69 "_no_encryption_alloc"
 
-    cargo build -p tftp-binary --no-default-features --features encryption
+    cargo build -p tftp-std-binary --no-default-features --features encryption
 
     server_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
     send_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
     receive_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
 
-    cargo build -p tftp-binary --no-default-features --release --features encryption
+    cargo build -p tftp-std-binary --no-default-features --release --features encryption
 
     measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption_stack"
 
-    cargo build -p tftp-binary --no-default-features
+    cargo build -p tftp-std-binary --no-default-features
 
     server_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
     send_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
     receive_flamegraph $debug_bin $debug_bin "_no_encryption_stack"
 
-    cargo build -p tftp-binary --no-default-features --release
+    cargo build -p tftp-std-binary --no-default-features --release
 
     send_dump $release_bin $release_bin "_no_encryption_stack"
     receive_dump $release_bin $release_bin "_no_encryption_stack"

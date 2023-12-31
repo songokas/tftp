@@ -12,37 +12,37 @@ BIN_WINDOWS_TARGETS=(x86_64-pc-windows-gnu)
 build() {
     mkdir -p dist
     for target in ${TARGETS[@]}; do
-        cargo build -p tftp-binary --target "$target" "--$RELEASE"
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE"
         cp target/$target/release/tftp dist/
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features std
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features alloc
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features std
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features alloc
         cp target/$target/release/tftp dist/tftp-alloc
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features alloc,encryption,seek
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features std,encryption
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features encryption,seek
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features alloc,encryption,seek
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features std,encryption
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features encryption,seek
         cp target/$target/release/tftp dist/tftp-stack-encryption
-        cargo build -p tftp-binary --target "$target" "--$RELEASE" --no-default-features --features seek
+        cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features seek
         cp target/$target/release/tftp dist/tftp-stack
     done
 
-    # cargo build -p tftp-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
+    # cargo build -p tftp-std-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
     # cp target/x86_64-unknown-linux-musl/release/tftp dist/tftp-static
 }
 
 release_bins() {
     for target in ${BIN_RELEASE_TARGETS[@]}; do
 
-        cross build -p tftp-binary --target "$target" --release --no-default-features --features encryption,seek
+        cross build -p tftp-std-binary --target "$target" --release --no-default-features --features encryption,seek
         cp target/$target/release/tftp dist/tftp-stack-$target
         # deb depends on this target
-        cross build -p tftp-binary --target "$target" --release
+        cross build -p tftp-std-binary --target "$target" --release
         cp target/$target/release/tftp dist/tftp-$target
     done
 
     for target in ${BIN_WINDOWS_TARGETS[@]}; do
-        cross build -p tftp-binary --target "$target" --release
+        cross build -p tftp-std-binary --target "$target" --release
         cp target/$target/release/tftp.exe dist/tftp-$target.exe
-        cross build -p tftp-binary --target "$target" --release --no-default-features --features encryption,seek
+        cross build -p tftp-std-binary --target "$target" --release --no-default-features --features encryption,seek
         cp target/$target/release/tftp.exe dist/tftp-stack-$target.exe
     done
 }
@@ -51,7 +51,7 @@ release_dist() {
     rm -f ./dist/*
     release_bins
 
-    # cargo build -p tftp-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
+    # cargo build -p tftp-std-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
     # cp target/x86_64-unknown-linux-musl/release/tftp dist/tftp-static
 
     release_deb
@@ -63,10 +63,10 @@ release_deb() {
         docker build -t buster/cargo-deb builder
     fi
     for target in ${DEB_RELEASE_TARGETS[@]}; do
-        docker run --mount type=bind,source="$(pwd)",target=/volume --rm buster/cargo-deb -p tftp-binary --target $target --no-build --no-strip
+        docker run --mount type=bind,source="$(pwd)",target=/volume --rm buster/cargo-deb -p tftp-std-binary --target $target --no-build --no-strip
         cp target/$target/debian/tftp*.deb dist/
     done
-    # cargo deb -p tftp-binary --target x86_64-unknown-linux-musl
+    # cargo deb -p tftp-std-binary --target x86_64-unknown-linux-musl
     # cp target/x86_64-unknown-linux-musl/debian/tftp_*_amd64.deb dist/
 }
 
