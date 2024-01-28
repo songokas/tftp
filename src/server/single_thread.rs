@@ -139,8 +139,6 @@ where
     let mut send_buffer = create_max_buffer(config.max_block_size);
 
     loop {
-        info!("a size {}", send_buffer.len());
-
         resize_buffer(&mut receive_buffer, receive_max_buffer_size);
 
         if timeout_duration.elapsed() > execute_timeout_client {
