@@ -1,4 +1,6 @@
-use crate::types::DataBuffer;
+use core::cmp::max;
+
+use crate::{config::{DATA_PACKET_HEADER_SIZE, MAX_BUFFER_SIZE, MIN_BUFFER_SIZE}, types::{DataBlock, DataBuffer}};
 
 pub trait SliceMutExt {
     fn write_bytes(self, data: impl AsRef<[u8]>, from_index: impl Into<usize>) -> Option<usize>;
@@ -87,9 +89,42 @@ pub fn resize_buffer(buffer: &mut DataBuffer, max_buffer_size: impl Into<usize>)
 }
 
 pub fn new_buffer(max_buffer_size: impl Into<usize>) -> DataBuffer {
+    let size = max_buffer_size.into();
+    #[cfg(feature = "alloc")]
+    let mut d = DataBuffer::with_capacity(size);
+    #[cfg(not(feature = "alloc"))]
     let mut d = DataBuffer::new();
-    resize_buffer(&mut d, max_buffer_size);
+    resize_buffer(&mut d, size);
     d
+}
+
+pub fn resize_data_block(buffer: &mut DataBlock, max_buffer_size: impl Into<usize>) {
+    #[cfg(feature = "alloc")]
+    buffer.resize(max_buffer_size.into(), 0);
+    // TODO heapless vector resizing is super slow
+    #[cfg(not(feature = "alloc"))]
+    unsafe {
+        buffer.set_len(max_buffer_size.into())
+    };
+}
+
+pub fn new_data_block(block_size: impl Into<usize>) -> DataBlock {
+    let size = block_size.into();
+    #[cfg(feature = "alloc")]
+    let mut d = DataBlock::with_capacity(size);
+    #[cfg(not(feature = "alloc"))]
+    let mut d = DataBlock::new();
+    resize_data_block(&mut d, size);
+    d
+}
+
+pub fn create_max_buffer(max_block_size: u16) -> DataBuffer {
+    let max_buffer_size = max(
+        max_block_size + DATA_PACKET_HEADER_SIZE as u16,
+        MIN_BUFFER_SIZE,
+    );
+    assert!(max_buffer_size <= MAX_BUFFER_SIZE);
+    new_buffer(max_buffer_size)
 }
 
 #[cfg(test)]

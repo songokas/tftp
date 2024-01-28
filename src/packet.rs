@@ -6,9 +6,11 @@ use core::mem::size_of_val;
 use core::str::from_utf8;
 use core::str::FromStr;
 
+use crate::buffer::SliceMutExt;
 use crate::error::PacketError;
 use crate::error::PacketResult;
 use crate::map::Map;
+use crate::types::DataBuffer;
 use crate::types::DefaultString;
 use crate::types::ExtensionValue;
 use crate::types::FilePath;
@@ -24,6 +26,7 @@ pub trait ByteConverter<'a> {
     where
         Self: Sized;
     fn to_bytes(self) -> PacketBlock;
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize>;
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +66,35 @@ impl<'a> ByteConverter<'a> for Packet<'a> {
             PacketType::Error => Packet::Error(ErrorPacket::from_bytes(remaining)?),
             PacketType::OptionalAck => Packet::OptionalAck(OptionalAck::from_bytes(remaining)?),
         })
+    }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        match self {
+            Packet::Read(p) => {
+                let size = buffer.write_bytes(PacketType::Read.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Write(p) => {
+                let size = buffer.write_bytes(PacketType::Write.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Data(p) => {
+                let size = buffer.write_bytes(PacketType::Data.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Ack(p) => {
+                let size = buffer.write_bytes(PacketType::Ack.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Error(p) => {
+                let size = buffer.write_bytes(PacketType::Error.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::OptionalAck(p) => {
+                let size = buffer.write_bytes(PacketType::OptionalAck.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+        }
     }
 
     fn to_bytes(self) -> PacketBlock {
@@ -290,6 +322,17 @@ impl<'a> ByteConverter<'a> for OptionalAck {
                 v
             })
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let mut size = 0;
+        for (key, value) in self.extensions {
+            size = buffer.write_bytes(key.as_str().as_bytes(), size)?;
+            size = buffer.write_bytes([0], size)?;
+            size = buffer.write_bytes(value.as_bytes(), size)?;
+            size = buffer.write_bytes([0], size)?;
+        }
+        Some(size)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -326,6 +369,20 @@ impl<'a> ByteConverter<'a> for RequestPacket {
             mode,
             extensions,
         })
+    }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let optional = OptionalAck {
+            extensions: self.extensions,
+        };
+
+        let mut size = buffer.write_bytes(self.file_name.as_bytes(), 0_usize)?;
+        size = buffer.write_bytes([0], size)?;
+        size = buffer.write_bytes(self.mode.as_str().as_bytes(), size)?;
+        size = buffer.write_bytes([0], size)?;
+        optional
+            .to_buffer(buffer.get_mut(size..)?)
+            .map(|s| size + s)
     }
 
     fn to_bytes(self) -> PacketBlock {
@@ -368,6 +425,12 @@ impl<'a> ByteConverter<'a> for DataPacket<'a> {
             .chain(self.data.iter().copied())
             .collect()
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let mut size = buffer.write_bytes(self.block.to_be_bytes(), 0_usize)?;
+        size = buffer.write_bytes(self.data, size)?;
+        Some(size)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -384,6 +447,10 @@ impl<'a> ByteConverter<'a> for AckPacket {
 
     fn to_bytes(self) -> PacketBlock {
         self.block.to_be_bytes().into_iter().collect()
+    }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        buffer.write_bytes(self.block.to_be_bytes(), 0_usize)
     }
 }
 
@@ -469,6 +536,22 @@ impl<'a> ByteConverter<'a> for ErrorPacket {
             .chain([0])
             .collect()
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let mut size = buffer.write_bytes((self.code as u16).to_be_bytes(), 0_usize)?;
+        size = buffer.write_bytes(self.message.as_bytes(), size)?;
+        size = buffer.write_bytes([0], size)?;
+        Some(size)
+    }
+}
+
+pub fn prepend_data_header(block: u16, buffer: &mut DataBuffer) {
+    let size = buffer
+        .write_bytes(PacketType::Data.to_bytes(), 0_usize)
+        .expect("packet buffer for data packet");
+    buffer
+        .write_bytes(block.to_be_bytes(), size)
+        .expect("packet buffer for data packet");
 }
 
 fn try_from(bytes: &[u8]) -> Result<u16, PacketError> {

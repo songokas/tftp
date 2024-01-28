@@ -1,6 +1,8 @@
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
 use crate::block_mapper::BlockMapper;
+use crate::buffer::new_data_block;
+use crate::buffer::SliceMutExt;
 use crate::error::StorageError;
 use crate::std_compat::io::Read;
 use crate::types::DataBlock;
@@ -11,7 +13,8 @@ pub struct SingleBlockReader<R> {
     block_mapper: BlockMapper,
     block_read: u64,
     block_size: u16,
-    block: Option<DataBlock>,
+    last_block_size: Option<u16>,
+    buffer: DataBlock,
     finished: bool,
 }
 
@@ -22,7 +25,8 @@ impl<R> SingleBlockReader<R> {
             block_mapper: BlockMapper::new(),
             block_read: 0,
             block_size,
-            block: None,
+            last_block_size: None,
+            buffer: new_data_block(block_size),
             finished: false,
         }
     }
@@ -32,15 +36,23 @@ impl<R> BlockReader for SingleBlockReader<R>
 where
     R: Read,
 {
-    fn next(&mut self, retry: bool) -> Result<Option<Block>, StorageError> {
+    fn next(&mut self, buffer: &mut [u8], retry: bool) -> Result<Option<Block>, StorageError> {
         if self.is_finished() {
             return Ok(None);
         }
-        if let Some(buffer) = &self.block {
+
+        if self.last_block_size.is_some() {
             return Ok(if retry {
+                buffer.write_bytes(&self.buffer, 0_usize).ok_or({
+                    StorageError::InvalidBuffer {
+                        actual: buffer.len(),
+                        expected: self.buffer.len(),
+                    }
+                })?;
                 Block {
                     block: self.block_mapper.block(self.block_read),
-                    data: buffer.clone(),
+                    index: self.block_read,
+                    size: self.buffer.len(),
                     retry: true,
                 }
                 .into()
@@ -48,29 +60,27 @@ where
                 None
             });
         }
-        let mut buffer = {
-            let mut d = DataBlock::new();
-            #[cfg(feature = "alloc")]
-            d.resize(self.block_size as usize, 0);
-            // TODO heapless vector resizing is super slow
-            #[cfg(not(feature = "alloc"))]
-            unsafe {
-                d.set_len(self.block_size as usize)
-            };
-            d
-        };
-        let read = self.reader.read(&mut buffer)?;
-        buffer.truncate(read);
+
+        let read = self.reader.read(&mut self.buffer)?;
+        self.buffer.truncate(read);
+
+        buffer
+            .write_bytes(&self.buffer, 0_usize)
+            .ok_or(StorageError::InvalidBuffer {
+                actual: buffer.len(),
+                expected: self.buffer.len(),
+            })?;
 
         self.block_read += 1;
 
-        self.block = buffer.clone().into();
+        self.last_block_size = (read as u16).into();
         if read < self.block_size as usize {
             self.finished = true;
         }
         Ok(Block {
             block: self.block_mapper.block(self.block_read),
-            data: buffer,
+            index: self.block_read,
+            size: self.buffer.len(),
             retry: false,
         }
         .into())
@@ -80,11 +90,11 @@ where
         if self.block_read != self.block_mapper.index(block) {
             return 0;
         }
-        self.block.take().map(|b| b.len()).unwrap_or(0)
+        self.last_block_size.take().unwrap_or(0) as usize
     }
 
     fn is_finished(&self) -> bool {
-        self.block.is_none() && self.finished
+        self.last_block_size.is_none() && self.finished
     }
 }
 
@@ -100,21 +110,21 @@ mod tests {
     fn test_next_read_and_repeat() {
         let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         let mut reader = SingleBlockReader::new(cursor, 2);
-
-        let block = reader.next(false).unwrap().unwrap();
+        let mut buffer = [0_u8; 2];
+        let block = reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(block.block, 1);
-        assert_eq!(&block.data, &[1, 2]);
+        assert_eq!(&buffer, &[1, 2]);
         assert!(!reader.is_finished());
 
-        let result = reader.next(false).unwrap();
+        let result = reader.next(&mut buffer, false).unwrap();
         assert!(result.is_none(), "{result:?}");
 
-        let block = reader.next(true).unwrap().unwrap();
+        let block = reader.next(&mut buffer, true).unwrap().unwrap();
         assert_eq!(block.block, 1);
-        assert_eq!(&block.data, &[1, 2]);
+        assert_eq!(&buffer, &[1, 2]);
         assert!(!reader.is_finished());
 
-        let result = reader.next(false).unwrap();
+        let result = reader.next(&mut buffer, false).unwrap();
         assert!(result.is_none(), "{result:?}");
     }
 
@@ -122,21 +132,21 @@ mod tests {
     fn test_read_until_finished() {
         let cursor = Cursor::new(vec![1, 2, 3]);
         let mut reader = SingleBlockReader::new(cursor, 2);
-
-        reader.next(false).unwrap().unwrap();
+        let mut buffer = [0_u8; 100];
+        reader.next(&mut buffer, false).unwrap().unwrap();
         assert!(!reader.is_finished());
 
         assert_eq!(2, reader.free_block(1));
 
-        reader.next(false).unwrap().unwrap();
+        reader.next(&mut buffer, false).unwrap().unwrap();
         assert!(!reader.is_finished());
 
         reader.free_block(2);
 
-        let result = reader.next(false).unwrap();
+        let result = reader.next(&mut buffer, false).unwrap();
         assert!(result.is_none(), "{result:?}");
 
-        let result = reader.next(true).unwrap();
+        let result = reader.next(&mut buffer, true).unwrap();
         assert!(result.is_none(), "{result:?}");
 
         assert!(reader.is_finished());
@@ -146,13 +156,13 @@ mod tests {
     fn test_free_block_invalid() {
         let cursor = Cursor::new(vec![1, 2, 3]);
         let mut reader = SingleBlockReader::new(cursor, 2);
-
+        let mut buffer = [0_u8; 100];
         assert_eq!(0, reader.free_block(1));
-        reader.next(false).unwrap().unwrap();
+        reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(0, reader.free_block(2));
         assert_eq!(2, reader.free_block(1));
 
-        reader.next(false).unwrap().unwrap();
+        reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(0, reader.free_block(10));
         assert_eq!(0, reader.free_block(0));
 
@@ -165,14 +175,14 @@ mod tests {
     fn test_next_file_size_matches_block_size() {
         let cursor = Cursor::new(vec![1, 2, 3, 4]);
         let mut reader = SingleBlockReader::new(cursor, 2);
-
-        reader.next(false).unwrap().unwrap();
+        let mut buffer = [0_u8; 100];
+        reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(2, reader.free_block(1));
-        reader.next(false).unwrap().unwrap();
+        reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(2, reader.free_block(2));
-        reader.next(false).unwrap().unwrap();
+        reader.next(&mut buffer, false).unwrap().unwrap();
 
-        let result = reader.next(false).unwrap();
+        let result = reader.next(&mut buffer, false).unwrap();
         assert!(result.is_none(), "{result:?}");
 
         assert_eq!(0, reader.free_block(3));

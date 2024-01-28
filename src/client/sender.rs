@@ -1,4 +1,3 @@
-use core::cmp::max;
 use core::num::Wrapping;
 use core::time::Duration;
 
@@ -10,13 +9,12 @@ use rand::RngCore;
 
 use super::ClientConfig;
 use crate::block_mapper::BlockMapper;
-use crate::buffer::new_buffer;
+use crate::buffer::create_max_buffer;
 use crate::buffer::resize_buffer;
 use crate::client::connection::query_server;
 use crate::config::print_options;
 use crate::config::ConnectionOptions;
 use crate::config::DATA_PACKET_HEADER_SIZE;
-use crate::config::MIN_BUFFER_SIZE;
 use crate::encryption::PublicKey;
 use crate::error::BoxedResult;
 use crate::error::PacketError;
@@ -24,9 +22,9 @@ use crate::error::StorageError;
 use crate::flow_control::RateControl;
 use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
+use crate::packet::prepend_data_header;
 use crate::packet::AckPacket;
 use crate::packet::ByteConverter;
-use crate::packet::DataPacket;
 use crate::packet::Packet;
 use crate::packet::PacketType;
 use crate::readers::block_reader::BlockReader;
@@ -81,17 +79,12 @@ where
     #[cfg(feature = "encryption")]
     let (mut socket, initial_keys) = create_initial_socket(socket, &config, &mut options, _rng)?;
 
-    let max_buffer_size = max(
-        options.block_size + DATA_PACKET_HEADER_SIZE as u16,
-        MIN_BUFFER_SIZE,
-    );
-
     let (file_size, reader) = create_reader(&local_file_path)?;
     if file_size > Some(0) {
         options.file_size = file_size;
     }
 
-    let mut buffer = new_buffer(max_buffer_size);
+    let mut receive_buffer = create_max_buffer(options.block_size);
 
     let mut rate_control = RateControl::new(instant);
 
@@ -100,7 +93,7 @@ where
     #[allow(unused_mut)]
     let (_, acknowledge, mut options, endpoint) = query_server(
         &mut socket,
-        &mut buffer,
+        &mut receive_buffer,
         Packet::Write,
         remote_file_path,
         options,
@@ -156,6 +149,12 @@ where
     let flow_control_period = Duration::from_millis(200);
     let mut stats_calculate = instant();
 
+    // buffer will change based on options.block_size
+    let mut receive_buffer = create_max_buffer(options.block_size);
+    let receive_max_buffer_size = receive_buffer.len();
+
+    let mut send_buffer = create_max_buffer(options.block_size);
+    let send_max_buffer_size = send_buffer.len();
     loop {
         if stats_calculate.elapsed() > flow_control_period {
             rate_control.calculate_transmit_rate(
@@ -168,19 +167,22 @@ where
             stats_calculate = instant();
         }
 
+        resize_buffer(&mut send_buffer, send_max_buffer_size);
+
         let timeout_interval =
             rate_control.timeout_interval(options.retry_packet_after_timeout, options.block_size);
         let retry = last_sent.elapsed() > timeout_interval;
-        let next_block = match block_reader.next(retry) {
-            Ok(b) => b,
-            Err(StorageError::File(e)) if e.kind() == ErrorKind::WouldBlock => {
-                debug!("Reading from a file {local_file_path} would block");
-                None
-            }
-            Err(e) => return Err(e.into()),
-        };
+        let next_block =
+            match block_reader.next(&mut send_buffer[DATA_PACKET_HEADER_SIZE.into()..], retry) {
+                Ok(b) => b,
+                Err(StorageError::File(e)) if e.kind() == ErrorKind::WouldBlock => {
+                    debug!("Reading from a file {local_file_path} would block");
+                    None
+                }
+                Err(e) => return Err(e.into()),
+            };
         if let Some(data_block) = next_block {
-            let last_read_length = data_block.data.len();
+            let last_read_length = data_block.size;
 
             debug!(
                     "Send data block {} data size {last_read_length} retry {} remaining packets {packets_to_send} timeout {}",
@@ -195,11 +197,10 @@ where
                 rate_control.start_rtt(data_block.block);
             }
 
-            let data_packet = Packet::Data(DataPacket {
-                block: data_block.block,
-                data: &data_block.data,
-            });
-            match socket.send_to(&mut data_packet.to_bytes(), endpoint) {
+            prepend_data_header(data_block.block, &mut send_buffer);
+            send_buffer.truncate(DATA_PACKET_HEADER_SIZE as usize + data_block.size);
+
+            match socket.send_to(&mut send_buffer, endpoint) {
                 Ok(_) => {
                     last_sent = instant();
                     no_work = Wrapping(1);
@@ -218,7 +219,7 @@ where
             no_work += 1;
         }
 
-        resize_buffer(&mut buffer, max_buffer_size);
+        resize_buffer(&mut receive_buffer, receive_max_buffer_size);
 
         let wait_for = if no_work.0 > 2 {
             Duration::from_millis(no_work.0 as u64).into()
@@ -233,7 +234,7 @@ where
             wait_for.unwrap_or(Duration::ZERO).as_millis()
         );
 
-        let length = match socket.recv_from(&mut buffer, wait_for) {
+        let length = match socket.recv_from(&mut receive_buffer, wait_for) {
             Ok((n, s)) => {
                 if s != endpoint {
                     continue;
@@ -258,8 +259,8 @@ where
                 return Err(e.into());
             }
         };
-        buffer.truncate(length);
-        let data = &buffer[..length];
+        receive_buffer.truncate(length);
+        let data = &receive_buffer[..length];
 
         if !matches!(
             PacketType::from_bytes(data),

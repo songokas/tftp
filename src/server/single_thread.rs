@@ -8,7 +8,8 @@ use rand::RngCore;
 
 use super::config::ServerConfig;
 use super::helpers::read::send_data_block;
-use crate::buffer::new_buffer;
+use crate::buffer::create_max_buffer;
+use crate::buffer::resize_buffer;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
 use crate::macros::cfg_alloc;
@@ -24,7 +25,6 @@ use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
 use crate::server::helpers::connection::accept_connection;
 use crate::server::helpers::connection::create_builder;
-use crate::server::helpers::connection::create_max_buffer;
 use crate::server::helpers::connection::timeout_client;
 use crate::server::helpers::read::handle_read;
 use crate::server::helpers::write::handle_write;
@@ -39,6 +39,7 @@ use crate::std_compat::io::Write;
 use crate::std_compat::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
+use crate::types::DataBuffer;
 use crate::types::FilePath;
 use crate::writers::Writers;
 
@@ -93,10 +94,10 @@ where
     W: Write,
     CreateWriter: Fn(&FilePath, &ServerConfig) -> BoxedResult<W>,
 {
-    info!("Starting server on {}", config.listen);
+    info!("Starting server on a {}", config.listen);
 
-    let mut buffer = create_max_buffer(config.max_block_size);
-    let max_buffer_size = buffer.len();
+    let mut receive_buffer = create_max_buffer(config.max_block_size);
+    let receive_max_buffer_size = receive_buffer.len();
 
     #[cfg(feature = "encryption")]
     if let Some(private_key) = config.private_key.as_ref() {
@@ -135,17 +136,24 @@ where
         size_of_val(&clients)
     );
 
+    let mut send_buffer = create_max_buffer(config.max_block_size);
+
     loop {
+        info!("a size {}", send_buffer.len());
+
+        resize_buffer(&mut receive_buffer, receive_max_buffer_size);
+
         if timeout_duration.elapsed() > execute_timeout_client {
-            clients.retain(|_, (c, _)| !timeout_client::<B, Rng>(c, config.request_timeout));
+            clients.retain(|_, (c, _)| {
+                !timeout_client::<B, Rng>(c, config.request_timeout, &mut send_buffer)
+            });
             timeout_duration = instant();
         }
 
-        buffer = new_buffer(max_buffer_size);
-
         let sent_in = instant();
 
-        let (sent, recv_next_client_to_send) = send_data_blocks(&mut clients, next_client_to_send);
+        let (sent, recv_next_client_to_send) =
+            send_data_blocks(&mut clients, next_client_to_send, &mut send_buffer);
 
         next_client_to_send = recv_next_client_to_send;
         wait_control.sending(sent);
@@ -161,7 +169,7 @@ where
             |(client_socket_addr, (connection, _))| {
                 next_client_to_receive += 1;
                 if socket.notified(&connection.socket) {
-                    match connection.recv(&mut buffer, None) {
+                    match connection.recv(&mut receive_buffer, None) {
                         Ok(b) => {
                             if socket
                                 .modify_interest(
@@ -192,24 +200,26 @@ where
 
         let (received_length, from_client) = match client_received {
             Some(r) => r,
-            None => match socket.recv_from(&mut buffer, wait_control.wait_for(clients.len())) {
-                Ok((received, from_client)) => {
-                    // ignore existing connection attemps on the main socket
-                    if clients.contains_key(&from_client) {
+            None => {
+                match socket.recv_from(&mut receive_buffer, wait_control.wait_for(clients.len())) {
+                    Ok((received, from_client)) => {
+                        // ignore existing connection attemps on the main socket
+                        if clients.contains_key(&from_client) {
+                            next_client_to_receive = 0;
+                            continue;
+                        }
+                        trace!("New connection from {from_client} next client index {next_client_to_receive}");
                         next_client_to_receive = 0;
+                        (received, from_client)
+                    }
+                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                        next_client_to_receive = 0;
+                        wait_control.receiver_idle();
                         continue;
                     }
-                    trace!("New connection from {from_client} next client index {next_client_to_receive}");
-                    next_client_to_receive = 0;
-                    (received, from_client)
+                    Err(e) => return Err(e.into()),
                 }
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    next_client_to_receive = 0;
-                    wait_control.receiver_idle();
-                    continue;
-                }
-                Err(e) => return Err(e.into()),
-            },
+            }
         };
 
         trace!(
@@ -218,7 +228,7 @@ where
         );
 
         wait_control.receiving();
-        buffer.truncate(received_length);
+        receive_buffer.truncate(received_length);
 
         let clients_len = clients.len();
         let processed_in = instant();
@@ -227,10 +237,17 @@ where
             Entry::Occupied(mut entry) => {
                 let (ref mut connection, ref mut client_type) = entry.get_mut();
                 match client_type {
-                    ClientType::Reader(r) => handle_read(connection, r, &mut buffer, instant),
-                    ClientType::Writer(w) => {
-                        handle_write(connection, w, &mut buffer, instant, config.max_file_size)
+                    ClientType::Reader(r) => {
+                        handle_read(connection, r, &mut receive_buffer, instant)
                     }
+                    ClientType::Writer(w) => handle_write(
+                        connection,
+                        w,
+                        &mut receive_buffer,
+                        &mut send_buffer,
+                        instant,
+                        config.max_file_size,
+                    ),
                 };
             }
             Entry::Vacant(entry) => {
@@ -250,7 +267,7 @@ where
                 let Some((builder, connection_type)) = create_builder(
                     &config,
                     socket_id.get() as usize,
-                    &mut buffer,
+                    &mut receive_buffer,
                     from_client,
                     rng,
                 ) else {
@@ -301,6 +318,7 @@ where
                     connection_type,
                     used_extensions,
                     encryption_keys,
+                    &mut receive_buffer,
                 ) else {
                     continue;
                 };
@@ -329,7 +347,7 @@ where
                         Readers::Single(r) => {
                             let Some(reader) = PoolReader::from_single(r, &single_block_readers)
                             else {
-                                error!("Exausted single pool readers");
+                                error!("Exhausted single pool readers");
                                 continue;
                             };
                             ClientType::Reader(reader)
@@ -337,7 +355,7 @@ where
                         Readers::Multiple(r) => {
                             let Some(reader) = PoolReader::from_multi(r, &multi_block_readers)
                             else {
-                                error!("Exausted multi pool readers");
+                                error!("Exhausted multi pool readers");
                                 continue;
                             };
                             ClientType::Reader(reader)
@@ -346,7 +364,7 @@ where
                         Readers::Seek(r) => {
                             let Some(reader) = PoolReader::from_seek(r, &multi_block_seek_readers)
                             else {
-                                error!("Exausted multi pool seek readers");
+                                error!("Exhausted multi pool seek readers");
                                 continue;
                             };
                             ClientType::Reader(reader)
@@ -361,7 +379,7 @@ where
                 entry.insert((connection, client_type));
                 #[cfg(not(feature = "alloc"))]
                 if entry.insert((connection, client_type)).is_err() {
-                    error!("Exausted all connections");
+                    error!("Exhausted all connections");
                 }
             }
         }
@@ -376,6 +394,7 @@ where
 fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     clients: &mut Clients<R, W, B, Rng>,
     next_client: usize,
+    buffer: &mut DataBuffer,
 ) -> (bool, usize) {
     let mut current_client: Option<usize> = clients
         .iter_mut()
@@ -386,7 +405,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
         .enumerate()
         .skip(next_client)
         .find_map(|(index, (_, (c, ct)))| match ct {
-            ClientType::Reader(r) => send_data_block(c, r).then_some(index + 1),
+            ClientType::Reader(r) => send_data_block(c, r, buffer).then_some(index + 1),
             _ => None,
         });
     if current_client.is_none() {
@@ -398,7 +417,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
             .take(next_client)
             .enumerate()
             .find_map(|(index, (_, (c, ct)))| match ct {
-                ClientType::Reader(r) => send_data_block(c, r).then_some(index + 1),
+                ClientType::Reader(r) => send_data_block(c, r, buffer).then_some(index + 1),
                 _ => None,
             });
     }

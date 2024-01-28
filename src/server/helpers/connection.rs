@@ -1,4 +1,3 @@
-use core::cmp::max;
 use core::time::Duration;
 
 use log::debug;
@@ -6,11 +5,7 @@ use log::warn;
 use rand::CryptoRng;
 use rand::RngCore;
 
-use crate::buffer::new_buffer;
 use crate::config::print_options;
-use crate::config::DATA_PACKET_HEADER_SIZE;
-use crate::config::MAX_BUFFER_SIZE;
-use crate::config::MIN_BUFFER_SIZE;
 use crate::encryption::FinalizedKeys;
 use crate::packet::AckPacket;
 use crate::packet::ByteConverter;
@@ -81,18 +76,22 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     connection_type: ConnectionType,
     used_extensions: PacketExtensions,
     encrypt_new_connection: Option<FinalizedKeys<Rng>>,
+    buffer: &mut DataBuffer,
 ) -> Option<()> {
     debug!("Server extensions {:?}", used_extensions);
 
     match connection_type {
         ConnectionType::Write => {
             if !used_extensions.is_empty() {
-                if !connection.send_packet(Packet::OptionalAck(OptionalAck {
-                    extensions: used_extensions,
-                })) {
+                if !connection.send_packet(
+                    Packet::OptionalAck(OptionalAck {
+                        extensions: used_extensions,
+                    }),
+                    buffer,
+                ) {
                     return None;
                 }
-            } else if !connection.send_packet(Packet::Ack(AckPacket { block: 0 })) {
+            } else if !connection.send_packet(Packet::Ack(AckPacket { block: 0 }), buffer) {
                 return None;
             }
             // new encryption starts only here
@@ -106,9 +105,12 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
         }
         ConnectionType::Read => {
             if !used_extensions.is_empty()
-                && !connection.send_packet(Packet::OptionalAck(OptionalAck {
-                    extensions: used_extensions,
-                }))
+                && !connection.send_packet(
+                    Packet::OptionalAck(OptionalAck {
+                        extensions: used_extensions,
+                    }),
+                    buffer,
+                )
             {
                 return None;
             }
@@ -125,18 +127,10 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     }
 }
 
-pub fn create_max_buffer(max_block_size: u16) -> DataBuffer {
-    let max_buffer_size = max(
-        max_block_size + DATA_PACKET_HEADER_SIZE as u16,
-        MIN_BUFFER_SIZE,
-    );
-    assert!(max_buffer_size <= MAX_BUFFER_SIZE);
-    new_buffer(max_buffer_size)
-}
-
 pub fn timeout_client<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     connection: &mut Connection<B, Rng>,
     request_timeout: Duration,
+    buffer: &mut DataBuffer,
 ) -> bool {
     if connection.invalid || connection.finished {
         return true;
@@ -157,9 +151,9 @@ pub fn timeout_client<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
         "Client timeout {}",
         connection.last_updated.elapsed().as_secs_f32()
     );
-    connection.send_packet(Packet::Error(ErrorPacket::new(
-        ErrorCode::AccessVioliation,
-        message,
-    )));
+    connection.send_packet(
+        Packet::Error(ErrorPacket::new(ErrorCode::AccessVioliation, message)),
+        buffer,
+    );
     true
 }

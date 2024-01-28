@@ -5,6 +5,7 @@ use crate::readers::block_reader::BlockReader;
 use crate::readers::multiple_block_reader::MultipleBlockReader;
 use crate::readers::single_block_reader::SingleBlockReader;
 use crate::std_compat::io::Read;
+
 #[cfg(feature = "seek")]
 use crate::std_compat::io::Seek;
 
@@ -83,6 +84,7 @@ impl<'a, #[cfg(feature = "seek")] R: Read + Seek, #[cfg(not(feature = "seek"))] 
 {
     fn next(
         &mut self,
+        buffer: &mut [u8],
         retry: bool,
     ) -> Result<Option<crate::readers::block_reader::Block>, crate::error::StorageError> {
         match self {
@@ -90,18 +92,18 @@ impl<'a, #[cfg(feature = "seek")] R: Read + Seek, #[cfg(not(feature = "seek"))] 
                 .borrow_mut()
                 .get_mut(i)
                 .expect("reader does not exist")
-                .next(retry),
+                .next(buffer, retry),
             Self::Multi(i, s) => s
                 .borrow_mut()
                 .get_mut(i)
                 .expect("reader does not exist")
-                .next(retry),
+                .next(buffer, retry),
             #[cfg(feature = "seek")]
             Self::Seek(i, s) => s
                 .borrow_mut()
                 .get_mut(i)
                 .expect("reader does not exist")
-                .next(retry),
+                .next(buffer, retry),
         }
     }
 
@@ -179,7 +181,8 @@ mod tests {
         {
             let mut reader =
                 PoolReader::from_single(SingleBlockReader::new(cursor, 2), &pool).unwrap();
-            let block = reader.next(false).unwrap().unwrap();
+            let mut buffer = [0_u8; 100];
+            let block = reader.next(&mut buffer, false).unwrap().unwrap();
             assert_eq!(block.block, 1);
             assert_eq!(1, reader.free_block(1));
             assert!(reader.is_finished());
@@ -192,10 +195,11 @@ mod tests {
     fn test_pool_reader_multi() {
         let cursor = Cursor::new(vec![1]);
         let pool = RefCell::new(MultiBlockReaders::new());
+        let mut buffer = [0_u8; 100];
         {
             let mut reader =
                 PoolReader::from_multi(MultipleBlockReader::new(cursor, 2, 2), &pool).unwrap();
-            let block = reader.next(false).unwrap().unwrap();
+            let block = reader.next(&mut buffer, false).unwrap().unwrap();
             assert_eq!(block.block, 1);
             assert_eq!(1, reader.free_block(1));
             assert!(reader.is_finished());
@@ -209,6 +213,7 @@ mod tests {
     fn test_pool_reader_seek() {
         let cursor = Cursor::new(vec![1]);
         let pool = RefCell::new(MultiBlockSeekReaders::new());
+        let mut buffer = [0_u8; 100];
         {
             let mut reader = PoolReader::from_seek(
                 crate::readers::multiple_block_seek_reader::MultipleBlockSeekReader::new(
@@ -217,7 +222,7 @@ mod tests {
                 &pool,
             )
             .unwrap();
-            let block = reader.next(false).unwrap().unwrap();
+            let block = reader.next(&mut buffer, false).unwrap().unwrap();
             assert_eq!(block.block, 1);
             assert_eq!(1, reader.free_block(1));
             assert!(reader.is_finished());
@@ -238,33 +243,4 @@ mod tests {
             std::mem::size_of::<PoolReader<std::fs::File>>()
         );
     }
-
-    // #[derive(Debug)]
-    // struct CursorReader {
-    //     cursor: Cursor<Vec<u8>>,
-    // }
-    // impl Read for CursorReader {
-    //     fn read(&mut self, buf: &mut [u8]) -> crate::std_compat::io::Result<usize> {
-    //         #[allow(unused_imports)]
-    //         use std::io::Read;
-    //         self.cursor.read(buf).map_err(|_| {
-    //             crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
-    //         })
-    //     }
-    // }
-
-    // impl Seek for CursorReader {
-    //     fn seek(&mut self, pos: SeekFrom) -> crate::std_compat::io::Result<u64> {
-    //         #[allow(unused_imports)]
-    //         use std::io::Seek;
-    //         let pos = match pos {
-    //             SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
-    //             SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
-    //             SeekFrom::End(p) => std::io::SeekFrom::End(p),
-    //         };
-    //         self.cursor.seek(pos).map_err(|_| {
-    //             crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::Other)
-    //         })
-    //     }
-    // }
 }

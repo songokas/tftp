@@ -6,12 +6,15 @@ use log::error;
 use rand::CryptoRng;
 use rand::RngCore;
 
+use crate::buffer::resize_buffer;
 use crate::config::ConnectionOptions;
 
+use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::encryption::*;
 use crate::macros::cfg_encryption;
 use crate::packet::ByteConverter;
 use crate::packet::Packet;
+use crate::packet::PacketType;
 use crate::socket::BoundSocket;
 use crate::std_compat::io;
 use crate::std_compat::net::SocketAddr;
@@ -21,8 +24,6 @@ use crate::types::DataBuffer;
 cfg_encryption! {
     use crate::encrypted_packet::EncryptedDataPacket;
     use crate::encrypted_packet::EncryptedPacket;
-    use crate::packet::PacketType;
-    use crate::config::DATA_PACKET_HEADER_SIZE;
 }
 
 pub enum ClientType<R, W> {
@@ -39,9 +40,9 @@ pub struct Connection<B, Rng> {
     pub socket: B,
     pub options: ConnectionOptions,
     pub encryptor: Option<Encryptor<Rng>>,
-    // conection last updated: valid block received, valid block acknoledged
+    // connection last updated: valid block received, valid block acknowledged
     pub last_updated: Instant,
-    /// last block index acknoledged
+    /// last block index acknowledged
     pub last_acknowledged: u64,
     // total file size transferred
     pub transfer: usize,
@@ -93,7 +94,7 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
         true
     }
 
-    pub fn send_packet(&self, packet: Packet) -> bool {
+    pub fn send_packet(&self, packet: Packet, buffer: &mut DataBuffer) -> bool {
         let packet_name = packet.packet_type();
         match &packet {
             Packet::Data(d) => debug!("Send {} {} to {}", packet_name, d.block, self.endpoint),
@@ -101,20 +102,33 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
             _ => debug!("Send {} to {}", packet_name, self.endpoint),
         };
 
-        let mut data = packet.to_bytes();
+        // ensure min buffer size
+        let expected_min_buffer_size =
+            DATA_PACKET_HEADER_SIZE as usize + self.options.block_size as usize;
+        if buffer.len() < expected_min_buffer_size {
+            resize_buffer(buffer, expected_min_buffer_size);
+        }
 
+        let Some(s) = packet.to_buffer(buffer) else {
+            return false;
+        };
+        buffer.truncate(s);
+        self.send_bytes(packet_name, buffer)
+    }
+
+    pub fn send_bytes(&self, packet_name: PacketType, data: &mut DataBuffer) -> bool {
         #[cfg(feature = "encryption")]
         if let (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) =
             (self.options.encryption_level, &self.encryptor)
         {
             if EncryptedPacket::encrypt(
                 encryptor,
-                &mut data,
+                data,
                 self.options.block_size_with_encryption() + DATA_PACKET_HEADER_SIZE as u16,
             )
             .is_err()
             {
-                error!("Failed to encrypt data {:x?}", &data);
+                error!("Failed to encrypt data {:x?}", data);
                 return false;
             }
         }
@@ -122,12 +136,12 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
         if let (EncryptionLevel::Data, Some(encryptor), PacketType::Data) =
             (self.options.encryption_level, &self.encryptor, packet_name)
         {
-            if EncryptedDataPacket::encrypt(encryptor, &mut data).is_err() {
-                error!("Failed to encrypt data {:x?}", &data);
+            if EncryptedDataPacket::encrypt(encryptor, data).is_err() {
+                error!("Failed to encrypt data {:x?}", data);
                 return false;
             }
         }
-        if let Err(e) = self.socket.send(&mut data) {
+        if let Err(e) = self.socket.send(data) {
             error!("Failed to send {} to {} {}", packet_name, self.endpoint, e);
             return false;
         }

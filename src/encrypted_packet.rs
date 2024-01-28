@@ -92,7 +92,7 @@ impl<'a> InitialPacket<'a> {
             .checked_sub(RESERVED as u16)
             .ok_or(EncryptedPacketError::InvalidData)?;
         apply_bit_padding(buffer, block_size as usize)?;
-        encryptor.encrypt(buffer)?;
+        encryptor.encrypt(buffer, 0)?;
         extend_from_slice(
             buffer,
             public_key.as_bytes(),
@@ -105,6 +105,7 @@ impl<'a> InitialPacket<'a> {
         self,
         encryptor: &Encryptor<Rng>,
     ) -> Result<DataBuffer, EncryptedPacketError> {
+        // TODO allocation
         let mut buffer = DataBuffer::new();
         extend_from_slice(
             &mut buffer,
@@ -112,7 +113,7 @@ impl<'a> InitialPacket<'a> {
             EncryptedPacketError::InvalidData,
         )?;
         extend_from_slice(&mut buffer, self.nonce, EncryptedPacketError::Nonce)?;
-        encryptor.decrypt(&mut buffer)?;
+        encryptor.decrypt(&mut buffer, 0)?;
         remove_bit_padding(&mut buffer)?;
         Ok(buffer)
     }
@@ -131,32 +132,16 @@ impl<'a> EncryptedDataPacket<'a> {
         encryptor: &Encryptor<Rng>,
         buffer: &'a mut DataBuffer,
     ) -> Result<(), EncryptedPacketError> {
-        // TODO avoid allocating
-        let mut data: DataBuffer = buffer
-            .get(DATA_PACKET_HEADER_SIZE as usize..)
-            .ok_or(EncryptedPacketError::InvalidData)?
-            .iter()
-            .copied()
-            .collect();
-        encryptor.encrypt(&mut data)?;
-        buffer.truncate(DATA_PACKET_HEADER_SIZE as usize);
-        extend_from_slice(buffer, &data, EncryptedPacketError::CipherText)
+        encryptor.encrypt(buffer, DATA_PACKET_HEADER_SIZE as usize)?;
+        Ok(())
     }
 
     pub fn decrypt<Rng: CryptoRng + RngCore + Clone>(
         encryptor: &Encryptor<Rng>,
         buffer: &mut DataBuffer,
     ) -> Result<(), EncryptedPacketError> {
-        // TODO avoid allocating
-        let mut data: DataBuffer = buffer
-            .get(DATA_PACKET_HEADER_SIZE as usize..)
-            .ok_or(EncryptedPacketError::InvalidData)?
-            .iter()
-            .copied()
-            .collect();
-        encryptor.decrypt(&mut data)?;
-        buffer.truncate(DATA_PACKET_HEADER_SIZE as usize);
-        extend_from_slice(buffer, &data, EncryptedPacketError::CipherText)
+        encryptor.decrypt(buffer, DATA_PACKET_HEADER_SIZE as usize)?;
+        Ok(())
     }
 }
 
@@ -173,7 +158,7 @@ impl<'a> EncryptedPacket<'a> {
         expected_block_size: u16,
     ) -> Result<(), EncryptedPacketError> {
         apply_bit_padding(buffer, expected_block_size as usize)?;
-        encryptor.encrypt(buffer)?;
+        encryptor.encrypt(buffer, 0)?;
         Ok(())
     }
 
@@ -181,7 +166,7 @@ impl<'a> EncryptedPacket<'a> {
         encryptor: &Encryptor<Rng>,
         buffer: &mut DataBuffer,
     ) -> Result<(), EncryptedPacketError> {
-        encryptor.decrypt(buffer)?;
+        encryptor.decrypt(buffer, 0)?;
         remove_bit_padding(buffer)?;
         Ok(())
     }

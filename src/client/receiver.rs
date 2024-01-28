@@ -1,4 +1,3 @@
-use core::cmp::max;
 use core::time::Duration;
 
 use log::debug;
@@ -8,14 +7,12 @@ use rand::CryptoRng;
 use rand::RngCore;
 
 use super::ClientConfig;
-use crate::buffer::new_buffer;
+use crate::buffer::create_max_buffer;
 use crate::buffer::resize_buffer;
 use crate::client::connection::query_server;
 use crate::client::connection::send_error;
 use crate::config::print_options;
 use crate::config::ConnectionOptions;
-use crate::config::DATA_PACKET_HEADER_SIZE;
-use crate::config::MIN_BUFFER_SIZE;
 use crate::encryption::PublicKey;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
@@ -59,28 +56,26 @@ where
     Sock: Socket,
     CreateWriter: FnOnce(&FilePath) -> BoxedResult<W>,
 {
-    let max_buffer_size = max(
-        options.block_size + DATA_PACKET_HEADER_SIZE as u16,
-        MIN_BUFFER_SIZE,
-    );
     if let Ok(s) = socket.local_addr() {
         info!("Listening on {} connecting to {}", s, config.endpoint);
     }
+
+    let mut receive_buffer = create_max_buffer(options.block_size);
+    let receive_max_buffer_size = receive_buffer.len();
+
     debug!(
         "Preparing to receive {} as {} max buffer {}",
-        remote_file_path, local_file_path, max_buffer_size
+        remote_file_path, local_file_path, receive_max_buffer_size
     );
 
     #[cfg(feature = "encryption")]
     let (mut socket, initial_keys) = create_initial_socket(socket, &config, &mut options, _rng)?;
 
-    let mut buffer = new_buffer(max_buffer_size);
-
     let initial_rtt = instant();
     #[allow(unused_mut)]
     let (mut received_length, acknowledge, mut options, endpoint) = query_server(
         &mut socket,
-        &mut buffer,
+        &mut receive_buffer,
         Packet::Read,
         remote_file_path,
         options,
@@ -104,18 +99,25 @@ where
 
     // server sent data packet so no encryption
     if let Some(packet_length) = received_length.take() {
-        if let Ok(Packet::Data(p)) = Packet::from_bytes(&buffer[..packet_length]) {
+        if let Ok(Packet::Data(p)) = Packet::from_bytes(&receive_buffer[..packet_length]) {
             handle_file_size(&socket, endpoint, packet_length, config.max_file_size)?;
-            if let Some(w) = write_block(
-                &socket,
-                endpoint,
-                &mut block_writer,
-                p.block,
-                p.data,
-                &options,
-                &mut last_block_ack,
-            )? {
-                total += w;
+            match write_block(&mut block_writer, p.block, p.data) {
+                Ok((written, index, block)) => {
+                    if let Some(w) = written {
+                        total += w;
+                    }
+
+                    if options.window_size <= 1
+                        || last_block_ack + options.window_size as u64 == index
+                        || written.unwrap_or(0) < options.block_size_with_encryption() as usize
+                    {
+                        debug!("Ack send {}", block);
+                        let packet = Packet::Ack(AckPacket { block });
+                        socket.send_to(&mut packet.to_bytes(), endpoint)?;
+                        last_block_ack = index;
+                    }
+                }
+                Err(e) => return Err(e),
             };
 
             if packet_length != options.block_size_with_encryption() as usize {
@@ -137,11 +139,16 @@ where
     }
 
     let mut timeout = instant();
+    // buffer will change based on options.block_size
+    let mut receive_buffer = create_max_buffer(options.block_size);
+    let max_receive_buffer_size = receive_buffer.len();
+
+    let mut send_buffer = create_max_buffer(options.block_size);
 
     loop {
-        resize_buffer(&mut buffer, max_buffer_size);
+        resize_buffer(&mut receive_buffer, max_receive_buffer_size);
 
-        let length = match socket.recv_from(&mut buffer, Duration::from_secs(1).into()) {
+        let received = match socket.recv_from(&mut receive_buffer, Duration::from_secs(1).into()) {
             Ok((n, s)) => {
                 if s != endpoint {
                     continue;
@@ -163,93 +170,81 @@ where
                 return Err(e.into());
             }
         };
-        buffer.truncate(length);
+        receive_buffer.truncate(received);
 
         if !matches!(
-            PacketType::from_bytes(&buffer),
+            PacketType::from_bytes(&receive_buffer),
             Ok(PacketType::Data | PacketType::Error)
         ) {
-            debug!("Incorrect packet received {:x?}", &buffer);
+            debug!("Incorrect packet received {:x?}", &receive_buffer);
             continue;
         }
 
-        match Packet::from_bytes(&buffer) {
-            Ok(Packet::Data(p)) => {
-                match write_block(
-                    &socket,
-                    endpoint,
-                    &mut block_writer,
-                    p.block,
-                    p.data,
-                    &options,
-                    &mut last_block_ack,
-                ) {
-                    Ok(Some(written)) => {
-                        timeout = instant();
-                        total += written;
-
-                        if written < options.block_size_with_encryption() as usize {
-                            info!("Client finished receiving {local_file_path} {total} bytes");
-                            return Ok((total, options.remote_public_key()));
-                        }
-                    }
-                    Ok(None) => continue,
-                    Err(e) => return Err(e),
-                };
-                // this would write more than expected but only by a block size maximum
-                handle_file_size(&socket, endpoint, total, config.max_file_size)?;
-            }
+        let result = match Packet::from_bytes(&receive_buffer) {
+            Ok(Packet::Data(p)) => write_block(&mut block_writer, p.block, p.data),
             Ok(Packet::Error(p)) => {
                 return Err(PacketError::RemoteError(p.message).into());
             }
             _ => {
-                debug!("Incorrect packet received {:x?}", &buffer);
+                debug!("Incorrect packet received {:x?}", &receive_buffer);
                 continue;
             }
         };
+
+        match result {
+            Ok((written, index, block)) => {
+                if let Some(w) = written {
+                    handle_file_size(&socket, endpoint, total + w, config.max_file_size)?;
+                }
+                if options.window_size <= 1
+                    || last_block_ack + options.window_size as u64 == index
+                    || written.unwrap_or(0) < options.block_size_with_encryption() as usize
+                {
+                    debug!("Ack send {}", block);
+                    let packet = Packet::Ack(AckPacket { block });
+                    let size = packet.to_buffer(&mut send_buffer).expect("valid buffer");
+                    send_buffer.truncate(size);
+                    socket.send_to(&mut send_buffer, endpoint)?;
+                    last_block_ack = index;
+                }
+                if let Some(w) = written {
+                    timeout = instant();
+                    total += w;
+
+                    if w < options.block_size_with_encryption() as usize {
+                        info!("Client finished receiving {local_file_path} {total} bytes");
+                        return Ok((total, options.remote_public_key()));
+                    }
+                }
+            }
+            Err(e) => return Err(e),
+        }
     }
 }
 
 fn write_block(
-    socket: &impl Socket,
-    endpoint: SocketAddr,
     block_writer: &mut impl BlockWriter,
-    mut block: u16,
+    block: u16,
     data: &[u8],
-    options: &ConnectionOptions,
-    last_ack: &mut u64,
-) -> BoxedResult<Option<usize>> {
-    let (written, index) = match block_writer.write_block(block, data) {
-        Ok((written, index)) => (Some(written), index),
+) -> BoxedResult<(Option<usize>, u64, u16)> {
+    match block_writer.write_block(block, data) {
+        Ok((written, index)) => Ok((Some(written), index, block)),
         Err(StorageError::ExpectedBlock(e)) => {
             debug!(
                 "Received unexpected block {} expecting block after {}",
                 block, e.current
             );
-            block = e.current;
-            (None, e.current_index)
+            Ok((None, e.current_index, e.current))
         }
         Err(StorageError::AlreadyWritten(e)) => {
             debug!(
                 "Received block that was written before. Ignoring block {}",
                 block
             );
-            block = e.current;
-            (None, e.current_index)
+            Ok((None, e.current_index, e.current))
         }
-        Err(e) => return Err(e.into()),
-    };
-
-    if options.window_size <= 1
-        || *last_ack + options.window_size as u64 == index
-        || written.unwrap_or(0) < options.block_size_with_encryption() as usize
-    {
-        debug!("Ack send {}", block);
-        let packet = Packet::Ack(AckPacket { block });
-        socket.send_to(&mut packet.to_bytes(), endpoint)?;
-        *last_ack = index;
+        Err(e) => Err(e.into()),
     }
-    Ok(written)
 }
 
 fn handle_file_size(
