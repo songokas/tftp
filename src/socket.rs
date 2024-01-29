@@ -19,7 +19,7 @@ pub trait Socket: ToSocketId {
 }
 
 pub trait BoundSocket: ToSocketId {
-    fn recv(&self, buff: &mut DataBuffer, wait_for: Option<Duration>) -> Result<usize>;
+    fn recv(&mut self, buff: &mut DataBuffer, wait_for: Option<Duration>) -> Result<usize>;
     fn send(&self, buff: &mut DataBuffer) -> Result<usize>;
     fn local_addr(&self) -> Result<SocketAddr>;
 }

@@ -54,7 +54,11 @@ pub struct Connection<B, Rng> {
 }
 
 impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
-    pub fn recv(&self, buffer: &mut DataBuffer, wait_for: Option<Duration>) -> io::Result<usize> {
+    pub fn recv(
+        &mut self,
+        buffer: &mut DataBuffer,
+        wait_for: Option<Duration>,
+    ) -> io::Result<usize> {
         self.socket.recv(buffer, wait_for)
     }
 
