@@ -13,9 +13,12 @@ pub trait Socket: ToSocketId {
     fn send_to(&self, buf: &mut DataBuffer, addr: SocketAddr) -> Result<usize>;
     fn local_addr(&self) -> Result<SocketAddr>;
 
-    fn notified(&self, to_socket_id: &impl ToSocketId) -> bool;
-    fn add_interest(&self, to_socket_id: &impl ToSocketId) -> Result<()>;
     fn modify_interest(&mut self, socket_id: usize, raw_fd: SocketRawFd) -> Result<()>;
+
+    #[cfg(not(feature = "multi_thread"))]
+    fn notified(&self, to_socket_id: &impl ToSocketId) -> bool;
+    #[cfg(not(feature = "multi_thread"))]
+    fn add_interest(&self, to_socket_id: &impl ToSocketId) -> Result<()>;
 }
 
 pub trait BoundSocket: ToSocketId {

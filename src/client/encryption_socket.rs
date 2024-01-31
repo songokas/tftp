@@ -137,6 +137,7 @@ where
         self.socket.local_addr()
     }
 
+    #[cfg(not(feature = "multi_thread"))]
     fn add_interest(&self, _to_socket_id: &impl ToSocketId) -> Result<()> {
         unimplemented!()
     }
@@ -145,6 +146,7 @@ where
         unimplemented!()
     }
 
+    #[cfg(not(feature = "multi_thread"))]
     fn notified(&self, _to_socket_id: &impl ToSocketId) -> bool {
         unimplemented!()
     }

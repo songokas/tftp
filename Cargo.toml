@@ -11,9 +11,7 @@ members = ["std-binary"]
 
 [dependencies]
 log = "0.4"
-# TODO remove once heapless retain is available and results must be used fixed
-arrayvec = { version = "0.7", optional = false, default-features = false }
-heapless = { version = "0.7", optional = false, default-features = false }
+heapless = { version = "0.8", optional = false, default-features = false }
 base64 = { version = "0.21", optional = true, default-features = false }
 x25519-dalek = { version = "2", optional = true, default-features = false, features = [
     "getrandom",
@@ -25,16 +23,18 @@ chacha20poly1305 = { version = "0.10", optional = true, default-features = false
     "getrandom",
     "stream",
 ] }
-# heapless depends on 0.2.1
-hash32 = "0.2.1"
 rand = { version = "0.8", optional = false, default-features = false, features = [
     "getrandom",
 ] }
 micromath = { version = "2", optional = false }
 
+# remove once chacha20poly1305, aead supports heapless 0.8
+heapless_07 = { package = "heapless", version = "0.7", optional = false, default-features = false }
+
 [dev-dependencies]
 rand = "0.8"
 vfs = "0.9"
+arrayvec = { version = "0.7", optional = false, default-features = false }
 
 [features]
 default = ["alloc", "encryption", "multi_thread", "seek"]

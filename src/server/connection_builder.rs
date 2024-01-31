@@ -35,6 +35,7 @@ use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
 use crate::std_compat::net::SocketAddr;
 use crate::std_compat::time::Instant;
+use crate::string::ensure_size;
 use crate::string::format_str;
 use crate::types::DataBuffer;
 use crate::types::FilePath;
@@ -186,7 +187,11 @@ impl<'a, Rng: CryptoRng + RngCore + Copy> ConnectionBuilder<'a, Rng> {
 
                 let packet = Packet::Error(ErrorPacket::new(
                     ErrorCode::DiskFull,
-                    format_str!(DefaultString, "Unable to write file {}", file_name),
+                    format_str!(
+                        DefaultString,
+                        "Unable to write file {}",
+                        ensure_size(&file_name, 100)
+                    ),
                 ));
                 socket.send_to(&mut packet.to_bytes(), client)?;
                 return Err(e);
@@ -277,7 +282,11 @@ impl<'a, Rng: CryptoRng + RngCore + Copy> ConnectionBuilder<'a, Rng> {
                 error!("Failed to open file {} {}", file_path, e);
                 let packet = Packet::Error(ErrorPacket::new(
                     ErrorCode::DiskFull,
-                    format_str!(DefaultString, "Unable to read file {}", file_name),
+                    format_str!(
+                        DefaultString,
+                        "Unable to read file {}",
+                        ensure_size(&file_name, 100)
+                    ),
                 ));
                 socket.send_to(&mut packet.to_bytes(), client)?;
                 return Err(e);

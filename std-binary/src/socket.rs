@@ -186,10 +186,12 @@ impl Socket for UdpUnboundSocket {
             .map_err(from_io_err)
     }
 
+    #[cfg(not(feature = "multi_thread"))]
     fn notified(&self, socket: &impl ToSocketId) -> bool {
         self.notified.contains(&socket.socket_id())
     }
 
+    #[cfg(not(feature = "multi_thread"))]
     fn add_interest(&self, socket: &impl ToSocketId) -> io::Result<()> {
         unsafe {
             self.poller

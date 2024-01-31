@@ -1,6 +1,7 @@
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueHint;
+use core::str::FromStr;
 use tftp::config::DEFAULT_RETRY_PACKET_TIMEOUT;
 use tftp::config::DEFAULT_WINDOW_SIZE;
 use tftp::config::EXTENSION_BLOCK_SIZE_MIN;
@@ -19,16 +20,16 @@ use tftp::types::ShortString;
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
-    #[arg(short, long, default_value = "info")]
+    #[arg(short, long, default_value = "info", value_parser = try_from_str::<DefaultString>)]
     pub verbosity: DefaultString,
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct ClientCliConfig {
-    #[arg(value_hint = ValueHint::Hostname)]
+    #[arg(value_parser = try_from_str::<DefaultString>, value_hint = ValueHint::Hostname)]
     pub endpoint: DefaultString,
 
-    #[arg(short, long, default_value = "0.0.0.0:0", value_hint = ValueHint::Hostname)]
+    #[arg(short, long, default_value = "0.0.0.0:0", value_parser = try_from_str::<DefaultString>, value_hint = ValueHint::Hostname)]
     pub listen: DefaultString,
 
     #[arg(
@@ -59,18 +60,20 @@ pub struct ClientCliConfig {
     #[arg(
         long,
         default_value = "optional-protocol",
-        help = "Available values protocol, data, optional-data, optional-protocol, none"
+        help = "Available values protocol, data, optional-data, optional-protocol, none",
+        value_parser = try_from_str::<ShortString>,
     )]
     pub encryption_level: ShortString,
 
     #[cfg(feature = "encryption")]
-    #[arg(long, help = "Base64 encoded private key to use: value or FILE")]
+    #[arg(long, help = "Base64 encoded private key to use: value or FILE", value_parser = try_from_str::<ShortString>)]
     pub private_key: Option<ShortString>,
 
     #[cfg(feature = "encryption")]
     #[arg(
         long,
-        help = "Base64 encoded remote server public key to use for encryption"
+        help = "Base64 encoded remote server public key to use for encryption",
+        value_parser = try_from_str::<ShortString>,
     )]
     pub server_public_key: Option<ShortString>,
 
@@ -78,7 +81,8 @@ pub struct ClientCliConfig {
     #[arg(
         long,
         help = "Path to a known hosts file where server public key will be retrieved. Format: endpoint base64(public key) per line",
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_parser = try_from_str::<FilePath>,
     )]
     pub known_hosts: Option<FilePath>,
 
@@ -88,17 +92,18 @@ pub struct ClientCliConfig {
     #[cfg(feature = "encryption")]
     #[arg(
         long,
-        help = "Encrypt/decrypt file when sending/receiving. Key should be 32 chars long"
+        help = "Encrypt/decrypt file when sending/receiving. Key should be 32 chars long",
+        value_parser = try_from_str::<ShortString>,
     )]
     pub encryption_key: Option<ShortString>,
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct ServerCliConfig {
-    #[arg(value_hint = ValueHint::Hostname)]
+    #[arg(value_parser = try_from_str::<DefaultString>, value_hint = ValueHint::Hostname)]
     pub listen: DefaultString,
 
-    #[arg(value_hint = ValueHint::DirPath)]
+    #[arg(value_parser = try_from_str::<FilePath>, value_hint = ValueHint::DirPath)]
     pub directory: FilePath,
 
     #[arg(short, long)]
@@ -131,12 +136,13 @@ pub struct ServerCliConfig {
     #[arg(
         long,
         help = "Path to a file with authorized public keys. Each line contains base64(public key)",
+        value_parser = try_from_str::<FilePath>,
         value_hint = ValueHint::FilePath,
     )]
     pub authorized_keys: Option<FilePath>,
 
     #[cfg(feature = "encryption")]
-    #[arg(long, help = "Base64 encoded private key to use: value or FILE")]
+    #[arg(long, help = "Base64 encoded private key to use: value or FILE", value_parser = try_from_str::<ShortString>)]
     pub private_key: Option<ShortString>,
 
     #[cfg(feature = "encryption")]
@@ -153,7 +159,7 @@ pub struct ServerCliConfig {
     #[arg(long)]
     pub prefer_seek: bool,
 
-    #[arg(long, help = "Retrieving specified file provides directory list")]
+    #[arg(long, help = "Retrieving specified file provides directory list", value_parser = try_from_str::<ShortString>)]
     pub directory_list: Option<ShortString>,
 
     #[arg(long, default_value_t = 10, help = "Maximum directory depth")]
@@ -166,10 +172,10 @@ pub enum Commands {
         #[clap(flatten)]
         config: ClientCliConfig,
 
-        #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
+        #[arg(value_name = "FILE", value_parser = try_from_str::<FilePath>, value_hint = ValueHint::FilePath)]
         local_path: FilePath,
 
-        #[arg(short, long)]
+        #[arg(short, long, value_parser = try_from_str::<FilePath>)]
         remote_path: Option<FilePath>,
 
         #[cfg(feature = "seek")]
@@ -194,7 +200,7 @@ pub enum Commands {
         )]
         block_duration: u64,
 
-        #[arg(value_name = "DIRECTORY", value_hint = ValueHint::DirPath)]
+        #[arg(value_name = "DIRECTORY", value_parser = try_from_str::<FilePath>, value_hint = ValueHint::DirPath)]
         dir_path: Option<FilePath>,
     },
 
@@ -202,12 +208,16 @@ pub enum Commands {
         #[clap(flatten)]
         config: ClientCliConfig,
 
-        #[arg(long, value_hint = ValueHint::FilePath)]
+        #[arg(long, value_parser = try_from_str::<FilePath>, value_hint = ValueHint::FilePath)]
         local_path: Option<FilePath>,
 
-        #[arg(value_name = "FILE")]
+        #[arg(value_name = "FILE", value_parser = try_from_str::<FilePath>)]
         remote_path: FilePath,
     },
 
     Server(ServerCliConfig),
+}
+
+fn try_from_str<T: FromStr>(arg: &str) -> Result<T, &'static str> {
+    T::from_str(arg).map_err(|_| "Failed to parse")
 }

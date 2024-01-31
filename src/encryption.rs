@@ -471,7 +471,7 @@ mod tests {
             #[cfg(feature = "alloc")]
             let mut data = bytes.to_vec();
             #[cfg(not(feature = "alloc"))]
-            let mut data: DataBuffer = bytes.into_iter().collect();
+            let mut data: crate::types::DataBlock07 = bytes.into_iter().collect();
             // data.truncate(2);
             let expected = data.clone();
             encryptor.encrypt(&mut data, 2).unwrap();

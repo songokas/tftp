@@ -152,8 +152,8 @@ fn write_block<W: BlockWriter>(
         Err(e) => {
             error!("Failed to write block {} {}", block, e);
             return Err(ErrorPacket::new(
-                ErrorCode::AccessVioliation,
-                format_str!(DefaultString, "{}", e),
+                ErrorCode::AccessViolation,
+                format_str!(DefaultString, "{}", e,),
             ));
         }
     };

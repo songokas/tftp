@@ -152,7 +152,7 @@ pub fn timeout_client<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
         connection.last_updated.elapsed().as_secs_f32()
     );
     connection.send_packet(
-        Packet::Error(ErrorPacket::new(ErrorCode::AccessVioliation, message)),
+        Packet::Error(ErrorPacket::new(ErrorCode::AccessViolation, message)),
         buffer,
     );
     true

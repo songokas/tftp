@@ -163,7 +163,7 @@ where
 
         let client_received_in = instant();
 
-        let client_received = clients.iter().skip(next_client_to_receive).find_map(
+        let client_received = clients.iter_mut().skip(next_client_to_receive).find_map(
             |(client_socket_addr, (connection, _))| {
                 next_client_to_receive += 1;
                 if socket.notified(&connection.socket) {

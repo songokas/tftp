@@ -14,6 +14,8 @@ extern crate core;
 pub mod types {
     pub type DataBuffer = alloc::vec::Vec<u8>;
     pub type DataBlock = alloc::vec::Vec<u8>;
+    // TODO remove with heapless 0.7
+    pub type DataBlock07 = alloc::vec::Vec<u8>;
     pub type PacketBlock = alloc::vec::Vec<u8>;
     pub type PacketExtensionNames<'a> = alloc::vec::Vec<&'a str>;
     pub type DefaultString = alloc::string::String;
@@ -27,6 +29,8 @@ pub mod types {
     pub type DataBuffer = heapless::Vec<u8, { crate::config::MAX_BUFFER_SIZE as usize }>;
     pub type PacketBlock = DataBuffer;
     pub type DataBlock = heapless::Vec<u8, { crate::config::MAX_DATA_BLOCK_SIZE as usize }>;
+    // TODO remove with heapless 0.7
+    pub type DataBlock07 = heapless_07::Vec<u8, { crate::config::MAX_DATA_BLOCK_SIZE as usize }>;
     pub type PacketExtensionNames<'a> =
         heapless::Vec<&'a str, { crate::packet::Extension::SIZE as usize }>;
     pub type DefaultString = heapless::String<{ crate::config::MAX_DEFAULT_STRING_SIZE as usize }>;
@@ -42,11 +46,21 @@ mod string {
         ($stype:ident, $($t:tt)*) => {{
             use core::fmt::Write;
             let mut s = crate::types::$stype::new();
+            // #[cfg(not(feature = "alloc"))]
+            // if
             write!(&mut s, $($t)*).expect("number must fit");
             s
         }};
     }
     pub(crate) use format_str;
+
+    pub fn ensure_size(s: &str, max_size: usize) -> &str {
+        if s.len() > max_size {
+            let (f, _) = s.split_at(max_size);
+            return f;
+        }
+        s
+    }
 }
 
 pub mod time {
@@ -58,6 +72,12 @@ pub mod time {
 mod map {
     pub use alloc::collections::btree_map::Entry;
     pub use alloc::collections::BTreeMap as Map;
+}
+
+#[cfg(not(feature = "alloc"))]
+mod map {
+    pub use heapless::Entry;
+    pub use heapless::FnvIndexMap as Map;
 }
 
 #[cfg(feature = "std")]
@@ -132,12 +152,10 @@ pub mod encryption {
     }
 }
 pub mod error;
-#[cfg(not(feature = "alloc"))]
-mod map;
 
 mod block_mapper;
 mod flow_control;
-mod packet;
+pub mod packet;
 pub mod readers;
 pub mod server;
 pub mod socket;

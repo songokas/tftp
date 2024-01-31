@@ -42,14 +42,15 @@ cfg_alloc!(
 );
 
 cfg_stack!(
-    pub const MAX_CLIENTS: u16 = 100;
+    // heapless FvIndexMap requires map size to be power of 2
+    pub const MAX_CLIENTS: u16 = 128;
     pub const MAX_BLOCKS_FOR_MULTI_READER: u16 = 16;
     /// how many single readers available window size = 1
-    pub const MAX_SINGLE_READERS: u16 = 50;
+    pub const MAX_SINGLE_READERS: u16 = 64;
     /// how many multi readers available window size > 1
-    pub const MAX_MULTI_READERS: u16 = 10;
+    pub const MAX_MULTI_READERS: u16 = 16;
     /// how many seek readers available window size > 1
-    pub const MAX_MULTI_SEEK_READERS: u16 = 50;
+    pub const MAX_MULTI_SEEK_READERS: u16 = 64;
     pub const DEFAULT_WINDOW_SIZE: u8 = 4;
 );
 

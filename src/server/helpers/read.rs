@@ -49,11 +49,11 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
             let error_packet = match e {
                 StorageError::InvalidBuffer { .. } => ErrorPacket::new(
                     ErrorCode::Undefined,
-                    format_str!(DefaultString, "{}", "Storage error occurred"),
+                    format_str!(DefaultString, "Storage error occurred"),
                 ),
                 _ => ErrorPacket::new(
-                    ErrorCode::AccessVioliation,
-                    format_str!(DefaultString, "{}", e),
+                    ErrorCode::AccessViolation,
+                    format_str!(DefaultString, "{}", e,),
                 ),
             };
             connection.send_packet(Packet::Error(error_packet), buffer);

@@ -1,6 +1,9 @@
 use core::cmp::max;
 
-use crate::{config::{DATA_PACKET_HEADER_SIZE, MAX_BUFFER_SIZE, MIN_BUFFER_SIZE}, types::{DataBlock, DataBuffer}};
+use crate::{
+    config::{DATA_PACKET_HEADER_SIZE, MAX_BUFFER_SIZE, MIN_BUFFER_SIZE},
+    types::{DataBlock, DataBlock07, DataBuffer},
+};
 
 pub trait SliceMutExt {
     fn write_bytes(self, data: impl AsRef<[u8]>, from_index: impl Into<usize>) -> Option<usize>;
@@ -125,6 +128,31 @@ pub fn create_max_buffer(max_block_size: u16) -> DataBuffer {
     );
     assert!(max_buffer_size <= MAX_BUFFER_SIZE);
     new_buffer(max_buffer_size)
+}
+
+#[allow(unused)]
+// TODO remove with heapless 0.7
+pub fn new_data_block_07(max_block_size: impl Into<usize>) -> DataBlock07 {
+    let size = max_block_size.into();
+    #[cfg(feature = "alloc")]
+    let mut buffer = DataBlock07::with_capacity(size);
+    #[cfg(not(feature = "alloc"))]
+    let mut buffer: DataBlock07 = DataBlock07::new();
+    resize_data_block_07(&mut buffer, size);
+    buffer
+}
+
+#[allow(unused)]
+// TODO remove with heapless 0.7
+pub fn resize_data_block_07(buffer: &mut DataBlock07, block_size: impl Into<usize>) {
+    let size = block_size.into();
+    #[cfg(feature = "alloc")]
+    buffer.resize(size, 0);
+    // TODO heapless vector resizing is super slow
+    #[cfg(not(feature = "alloc"))]
+    unsafe {
+        buffer.set_len(size)
+    };
 }
 
 #[cfg(test)]

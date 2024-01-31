@@ -6,9 +6,11 @@ use std::collections::BTreeMap;
 use rand::Rng;
 use test::Bencher;
 use tftp::config::MAX_BUFFER_SIZE;
+use tftp::config::MAX_DATA_BLOCK_SIZE;
+use tftp::packet::{ByteConverter, DataPacket, Packet};
 
 #[bench]
-fn test_packet_to_bytes_with_iter(b: &mut Bencher) {
+fn test_create_bytes_with_iter(b: &mut Bencher) {
     b.iter(|| {
         let random_bytes: Vec<u8> = (0..MAX_BUFFER_SIZE - 4)
             .map(|_| rand::random::<u8>())
@@ -27,7 +29,7 @@ fn test_packet_to_bytes_with_iter(b: &mut Bencher) {
 }
 
 #[bench]
-fn test_packet_to_bytes_with_concat(b: &mut Bencher) {
+fn test_create_bytes_with_concat(b: &mut Bencher) {
     b.iter(|| {
         let random_bytes: Vec<u8> = (0..MAX_BUFFER_SIZE - 4)
             .map(|_| rand::random::<u8>())
@@ -38,7 +40,7 @@ fn test_packet_to_bytes_with_concat(b: &mut Bencher) {
 }
 
 #[bench]
-fn test_packet_to_bytes_with_extend(b: &mut Bencher) {
+fn test_create_bytes_with_extend(b: &mut Bencher) {
     b.iter(|| {
         let random_bytes: Vec<u8> = (0..MAX_BUFFER_SIZE - 4)
             .map(|_| rand::random::<u8>())
@@ -47,6 +49,47 @@ fn test_packet_to_bytes_with_extend(b: &mut Bencher) {
         data_packet.extend(random_bytes);
         let mut packet: Vec<u8> = 5_u16.to_be_bytes().to_vec();
         packet.extend(data_packet);
+    });
+}
+
+#[bench]
+fn test_packet_to_bytes_with_iter(b: &mut Bencher) {
+    let mut rng = rand::thread_rng();
+    let mut blocks = Vec::with_capacity(1000);
+    for _ in 0..1000 {
+        let bytes: Vec<u8> = (0..MAX_DATA_BLOCK_SIZE).map(|_| rng.gen::<u8>()).collect();
+        blocks.push(bytes);
+    }
+    let mut block = 0;
+    b.iter(|| {
+        let random_index = rng.gen_range(0..blocks.len() - 1);
+        let packet = Packet::Data(DataPacket {
+            block,
+            data: blocks[random_index].as_slice(),
+        });
+        block += 1;
+        packet.to_bytes();
+    });
+}
+
+#[bench]
+fn test_packet_to_bytes_with_buffer(b: &mut Bencher) {
+    let mut buffer = [0_u8; MAX_BUFFER_SIZE as usize];
+    let mut block = 0;
+    let mut rng = rand::thread_rng();
+    let mut blocks = Vec::with_capacity(1000);
+    for _ in 0..1000 {
+        let bytes: Vec<u8> = (0..MAX_DATA_BLOCK_SIZE).map(|_| rng.gen::<u8>()).collect();
+        blocks.push(bytes);
+    }
+    b.iter(|| {
+        let random_index = rng.gen_range(0..blocks.len() - 1);
+        let packet = Packet::Data(DataPacket {
+            block,
+            data: blocks[random_index].as_slice(),
+        });
+        block += 1;
+        packet.to_buffer(&mut buffer).unwrap();
     });
 }
 
@@ -205,7 +248,6 @@ fn test_arrayvec_retrieve_20(b: &mut Bencher) {
 #[cfg(feature = "encryption")]
 #[bench]
 fn test_encrypt_decrypt(b: &mut Bencher) {
-    use tftp::config::MAX_DATA_BLOCK_SIZE;
     use tftp::types::DataBuffer;
 
     let encryptor = create_encryptor();
@@ -219,8 +261,8 @@ fn test_encrypt_decrypt(b: &mut Bencher) {
 
     b.iter(|| {
         let random_index = rng.gen_range(0..blocks.len() - 1);
-        encryptor.encrypt(&mut blocks[random_index]).unwrap();
-        encryptor.decrypt(&mut blocks[random_index]).unwrap();
+        encryptor.encrypt(&mut blocks[random_index], 0).unwrap();
+        encryptor.decrypt(&mut blocks[random_index], 0).unwrap();
     });
 }
 
