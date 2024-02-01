@@ -1,6 +1,6 @@
 [package]
 name = "tftp-std-binary"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 
 authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
@@ -30,13 +30,13 @@ notify = { version = "6", optional = true }
 rand = "0.8"
 
 [features]
-default = ["std", "alloc", "encryption", "multi_thread", "seek", "sync"]
+default = ["alloc", "encryption", "multi_thread", "seek", "sync"]
 # no std is still using std dependency for filesystem, sockets, std::io
 std = ["tftp/std"]
 alloc = ["tftp/alloc"]
 encryption = ["tftp/encryption"]
 seek = ["tftp/seek"]
-multi_thread = ["tftp/multi_thread"]
+multi_thread = ["tftp/multi_thread", "std"]
 sync = ["notify", "std", "alloc"]
 
 [[bin]]

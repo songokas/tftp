@@ -11,6 +11,7 @@ use chacha20poly1305::aead::KeyInit;
 use chacha20poly1305::AeadCore;
 use chacha20poly1305::AeadInPlace;
 use chacha20poly1305::Key;
+use chacha20poly1305::Tag;
 use chacha20poly1305::XChaCha20Poly1305;
 use chacha20poly1305::XNonce;
 use rand::CryptoRng;
@@ -19,6 +20,7 @@ use x25519_dalek::EphemeralSecret;
 use x25519_dalek::PublicKey as ExternalPublicKey;
 use x25519_dalek::StaticSecret;
 
+use crate::buffer::extend_from_slice;
 use crate::buffer::SliceExt;
 use crate::config::ENCRYPTION_NONCE_SIZE;
 use crate::config::ENCRYPTION_PADDING_SIZE;
@@ -211,25 +213,42 @@ pub struct Encryptor<R> {
 }
 
 impl<R: CryptoRng + RngCore + Clone> Encryptor<R> {
-    pub fn encrypt(&self, data: &mut dyn Buffer) -> Result<(), EncryptionError> {
+    pub fn encrypt(
+        &self,
+        buffer: &mut DataBuffer,
+        from_position: usize,
+    ) -> Result<(), EncryptionError> {
         let nonce = XChaCha20Poly1305::generate_nonce(self.rng.clone());
-        self.cipher
-            .encrypt_in_place(&nonce, &[], data)
+        let (_, data) = buffer.split_at_mut(from_position);
+
+        let tag = self
+            .cipher
+            .encrypt_in_place_detached(&nonce, &[], data)
             .map_err(|_| EncryptionError::Encrypt)?;
-        data.extend_from_slice(&nonce)
-            .map_err(|_| EncryptionError::Nonce)?;
+        extend_from_slice(buffer, &tag, EncryptionError::Tag)?;
+        extend_from_slice(buffer, &nonce, EncryptionError::Nonce)?;
         Ok(())
     }
 
-    pub fn decrypt(&self, data: &mut dyn Buffer) -> Result<(), EncryptionError> {
-        let nonce: Nonce = data
-            .as_ref()
+    pub fn decrypt(
+        &self,
+        buffer: &mut DataBuffer,
+        from_position: usize,
+    ) -> Result<(), EncryptionError> {
+        let nonce: Nonce = buffer
+            .as_slice()
             .rslice_to_array(0_usize)
             .ok_or(EncryptionError::Decrypt)?
             .into();
-        data.truncate(data.len() - nonce.len());
+        let tag: Tag = buffer
+            .as_slice()
+            .rslice_to_array(nonce.len())
+            .ok_or(EncryptionError::Decrypt)?
+            .into();
+        buffer.truncate(buffer.len() - nonce.len() - tag.len());
+        let (_, data) = buffer.split_at_mut(from_position);
         self.cipher
-            .decrypt_in_place(&nonce, &[], data)
+            .decrypt_in_place_detached(&nonce, &[], data, &tag)
             .map_err(|_| EncryptionError::Decrypt)
     }
 }
@@ -393,13 +412,13 @@ mod tests {
         #[cfg(not(feature = "alloc"))]
         let mut data: DataBuffer = [2, 32, 32, 2, 1].into_iter().collect();
         let expected = data.clone();
-        encryptor.encrypt(&mut data).unwrap();
+        encryptor.encrypt(&mut data, 0).unwrap();
         assert_ne!(data, expected);
         assert_eq!(
             data.len(),
             expected.len() + ENCRYPTION_TAG_SIZE as usize + ENCRYPTION_NONCE_SIZE as usize
         );
-        encryptor.decrypt(&mut data).unwrap();
+        encryptor.decrypt(&mut data, 0).unwrap();
         assert_eq!(data, expected);
     }
 
@@ -452,7 +471,7 @@ mod tests {
             #[cfg(feature = "alloc")]
             let mut data = bytes.to_vec();
             #[cfg(not(feature = "alloc"))]
-            let mut data: DataBuffer = bytes.into_iter().collect();
+            let mut data: crate::types::DataBlock07 = bytes.into_iter().collect();
             // data.truncate(2);
             let expected = data.clone();
             encryptor.encrypt(&mut data, 2).unwrap();

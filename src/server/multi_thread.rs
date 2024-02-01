@@ -9,11 +9,11 @@ use rand::CryptoRng;
 use rand::RngCore;
 
 use super::config::ServerConfig;
+use crate::buffer::create_max_buffer;
 use crate::buffer::resize_buffer;
-use crate::encryption::encode_public_key;
-use crate::encryption::PublicKey;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
+use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
 use crate::macros::cfg_stack;
 use crate::map::Map;
@@ -24,7 +24,6 @@ use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
 use crate::server::helpers::connection::accept_connection;
 use crate::server::helpers::connection::create_builder;
-use crate::server::helpers::connection::create_max_buffer;
 use crate::server::helpers::connection::timeout_client;
 use crate::server::helpers::read::handle_read;
 use crate::server::helpers::read::send_data_block;
@@ -50,6 +49,11 @@ cfg_seek! {
 
 cfg_stack! {
     use crate::config::MAX_CLIENTS;
+}
+
+cfg_encryption! {
+    use crate::encryption::encode_public_key;
+    use crate::encryption::PublicKey;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -85,8 +89,8 @@ where
 {
     info!("Starting server on {}", config.listen);
 
-    let mut buffer = create_max_buffer(config.max_block_size);
-    let max_buffer_size = buffer.len();
+    let mut receive_buffer = create_max_buffer(config.max_block_size);
+    let receive_max_buffer_size = receive_buffer.len();
 
     #[cfg(feature = "encryption")]
     if let Some(private_key) = config.private_key.as_ref() {
@@ -108,11 +112,11 @@ where
     let mut handles = Handles::new();
 
     loop {
-        resize_buffer(&mut buffer, max_buffer_size);
+        resize_buffer(&mut receive_buffer, receive_max_buffer_size);
 
         let received_in = instant();
         let (received_length, from_client) =
-            match socket.recv_from(&mut buffer, Duration::from_secs(1).into()) {
+            match socket.recv_from(&mut receive_buffer, Duration::from_secs(1).into()) {
                 Ok(connection_received) => connection_received,
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     continue;
@@ -130,7 +134,7 @@ where
             continue;
         }
 
-        buffer.truncate(received_length);
+        receive_buffer.truncate(received_length);
 
         if handles.len() >= config.max_connections as usize {
             info!(
@@ -148,7 +152,7 @@ where
         let Some((builder, connection_type)) = create_builder(
             &config,
             socket_id.get() as usize,
-            &mut buffer,
+            &mut receive_buffer,
             from_client,
             rng,
         ) else {
@@ -186,6 +190,7 @@ where
             connection_type,
             used_extensions,
             encryption_keys,
+            &mut receive_buffer,
         ) else {
             continue;
         };
@@ -227,29 +232,31 @@ fn spawn_reader<
     request_timeout: Duration,
 ) -> JoinHandle<()> {
     spawn(move || {
-        let mut buffer = create_max_buffer(connection.options.block_size);
+        let mut receive_buffer = create_max_buffer(connection.options.block_size);
+        let mut send_buffer = create_max_buffer(connection.options.block_size);
         let mut wait_control = WaitControl::new();
-        let max_buffer_size = buffer.len();
+        let max_buffer_size = receive_buffer.len();
         loop {
-            if timeout_client(&mut connection, request_timeout) {
+            if timeout_client(&mut connection, request_timeout, &mut send_buffer) {
                 return;
             }
-            let sent = send_data_block(&mut connection, &mut reader);
+            let sent = send_data_block(&mut connection, &mut reader, &mut send_buffer);
             wait_control.sending(sent);
 
-            resize_buffer(&mut buffer, max_buffer_size);
+            resize_buffer(&mut receive_buffer, max_buffer_size);
 
-            let received_length = match connection.recv(&mut buffer, wait_control.wait_for(1)) {
-                Ok(connection_received) => connection_received,
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    wait_control.receiver_idle();
-                    continue;
-                }
-                Err(_) => return,
-            };
+            let received_length =
+                match connection.recv(&mut receive_buffer, wait_control.wait_for(1)) {
+                    Ok(connection_received) => connection_received,
+                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                        wait_control.receiver_idle();
+                        continue;
+                    }
+                    Err(_) => return,
+                };
             wait_control.receiving();
-            buffer.truncate(received_length);
-            handle_read(&mut connection, &mut reader, &mut buffer, instant);
+            receive_buffer.truncate(received_length);
+            handle_read(&mut connection, &mut reader, &mut receive_buffer, instant);
         }
     })
 }
@@ -266,28 +273,30 @@ fn spawn_writer<
     max_file_size: u64,
 ) -> JoinHandle<()> {
     spawn(move || {
-        let mut buffer = create_max_buffer(connection.options.block_size);
-        let max_buffer_size = buffer.len();
+        let mut receive_buffer = create_max_buffer(connection.options.block_size);
+        let mut send_buffer = create_max_buffer(connection.options.block_size);
+        let receive_max_buffer_size = receive_buffer.len();
         loop {
-            if timeout_client(&mut connection, request_timeout) {
+            if timeout_client(&mut connection, request_timeout, &mut send_buffer) {
                 return;
             }
 
-            resize_buffer(&mut buffer, max_buffer_size);
+            resize_buffer(&mut receive_buffer, receive_max_buffer_size);
 
-            let received_length = match connection.recv(&mut buffer, Duration::from_secs(1).into())
-            {
-                Ok(connection_received) => connection_received,
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    continue;
-                }
-                Err(_) => return,
-            };
-            buffer.truncate(received_length);
+            let received_length =
+                match connection.recv(&mut receive_buffer, Duration::from_secs(1).into()) {
+                    Ok(connection_received) => connection_received,
+                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(_) => return,
+                };
+            receive_buffer.truncate(received_length);
             handle_write(
                 &mut connection,
                 &mut block_writer,
-                &mut buffer,
+                &mut receive_buffer,
+                &mut send_buffer,
                 instant,
                 max_file_size,
             );

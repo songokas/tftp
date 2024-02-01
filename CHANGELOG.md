@@ -2,6 +2,14 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.5.1] - 2024-02-01
+
+### Changed
+
+- Use heapless 0.8 version where possible
+- Prefer writing to buffer instead of allocating
+- Reduce temporary allocations
+
 ## [0.5.1] - 2023-12-31
 
 ### Added

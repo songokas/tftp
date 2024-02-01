@@ -16,6 +16,15 @@ server_heap() {
     valgrind --tool=massif --massif-out-file=target/massif.out $server server 127.0.0.1:9000 ./target 
 }
 
+server_heaptrack() {
+    local server="$1"
+    local client="$2"
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/client_file
+    ( sleep 5 ; $client send 127.0.0.1:9000 target/client_file --remote-path server_file )&
+    heaptrack $server server 127.0.0.1:9000 ./target 
+}
+
 server_flamegraph() {
     local server="$1"
     local client="$2"
@@ -237,38 +246,124 @@ plot [-10:STATS_max_x + 50] [-10:STATS_max_y + 10] '$receiver_data' with points 
 EOF
 }
 
+measure_localhost_average_performance() {
+    local server="$1"
+    local client="$2"
+    local info="$3"
+    local sender_data="$4"
+    local receiver_data="$5"
+
+    local server_pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    head -c 1000M /dev/urandom > $TEST_DIR/client/samples/1000M
+    $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 1048576000 --allow-overwrite & server_pids+=($!)
+
+    /usr/bin/time -o $sender_data -a -f "$info elapsed %es size %M memory %K received %r send %s" $client send 127.0.0.1:9000 $TEST_DIR/client/samples/1000M --remote-path samples/1000M --window-size 16
+    /usr/bin/time -o $receiver_data -a -f "$info elapsed %es size %M memory %K received %r send %s" $client receive 127.0.0.1:9000 samples/1000M --max-file-size 1048576000 --window-size 16 --local-path $TEST_DIR/client/samples/1000M
+
+    kill "${server_pids[@]}"
+}
+
+performance_info() {
+
+    local release_bin="./target/release/tftp"
+    local padding="                                     "
+
+    local sender_data="$OUTPUT_DIR/send_performance"
+    local receiver_data="$OUTPUT_DIR/receive_performance"
+
+    echo "send 1000M window size 16"> $sender_data
+    echo "receive 1000M window size 16"> $receiver_data
+
+
+    title="multi-thread alloc encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="single-thread alloc encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --features alloc,encryption --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="multi-thread stack encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --features multi_thread,encryption --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="single-thread stack encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --features encryption --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="multi-thread alloc no encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --features multi_thread,alloc --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="multi-thread stack no encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --features multi_thread --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="single-thread alloc no encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --features alloc --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+
+    title="single-thread stack no encryption"
+    title="$title ${padding:${#title}}"
+
+    cargo build -p tftp-std-binary --no-default-features --release
+    measure_localhost_average_performance  $release_bin $release_bin "$title" "$sender_data" "$receiver_data"
+}
+
 
 produce_info() {
+    # cargo install flamegraph
+    # sudo apt-get -y install linux-perf
+    # echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+
     local release_bin="./target/release/tftp"
     local debug_bin="./target/debug/tftp"
 
-    cargo build -p tftp-std-binary
-    server_flamegraph $debug_bin $debug_bin
-    send_flamegraph $debug_bin $debug_bin
-    receive_flamegraph $debug_bin $debug_bin
+    # cargo build -p tftp-std-binary
+    # server_flamegraph $debug_bin $debug_bin
+    # send_flamegraph $debug_bin $debug_bin
+    # receive_flamegraph $debug_bin $debug_bin
 
-    cargo build -p tftp-std-binary --release
+    # cargo build -p tftp-std-binary --release
 
-    send_dump $release_bin $release_bin "_delayed_encryption"
-    receive_dump $release_bin $release_bin "_delayed_encryption"
-    send_receive_full_encryption_dump $release_bin $release_bin
-    measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption"
+    # send_dump $release_bin $release_bin "_delayed_encryption"
+    # receive_dump $release_bin $release_bin "_delayed_encryption"
+    # send_receive_full_encryption_dump $release_bin $release_bin
+    # measure_endpoint_window_size $release_bin servas:69 "_delayed_encryption"
 
-    cargo build -p tftp-std-binary --no-default-features --features alloc
+    # cargo build -p tftp-std-binary --no-default-features --features alloc
 
-    server_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
-    send_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
-    receive_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
+    # server_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
+    # send_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
+    # receive_flamegraph $debug_bin $debug_bin "_no_encryption_alloc"
 
-    cargo build -p tftp-std-binary --no-default-features --features alloc --release
+    # cargo build -p tftp-std-binary --no-default-features --features alloc --release
 
-    measure_endpoint_window_size $release_bin servas:69 "_no_encryption_alloc"
+    # measure_endpoint_window_size $release_bin servas:69 "_no_encryption_alloc"
 
-    cargo build -p tftp-std-binary --no-default-features --features encryption
+    # cargo build -p tftp-std-binary --no-default-features --features encryption
 
-    server_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
-    send_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
-    receive_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
+    # server_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
+    # send_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
+    # receive_flamegraph $debug_bin $debug_bin "_delayed_encryption_stack"
 
     cargo build -p tftp-std-binary --no-default-features --release --features encryption
 

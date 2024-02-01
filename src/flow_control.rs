@@ -35,7 +35,7 @@ pub struct RateControl {
     instant: InstantCallback,
 
     // received bytes per second
-    receive_set: arrayvec::ArrayVec<u32, 3>,
+    receive_set: [u32; 3],
 
     new_loss: bool,
     no_feedback_timer: Duration,
@@ -45,8 +45,8 @@ pub struct RateControl {
 
 impl RateControl {
     pub fn new(instant: InstantCallback) -> Self {
-        let mut receive_set = arrayvec::ArrayVec::new();
-        receive_set.push(u32::MAX);
+        let mut receive_set = [0; 3];
+        receive_set[0] = u32::MAX;
         Self {
             rtt_for_packet: 0,
             rtt_estimate: 0.0,
@@ -201,15 +201,14 @@ impl RateControl {
         if received > max_value || max_value == u32::MAX {
             max_value = received;
         }
-        self.receive_set.clear();
-        self.receive_set.push(max_value);
+        self.receive_set = [0; 3];
+        self.receive_set[0] = max_value;
     }
 
     fn update_set(&mut self, received: u32) {
-        if self.receive_set.is_full() {
-            self.receive_set.pop();
-        }
-        self.receive_set.insert(0, received);
+        self.receive_set[2] = self.receive_set[1];
+        self.receive_set[1] = self.receive_set[0];
+        self.receive_set[0] = received;
     }
 }
 
@@ -253,6 +252,8 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn measure_rtt() {
+        use std::thread::sleep;
+
         let mut rate = RateControl::new(std::time::Instant::now);
         rate.start_rtt(1);
         assert!(rate.rtt_estimate == 0.0);
@@ -269,8 +270,9 @@ mod tests {
 
         let current = rate.rtt_estimate;
         rate.start_rtt(8);
+        sleep(Duration::from_millis(10));
         assert!(rate.end_rtt(8).is_some());
-        assert!(rate.rtt_estimate != current);
+        assert_ne!(rate.rtt_estimate, current);
     }
 
     #[cfg(feature = "std")]

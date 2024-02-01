@@ -13,6 +13,7 @@ use crate::packet::Packet;
 use crate::packet::PacketExtensions;
 use crate::socket::Socket;
 use crate::std_compat::net::SocketAddr;
+use crate::string::ensure_size;
 use crate::string::format_str;
 use crate::types::FilePath;
 
@@ -62,8 +63,12 @@ pub fn validate_file_name(file_name: &FilePath) -> Result<FilePath, ErrorPacket>
         Err(e) => {
             error!("Invalid file name received {} {}", file_name.as_str(), e);
             return Err(ErrorPacket::new(
-                ErrorCode::AccessVioliation,
-                format_str!(DefaultString, "Invalid file name received {}", file_name),
+                ErrorCode::AccessViolation,
+                format_str!(
+                    DefaultString,
+                    "Invalid file name received {}",
+                    ensure_size(file_name, 100)
+                ),
             ));
         }
     };

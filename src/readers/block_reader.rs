@@ -1,9 +1,8 @@
 use crate::error::StorageError;
-use crate::types::DataBlock;
 
 pub trait BlockReader {
     /// read next block
-    fn next(&mut self, retry: bool) -> Result<Option<Block>, StorageError>;
+    fn next(&mut self, buffer: &mut [u8], retry: bool) -> Result<Option<Block>, StorageError>;
 
     /// release block returning data size released
     fn free_block(&mut self, block: u16) -> usize;
@@ -14,6 +13,7 @@ pub trait BlockReader {
 #[derive(Debug)]
 pub struct Block {
     pub block: u16,
-    pub data: DataBlock,
+    pub index: u64,
+    pub size: usize,
     pub retry: bool,
 }

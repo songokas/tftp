@@ -1,6 +1,7 @@
 use log::error;
 
-use crate::buffer::new_buffer;
+use crate::buffer::new_data_block_07;
+use crate::buffer::resize_data_block_07;
 use crate::buffer::SliceMutExt;
 use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::encryption::StreamEncryptor;
@@ -13,6 +14,7 @@ use crate::std_compat::io::Read;
 use crate::std_compat::io::Result;
 use crate::std_compat::io::Seek;
 use crate::std_compat::io::SeekFrom;
+use crate::types::DataBlock07;
 
 const MIN_CAPACITY: u8 = STREAM_BLOCK_SIZE + STREAM_NONCE_SIZE + ENCRYPTION_TAG_SIZE;
 
@@ -21,6 +23,7 @@ pub struct StreamReader<R> {
     stream_encryptor: StreamEncryptor,
     reader: R,
     nonce: Option<StreamNonce>,
+    buffer: Option<DataBlock07>,
 }
 
 impl<R> StreamReader<R> {
@@ -29,6 +32,7 @@ impl<R> StreamReader<R> {
             stream_encryptor,
             reader,
             nonce: nonce.into(),
+            buffer: None,
         }
     }
 }
@@ -44,19 +48,23 @@ impl<R: Read> Read for StreamReader<R> {
             let s = data
                 .write_bytes(block_size.to_be_bytes(), 0_usize)
                 .ok_or(ErrorKind::InvalidData)?;
+            self.buffer = new_data_block_07(block_size).into();
             data.write_bytes(nonce, s).ok_or(ErrorKind::InvalidData)?
         } else {
             0
         };
 
-        let mut buffer = new_buffer(data.len());
+        let buffer = self.buffer.as_mut().ok_or(ErrorKind::Unsupported)?;
         let block_size = data.len() - ENCRYPTION_TAG_SIZE as usize - from;
+        resize_data_block_07(buffer, block_size);
+
         let read_count = self
             .reader
             .read(buffer.get_mut(..block_size).ok_or(ErrorKind::InvalidData)?)?;
         buffer.truncate(read_count);
+        
         self.stream_encryptor
-            .encrypt(&mut buffer, block_size)
+            .encrypt(buffer, block_size)
             .map_err(|e| {
                 if matches!(e, EncryptionError::NoStream) {
                     ErrorKind::Unsupported

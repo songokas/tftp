@@ -121,6 +121,8 @@ pub fn create_bound_socket(
         socket,
         poller,
         socket_id,
+        // TODO alloc in stack
+        events: Events::with_capacity(NonZeroUsize::new(1).unwrap()),
     };
     Ok(socket)
 }
@@ -184,10 +186,12 @@ impl Socket for UdpUnboundSocket {
             .map_err(from_io_err)
     }
 
+    #[cfg(not(feature = "multi_thread"))]
     fn notified(&self, socket: &impl ToSocketId) -> bool {
         self.notified.contains(&socket.socket_id())
     }
 
+    #[cfg(not(feature = "multi_thread"))]
     fn add_interest(&self, socket: &impl ToSocketId) -> io::Result<()> {
         unsafe {
             self.poller
@@ -231,18 +235,18 @@ pub struct UdpBoundSocket {
     socket: UdpSocket,
     poller: Poller,
     socket_id: usize,
+    events: Events,
 }
 
 impl BoundSocket for UdpBoundSocket {
-    fn recv(&self, buff: &mut DataBuffer, wait_for: Option<Duration>) -> io::Result<usize> {
+    fn recv(&mut self, buff: &mut DataBuffer, wait_for: Option<Duration>) -> io::Result<usize> {
         if let Some(d) = wait_for {
             self.poller
                 .modify(&self.socket, Event::readable(self.socket_id))
                 .map_err(from_io_err)?;
-            // TODO alloc in stack
-            let mut events = Events::with_capacity(NonZeroUsize::new(1).unwrap());
+            self.events.clear();
             self.poller
-                .wait(&mut events, d.into())
+                .wait(&mut self.events, d.into())
                 .map_err(from_io_err)?;
         }
         self.socket.recv(buff).map_err(from_io_err)

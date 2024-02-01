@@ -28,9 +28,10 @@ impl<T: self::block_reader::BlockReader + ?Sized> self::block_reader::BlockReade
 {
     fn next(
         &mut self,
+        buffer: &mut [u8],
         retry: bool,
     ) -> Result<Option<block_reader::Block>, crate::error::StorageError> {
-        self.as_mut().next(retry)
+        self.as_mut().next(buffer, retry)
     }
 
     fn free_block(&mut self, block: u16) -> usize {

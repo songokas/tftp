@@ -162,7 +162,7 @@ pub mod error {
 }
 
 pub mod net {
-    #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
     pub struct SocketAddr {
         pub ip: IpVersion,
         pub port: u16,
@@ -177,30 +177,10 @@ pub mod net {
             self.port
         }
     }
-    #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
     pub enum IpVersion {
         Ipv4([u8; 4]),
         Ipv6([u8; 16]),
-    }
-
-    impl hash32::Hash for SocketAddr {
-        fn hash<H>(&self, state: &mut H)
-        where
-            H: hash32::Hasher,
-        {
-            match self.ip {
-                IpVersion::Ipv4(b) => {
-                    let bytes: heapless::Vec<u8, 6> =
-                        b.into_iter().chain(self.port.to_be_bytes()).collect();
-                    state.write(&bytes);
-                }
-                IpVersion::Ipv6(b) => {
-                    let bytes: heapless::Vec<u8, 18> =
-                        b.into_iter().chain(self.port.to_be_bytes()).collect();
-                    state.write(&bytes);
-                }
-            }
-        }
     }
 
     impl core::fmt::Display for IpVersion {

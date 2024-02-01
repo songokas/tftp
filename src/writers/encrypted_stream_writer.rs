@@ -1,4 +1,7 @@
+use crate::buffer::new_data_block_07;
+use crate::buffer::resize_data_block_07;
 use crate::buffer::SliceExt;
+use crate::buffer::SliceMutExt;
 use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::encryption::EncryptionKey;
 use crate::encryption::StreamDecryptor;
@@ -8,13 +11,14 @@ use crate::error::EncryptionError;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Result;
 use crate::std_compat::io::Write;
-use crate::types::DataBlock;
+use crate::types::DataBlock07;
 
 pub struct StreamWriter<W> {
     stream_decryptor: Option<StreamDecryptor>,
     writer: W,
     key: Option<EncryptionKey>,
     block_size: Option<u16>,
+    buffer: Option<DataBlock07>,
 }
 
 impl<W> StreamWriter<W> {
@@ -24,6 +28,7 @@ impl<W> StreamWriter<W> {
             writer,
             key: key.into(),
             block_size: None,
+            buffer: None,
         }
     }
 }
@@ -43,25 +48,28 @@ impl<W: Write> Write for StreamWriter<W> {
             self.stream_decryptor = StreamDecryptor::new(&key, &nonce).into();
 
             self.block_size = block_size.into();
+            self.buffer = new_data_block_07(block_size).into();
 
             nonce.len() + block_size_bytes.len()
         } else {
             0
         };
-        let mut buffer: DataBlock = data
-            .get(from..)
-            .ok_or(ErrorKind::InvalidData)?
-            .iter()
-            .copied()
-            .collect();
 
         let provided_block_size = self.block_size.ok_or(ErrorKind::Unsupported)?;
+        let buffer = self.buffer.as_mut().ok_or(ErrorKind::Unsupported)?;
+        resize_data_block_07(buffer, provided_block_size);
+
+        let size = buffer
+            .write_bytes(data.get(from..).ok_or(ErrorKind::InvalidData)?, 0_usize)
+            .ok_or(ErrorKind::InvalidData)?;
+        buffer.truncate(size);
+
         let block_size = (provided_block_size - from as u16) as usize;
 
         self.stream_decryptor
             .as_mut()
             .ok_or(ErrorKind::Unsupported)?
-            .decrypt(&mut buffer, block_size)
+            .decrypt(buffer, block_size)
             .map_err(|e| {
                 if matches!(e, EncryptionError::NoStream) {
                     ErrorKind::Unsupported
@@ -115,6 +123,9 @@ mod tests {
         assert_eq!(s, BLOCK_SIZE - 2);
 
         let err = writer.write(&buffer).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+
+        let err = writer.write(&buffer[..BLOCK_SIZE]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Unsupported);
     }
 

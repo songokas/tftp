@@ -158,6 +158,7 @@ pub enum StorageError {
     File(crate::std_compat::io::Error),
     AlreadyWritten(ExistingBlock),
     ExpectedBlock(ExistingBlock),
+    InvalidBuffer { actual: usize, expected: usize },
 }
 
 impl From<crate::std_compat::io::Error> for StorageError {
@@ -174,6 +175,9 @@ impl Display for StorageError {
             // StorageError::CapacityReached => write!(f, "Buffer capacity reached"),
             StorageError::File(s) => s.fmt(f),
             StorageError::AlreadyWritten(_) => write!(f, "Block has been already written"),
+            StorageError::InvalidBuffer { actual, expected } => {
+                write!(f, "Invalid buffer len {actual} expected {expected}")
+            }
             // StorageError::FileTooBig => write!(f, "File is too big"),
             StorageError::ExpectedBlock(e) => {
                 write!(f, "Expecting block after {}", e.current)
@@ -277,6 +281,7 @@ pub enum EncryptionError {
     Decrypt,
     Nonce,
     NoStream,
+    Tag,
     Encode(EncodingErrorType),
     Decode(EncodingErrorType),
     Padding(PaddingError),
@@ -290,6 +295,7 @@ impl Display for EncryptionError {
             EncryptionError::Encrypt => write!(f, "Failed to encrypt"),
             EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
             EncryptionError::Nonce => write!(f, "Invalid nonce"),
+            EncryptionError::Tag => write!(f, "Invalid tag"),
             EncryptionError::NoStream => write!(f, "Stream has been used"),
             EncryptionError::Encode(t) => write!(f, "Failed to encode {t}"),
             EncryptionError::Decode(t) => write!(f, "Failed to decode {t}"),

@@ -6,6 +6,7 @@ use core::mem::size_of_val;
 use core::str::from_utf8;
 use core::str::FromStr;
 
+use crate::buffer::SliceMutExt;
 use crate::error::PacketError;
 use crate::error::PacketResult;
 use crate::map::Map;
@@ -17,13 +18,14 @@ use crate::types::PacketBlock;
 #[cfg(feature = "alloc")]
 pub type PacketExtensions = Map<Extension, ExtensionValue>;
 #[cfg(not(feature = "alloc"))]
-pub type PacketExtensions = Map<Extension, ExtensionValue, { Extension::SIZE as usize }>;
+pub type PacketExtensions = Map<Extension, ExtensionValue, { Extension::SIZE as usize + 2 }>;
 
 pub trait ByteConverter<'a> {
     fn from_bytes(bytes: &'a [u8]) -> PacketResult<Self>
     where
         Self: Sized;
     fn to_bytes(self) -> PacketBlock;
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize>;
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +65,35 @@ impl<'a> ByteConverter<'a> for Packet<'a> {
             PacketType::Error => Packet::Error(ErrorPacket::from_bytes(remaining)?),
             PacketType::OptionalAck => Packet::OptionalAck(OptionalAck::from_bytes(remaining)?),
         })
+    }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        match self {
+            Packet::Read(p) => {
+                let size = buffer.write_bytes(PacketType::Read.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Write(p) => {
+                let size = buffer.write_bytes(PacketType::Write.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Data(p) => {
+                let size = buffer.write_bytes(PacketType::Data.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Ack(p) => {
+                let size = buffer.write_bytes(PacketType::Ack.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::Error(p) => {
+                let size = buffer.write_bytes(PacketType::Error.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+            Packet::OptionalAck(p) => {
+                let size = buffer.write_bytes(PacketType::OptionalAck.to_bytes(), 0_usize)?;
+                p.to_buffer(buffer.get_mut(size..)?).map(|s| size + s)
+            }
+        }
     }
 
     fn to_bytes(self) -> PacketBlock {
@@ -190,16 +221,16 @@ pub enum Extension {
     WindowSize,
 }
 
-#[cfg(not(feature = "alloc"))]
-impl hash32::Hash for Extension {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: hash32::Hasher,
-    {
-        let t = self.clone() as u8;
-        state.write(&[t]);
-    }
-}
+// #[cfg(not(feature = "alloc"))]
+// impl hash32::Hash for Extension {
+//     fn hash<H>(&self, state: &mut H)
+//     where
+//         H: hash32::Hasher,
+//     {
+//         let t = self.clone() as u8;
+//         state.write(&[t]);
+//     }
+// }
 
 impl Extension {
     pub const SIZE: u8 = 6;
@@ -290,6 +321,17 @@ impl<'a> ByteConverter<'a> for OptionalAck {
                 v
             })
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let mut size = 0;
+        for (key, value) in self.extensions {
+            size = buffer.write_bytes(key.as_str().as_bytes(), size)?;
+            size = buffer.write_bytes([0], size)?;
+            size = buffer.write_bytes(value.as_bytes(), size)?;
+            size = buffer.write_bytes([0], size)?;
+        }
+        Some(size)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -308,7 +350,7 @@ impl<'a> ByteConverter<'a> for RequestPacket {
             ),
             _ => return Err(PacketError::Invalid),
         };
-        let file_name = name.parse().map_err(|_duration| PacketError::Invalid)?;
+        let file_name = name.parse().map_err(|_| PacketError::Invalid)?;
 
         let (rest, octet) = match rest.iter().position(|&c| c == b'\0') {
             Some(n) => (rest.get(n + 1..), from_utf8(&rest[..n])?),
@@ -326,6 +368,20 @@ impl<'a> ByteConverter<'a> for RequestPacket {
             mode,
             extensions,
         })
+    }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let optional = OptionalAck {
+            extensions: self.extensions,
+        };
+
+        let mut size = buffer.write_bytes(self.file_name.as_bytes(), 0_usize)?;
+        size = buffer.write_bytes([0], size)?;
+        size = buffer.write_bytes(self.mode.as_str().as_bytes(), size)?;
+        size = buffer.write_bytes([0], size)?;
+        optional
+            .to_buffer(buffer.get_mut(size..)?)
+            .map(|s| size + s)
     }
 
     fn to_bytes(self) -> PacketBlock {
@@ -368,6 +424,12 @@ impl<'a> ByteConverter<'a> for DataPacket<'a> {
             .chain(self.data.iter().copied())
             .collect()
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let mut size = buffer.write_bytes(self.block.to_be_bytes(), 0_usize)?;
+        size = buffer.write_bytes(self.data, size)?;
+        Some(size)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -385,6 +447,10 @@ impl<'a> ByteConverter<'a> for AckPacket {
     fn to_bytes(self) -> PacketBlock {
         self.block.to_be_bytes().into_iter().collect()
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        buffer.write_bytes(self.block.to_be_bytes(), 0_usize)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -392,7 +458,7 @@ impl<'a> ByteConverter<'a> for AckPacket {
 pub enum ErrorCode {
     Undefined,
     FileNotFound,
-    AccessVioliation,
+    AccessViolation,
     DiskFull,
     IllegalOperation,
     UnknownId,
@@ -405,7 +471,7 @@ impl Display for ErrorCode {
         match self {
             ErrorCode::Undefined => write!(f, "Undefined"),
             ErrorCode::FileNotFound => write!(f, "FileNotFound"),
-            ErrorCode::AccessVioliation => write!(f, "AccessVioliation"),
+            ErrorCode::AccessViolation => write!(f, "AccessVioliation"),
             ErrorCode::DiskFull => write!(f, "DiskFull"),
             ErrorCode::IllegalOperation => write!(f, "IllegalOperation"),
             ErrorCode::UnknownId => write!(f, "UnknownId"),
@@ -420,7 +486,7 @@ impl ErrorCode {
         match s {
             0 => ErrorCode::Undefined,
             1 => ErrorCode::FileNotFound,
-            2 => ErrorCode::AccessVioliation,
+            2 => ErrorCode::AccessViolation,
             3 => ErrorCode::DiskFull,
             4 => ErrorCode::IllegalOperation,
             5 => ErrorCode::UnknownId,
@@ -469,6 +535,18 @@ impl<'a> ByteConverter<'a> for ErrorPacket {
             .chain([0])
             .collect()
     }
+
+    fn to_buffer(self, buffer: &mut [u8]) -> Option<usize> {
+        let mut size = buffer.write_bytes((self.code as u16).to_be_bytes(), 0_usize)?;
+        size = buffer.write_bytes(self.message.as_bytes(), size)?;
+        size = buffer.write_bytes([0], size)?;
+        Some(size)
+    }
+}
+
+pub fn prepend_data_header(block: u16, buffer: &mut [u8]) -> Option<usize> {
+    let size = buffer.write_bytes(PacketType::Data.to_bytes(), 0_usize)?;
+    buffer.write_bytes(block.to_be_bytes(), size)
 }
 
 fn try_from(bytes: &[u8]) -> Result<u16, PacketError> {
@@ -508,16 +586,20 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            Packet::Read(RequestPacket {
-                file_name: "foobar.txt".parse().unwrap(),
-                mode: Mode::Octet,
-                extensions: Default::default(),
-            })
-            .to_bytes()
-            .as_slice(),
-            b"\x00\x01foobar.txt\x00octet\x00"
-        );
+        let packet = Packet::Read(RequestPacket {
+            file_name: "foobar.txt".parse().unwrap(),
+            mode: Mode::Octet,
+            extensions: Default::default(),
+        });
+        let expected = b"\x00\x01foobar.txt\x00octet\x00";
+
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected);
+
+        let mut buffer = [0_u8; 100];
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
     }
 
     #[test]
@@ -537,16 +619,19 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            Packet::Write(RequestPacket {
-                file_name: "foobar.txt".parse().unwrap(),
-                mode: Mode::Octet,
-                extensions: Default::default(),
-            })
-            .to_bytes()
-            .as_slice(),
-            b"\x00\x02foobar.txt\x00octet\x00"
-        );
+        let packet = Packet::Write(RequestPacket {
+            file_name: "foobar.txt".parse().unwrap(),
+            mode: Mode::Octet,
+            extensions: Default::default(),
+        });
+        let expected = b"\x00\x02foobar.txt\x00octet\x00";
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected);
+
+        let mut buffer = [0_u8; 100];
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
     }
 
     #[test]
@@ -566,16 +651,20 @@ mod tests {
                 assert!(matches!(packet, Ok(Packet::Data(DataPacket { .. }))));
             }
         }
+        let packet = Packet::Data(DataPacket {
+            block: 1,
+            data: &[0x30, 0x31],
+        });
 
-        assert_eq!(
-            Packet::Data(DataPacket {
-                block: 1,
-                data: &[0x30, 0x31],
-            })
-            .to_bytes()
-            .as_slice(),
-            b"\x00\x03\x00\x01\x30\x31"
-        );
+        let expected = b"\x00\x03\x00\x01\x30\x31";
+
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected);
+
+        let mut buffer = [0_u8; 100];
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
     }
 
     #[test]
@@ -595,10 +684,16 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            Packet::Ack(AckPacket { block: 1 }).to_bytes().as_slice(),
-            b"\x00\x04\x00\x01"
-        );
+        let packet = Packet::Ack(AckPacket { block: 1 });
+        let expected = b"\x00\x04\x00\x01";
+
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected);
+
+        let mut buffer = [0_u8; 100];
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
     }
 
     #[test]
@@ -639,19 +734,24 @@ mod tests {
             b"\x00\x05\x00\x01File not found\x00"
         );
 
-        assert_eq!(
-            Packet::Error(ErrorPacket::new(
-                ErrorCode::DiskFull,
-                format_str!(
-                    DefaultString,
-                    "Unable to write file {}",
-                    "some-file-to-test.bin"
-                ),
-            ))
-            .to_bytes()
-            .as_slice(),
-            b"\x00\x05\x00\x03Unable to write file some-file-to-test.bin\x00"
-        );
+        let packet = Packet::Error(ErrorPacket::new(
+            ErrorCode::DiskFull,
+            format_str!(
+                DefaultString,
+                "Unable to write file {}",
+                "some-file-to-test.bin"
+            ),
+        ));
+
+        let expected = b"\x00\x05\x00\x03Unable to write file some-file-to-test.bin\x00";
+
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected);
+
+        let mut buffer = [0_u8; 100];
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
     }
 
     #[test]
@@ -688,31 +788,39 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            Packet::OptionalAck(OptionalAck {
-                extensions: [
-                    (Extension::Timeout, format_str!(ExtensionValue, "{}", 123)),
-                    (
-                        Extension::TransferSize,
-                        format_str!(ExtensionValue, "{}", 123)
-                    ),
-                ]
-                .into_iter()
-                .collect()
-            })
-            .to_bytes()
-            .as_slice(),
-            b"\x00\x06timeout\x00123\x00tsize\x00123\x00",
-        );
+        let mut buffer = [0_u8; 100];
 
-        assert_eq!(
-            Packet::OptionalAck(OptionalAck {
-                extensions: Default::default(),
-            })
-            .to_bytes()
-            .as_slice(),
-            b"\x00\x06"
-        );
+        let packet = Packet::OptionalAck(OptionalAck {
+            extensions: [
+                (
+                    Extension::TransferSize,
+                    format_str!(ExtensionValue, "{}", 123),
+                ),
+                (Extension::Timeout, format_str!(ExtensionValue, "{}", 123)),
+            ]
+            .into_iter()
+            .collect(),
+        });
+
+        let expected = b"\x00\x06timeout\x00123\x00tsize\x00123\x00";
+
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected,);
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
+
+        let packet = Packet::OptionalAck(OptionalAck {
+            extensions: Default::default(),
+        });
+
+        let expected = b"\x00\x06";
+
+        assert_eq!(packet.clone().to_bytes().as_slice(), expected);
+
+        packet.to_buffer(&mut buffer);
+
+        assert_eq!(&buffer[0..expected.len()], expected);
     }
 
     #[test]

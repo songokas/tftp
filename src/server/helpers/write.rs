@@ -23,15 +23,16 @@ use crate::writers::block_writer::BlockWriter;
 pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     connection: &mut Connection<B, Rng>,
     block_writer: &mut W,
-    buffer: &mut DataBuffer,
+    receive_buffer: &mut DataBuffer,
+    send_buffer: &mut DataBuffer,
     instant: InstantCallback,
     max_file_size: u64,
 ) -> Option<()> {
-    if !connection.decrypt_packet(buffer) {
+    if !connection.decrypt_packet(receive_buffer) {
         return None;
     }
 
-    let packet_type = PacketType::from_bytes(buffer);
+    let packet_type = PacketType::from_bytes(receive_buffer);
     if !matches!(
         packet_type,
         Ok(PacketType::Data | PacketType::Ack | PacketType::Error)
@@ -39,13 +40,16 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
         debug!(
             "Incorrect packet type received from {} {} {:x?}",
             connection.endpoint,
-            buffer.len(),
-            buffer,
+            receive_buffer.len(),
+            receive_buffer,
         );
         return None;
     }
 
-    match Packet::from_bytes(buffer) {
+    #[allow(unused_mut)]
+    let mut write_elapsed = instant();
+
+    let result = match Packet::from_bytes(receive_buffer) {
         Ok(Packet::Data(p)) => {
             let data_length = p.data.len();
 
@@ -54,39 +58,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
                 p.block, data_length, connection.transfer, connection.endpoint
             );
 
-            #[allow(unused_mut)]
-            let mut write_elapsed = instant();
-            match write_block(connection, block_writer, p.block, p.data) {
-                Ok(Some(n)) => {
-                    connection.last_updated = instant();
-                    connection.transfer += n;
-                    trace!(
-                        "Block {} written in {}us",
-                        p.block,
-                        write_elapsed.elapsed().as_micros()
-                    );
-                    if n < connection.options.block_size_with_encryption() as usize {
-                        info!(
-                            "Client write {} finished with {} bytes",
-                            connection.endpoint, connection.transfer
-                        );
-                        connection.finished = true;
-                    }
-                }
-                Ok(_) => return None,
-                Err(e) => {
-                    connection.send_packet(Packet::Error(e));
-                    connection.invalid = true;
-                    return None;
-                }
-            }
-
-            // this would write more than expected but only by a block size maximum
-            if let Err(e) = handle_file_size(connection.transfer as u64, max_file_size) {
-                connection.send_packet(Packet::Error(e));
-                connection.invalid = true;
-                return None;
-            }
+            write_block(block_writer, p.block, p.data)
         }
         Ok(Packet::Ack(_)) => {
             return None;
@@ -99,23 +71,66 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
         _ => {
             debug!(
                 "Incorrect packet received from {} {:x?}",
-                connection.endpoint, buffer
+                connection.endpoint, receive_buffer
             );
             return None;
         }
     };
+
+    match result {
+        Ok((written, index, block)) => {
+            if let Some(w) = written {
+                if let Err(e) = handle_file_size((connection.transfer + w) as u64, max_file_size) {
+                    connection.send_packet(Packet::Error(e), send_buffer);
+                    connection.invalid = true;
+                    return None;
+                }
+            }
+
+            trace!(
+                "Block {} written in {}us",
+                block,
+                write_elapsed.elapsed().as_micros()
+            );
+            if connection.options.window_size <= 1
+                || connection.last_acknowledged + connection.options.window_size as u64 == index
+                || written.unwrap_or(0) < connection.options.block_size_with_encryption() as usize
+            {
+                if !connection.send_packet(Packet::Ack(AckPacket { block }), send_buffer) {
+                    error!("Unable to ack block {}", block);
+                } else {
+                    connection.last_acknowledged = index;
+                }
+            }
+
+            if let Some(w) = written {
+                connection.last_updated = instant();
+                connection.transfer += w;
+
+                if w < connection.options.block_size_with_encryption() as usize {
+                    info!(
+                        "Client write {} finished with {} bytes",
+                        connection.endpoint, connection.transfer
+                    );
+                    connection.finished = true;
+                }
+            }
+        }
+        Err(e) => {
+            connection.send_packet(Packet::Error(e), send_buffer);
+            connection.invalid = true;
+            return None;
+        }
+    }
+
     Some(())
 }
 
-fn write_block<W: BlockWriter, B, Rng: CryptoRng + RngCore + Copy>(
-    connection: &mut Connection<B, Rng>,
+fn write_block<W: BlockWriter>(
     block_writer: &mut W,
     mut block: u16,
     data: &[u8],
-) -> Result<Option<usize>, ErrorPacket>
-where
-    B: BoundSocket,
-{
+) -> Result<(Option<usize>, u64, u16), ErrorPacket> {
     let (written, index) = match block_writer.write_block(block, data) {
         Ok((w, i)) => {
             debug!("Write block {} written size {}", block, w);
@@ -137,21 +152,11 @@ where
         Err(e) => {
             error!("Failed to write block {} {}", block, e);
             return Err(ErrorPacket::new(
-                ErrorCode::AccessVioliation,
-                format_str!(DefaultString, "{}", e),
+                ErrorCode::AccessViolation,
+                format_str!(DefaultString, "{}", e,),
             ));
         }
     };
 
-    if connection.options.window_size <= 1
-        || connection.last_acknowledged + connection.options.window_size as u64 == index
-        || written.unwrap_or(0) < connection.options.block_size_with_encryption() as usize
-    {
-        if !connection.send_packet(Packet::Ack(AckPacket { block })) {
-            error!("Unable to ack block {}", block);
-        } else {
-            connection.last_acknowledged = index;
-        }
-    }
-    Ok(written)
+    Ok((written, index, block))
 }
