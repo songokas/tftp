@@ -1,3 +1,5 @@
+use log::trace;
+
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
 use crate::block_mapper::BlockMapper;
@@ -60,6 +62,8 @@ where
                 None
             });
         }
+
+        trace!("Reading block {}", self.block_read + 1);
 
         let read = self.reader.read(&mut self.buffer)?;
         self.buffer.truncate(read);

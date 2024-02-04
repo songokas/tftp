@@ -29,6 +29,10 @@ build() {
     # cp target/x86_64-unknown-linux-musl/release/tftp dist/tftp-static
 }
 
+build_pi() {
+    cross build -p tftp-std-binary --target "aarch64-unknown-linux-gnu" --release
+}
+
 release_bins() {
     for target in ${BIN_RELEASE_TARGETS[@]}; do
 

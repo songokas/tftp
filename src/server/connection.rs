@@ -1,8 +1,7 @@
-use core::num::NonZeroU16;
+use core::num::NonZeroU8;
 use core::time::Duration;
 
-use log::debug;
-use log::error;
+use log::*;
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -44,10 +43,12 @@ pub struct Connection<B, Rng> {
     pub last_updated: Instant,
     /// last block index acknowledged
     pub last_acknowledged: u64,
+    pub last_sent: Instant,
     // total file size transferred
     pub transfer: usize,
     // multiplier for retry_packet_after_timeout
-    pub retry_packet_multiplier: NonZeroU16,
+    pub retry_packet_multiplier: NonZeroU8,
+
     pub endpoint: SocketAddr,
     pub finished: bool,
     pub invalid: bool,
@@ -101,9 +102,9 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
     pub fn send_packet(&self, packet: Packet, buffer: &mut DataBuffer) -> bool {
         let packet_name = packet.packet_type();
         match &packet {
-            Packet::Data(d) => debug!("Send {} {} to {}", packet_name, d.block, self.endpoint),
-            Packet::Ack(d) => debug!("Send {} {} to {}", packet_name, d.block, self.endpoint),
-            _ => debug!("Send {} to {}", packet_name, self.endpoint),
+            Packet::Data(d) => trace!("Send {} {} to {}", packet_name, d.block, self.endpoint),
+            Packet::Ack(d) => trace!("Send {} {} to {}", packet_name, d.block, self.endpoint),
+            _ => trace!("Send {} to {}", packet_name, self.endpoint),
         };
 
         // ensure min buffer size

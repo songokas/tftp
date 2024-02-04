@@ -2,7 +2,15 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
-## [0.5.1] - 2024-02-01
+## [0.5.3] - 2024-02-03
+
+### Fixed
+
+- retry timeout argument range in milliseconds
+- multi block reader free last block (introduced in 0.5.2)
+- server retry increase timeout was not working correctly
+
+## [0.5.2] - 2024-02-01
 
 ### Changed
 

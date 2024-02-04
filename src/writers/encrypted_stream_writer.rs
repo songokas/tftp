@@ -1,12 +1,15 @@
+use log::error;
+use log::trace;
+
 use crate::buffer::new_data_block_07;
 use crate::buffer::resize_data_block_07;
 use crate::buffer::SliceExt;
 use crate::buffer::SliceMutExt;
 use crate::config::ENCRYPTION_TAG_SIZE;
+use crate::config::MAX_DATA_BLOCK_SIZE;
 use crate::encryption::EncryptionKey;
 use crate::encryption::StreamDecryptor;
-use crate::encryption::STREAM_BLOCK_SIZE;
-use crate::encryption::STREAM_NONCE_SIZE;
+use crate::encryption::MIN_STREAM_CAPACITY;
 use crate::error::EncryptionError;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Result;
@@ -35,18 +38,23 @@ impl<W> StreamWriter<W> {
 
 impl<W: Write> Write for StreamWriter<W> {
     fn write(&mut self, data: &[u8]) -> Result<usize> {
-        let from = if let Some(key) = self.key.take() {
+        let from = if let Some(key) = self.key.as_ref() {
             let block_size_bytes = data.slice_to_array(0_usize).ok_or(ErrorKind::InvalidData)?;
             let block_size = u16::from_be_bytes(block_size_bytes);
-            if block_size < STREAM_BLOCK_SIZE as u16 + STREAM_NONCE_SIZE as u16 {
+
+            if !(MIN_STREAM_CAPACITY as u16..=MAX_DATA_BLOCK_SIZE).contains(&block_size) {
+                error!(
+                    "Invalid block size received {block_size} expected from {} to {}",
+                    MIN_STREAM_CAPACITY, MAX_DATA_BLOCK_SIZE
+                );
                 return Err(ErrorKind::InvalidData.into());
             }
 
             let nonce = data
                 .slice_to_array(block_size_bytes.len())
                 .ok_or(ErrorKind::InvalidData)?;
-            self.stream_decryptor = StreamDecryptor::new(&key, &nonce).into();
 
+            self.stream_decryptor = StreamDecryptor::new(key, &nonce).into();
             self.block_size = block_size.into();
             self.buffer = new_data_block_07(block_size).into();
 
@@ -66,6 +74,8 @@ impl<W: Write> Write for StreamWriter<W> {
 
         let block_size = (provided_block_size - from as u16) as usize;
 
+        trace!("Decrypting file block {buffer:x?}");
+
         self.stream_decryptor
             .as_mut()
             .ok_or(ErrorKind::Unsupported)?
@@ -74,13 +84,19 @@ impl<W: Write> Write for StreamWriter<W> {
                 if matches!(e, EncryptionError::NoStream) {
                     ErrorKind::Unsupported
                 } else {
+                    error!("Unable to decrypt data. Data length {}, block size {block_size}. Client block size must be {provided_block_size} (adding encryption headers if necessary)", buffer.len());
                     ErrorKind::InvalidData
                 }
             })?;
 
-        self.writer
-            .write(&buffer)
-            .map(|s| s + from + ENCRYPTION_TAG_SIZE as usize)
+        let written = self
+            .writer
+            .write(buffer)
+            .map(|s| s + from + ENCRYPTION_TAG_SIZE as usize)?;
+
+        self.key.take();
+
+        Ok(written)
     }
 
     fn write_fmt(&mut self, _fmt: core::fmt::Arguments<'_>) -> Result<()> {
@@ -174,6 +190,24 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::InvalidData);
     }
 
+    #[test]
+    fn test_write_failure() {
+        let writer = AlwaysFailWriter {};
+        const BLOCK_SIZE: usize = 90;
+        let mut writer = StreamWriter::new(
+            writer,
+            [
+                1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233,
+                200, 17, 22, 29, 93, 32, 1,
+            ],
+        );
+
+        let buffer = create_data();
+        let err = writer.write(&buffer[..BLOCK_SIZE]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Unsupported);
+        assert!(writer.key.is_some());
+    }
+
     fn create_data() -> [u8; 268] {
         [
             0, 90, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 129, 194, 13, 194,
@@ -206,6 +240,22 @@ mod tests {
 
         fn flush(&mut self) -> Result<()> {
             Ok(())
+        }
+    }
+
+    struct AlwaysFailWriter {}
+
+    impl Write for AlwaysFailWriter {
+        fn write(&mut self, _buf: &[u8]) -> Result<usize> {
+            Err(Into::into(ErrorKind::Unsupported))
+        }
+
+        fn write_fmt(&mut self, _fmt: core::fmt::Arguments<'_>) -> Result<()> {
+            Err(Into::into(ErrorKind::Unsupported))
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Err(Into::into(ErrorKind::Unsupported))
         }
     }
 }

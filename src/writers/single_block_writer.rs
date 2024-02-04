@@ -1,3 +1,5 @@
+use log::trace;
+
 use super::block_writer::BlockWriter;
 use crate::block_mapper::BlockMapper;
 use crate::error::ExistingBlock;
@@ -42,6 +44,9 @@ where
                 current_index: self.block_written,
             }));
         }
+
+        trace!("Writing block {expected_index}");
+
         let written = self.writer.write(data)?;
         self.block_written = expected_index;
         Ok((written, self.block_written))

@@ -6,7 +6,6 @@ use tftp::config::DEFAULT_RETRY_PACKET_TIMEOUT;
 use tftp::config::DEFAULT_WINDOW_SIZE;
 use tftp::config::EXTENSION_BLOCK_SIZE_MIN;
 use tftp::config::EXTENSION_TIMEOUT_SIZE_MAX;
-use tftp::config::EXTENSION_TIMEOUT_SIZE_MIN;
 use tftp::config::EXTENSION_WINDOW_SIZE_MIN;
 use tftp::config::MAX_BLOCKS_FOR_MULTI_READER;
 use tftp::config::MAX_CLIENTS;
@@ -48,7 +47,7 @@ pub struct ClientCliConfig {
     #[arg(
         long,
         default_value_t = DEFAULT_RETRY_PACKET_TIMEOUT.as_millis() as u64,
-        value_parser = clap::value_parser!(u64).range((EXTENSION_TIMEOUT_SIZE_MIN as u64)..(EXTENSION_TIMEOUT_SIZE_MAX as u64)),
+        value_parser = clap::value_parser!(u64).range((DEFAULT_RETRY_PACKET_TIMEOUT.as_millis() as u64)..(EXTENSION_TIMEOUT_SIZE_MAX as u64 * 1000)),
         help = "Resend packet after timeout in ms"
     )]
     pub retry_timeout: u64,

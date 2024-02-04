@@ -151,7 +151,7 @@ where
         let sent_in = instant();
 
         let (sent, recv_next_client_to_send) =
-            send_data_blocks(&mut clients, next_client_to_send, &mut send_buffer);
+            send_data_blocks(&mut clients, next_client_to_send, &mut send_buffer, instant);
 
         next_client_to_send = recv_next_client_to_send;
         wait_control.sending(sent);
@@ -393,6 +393,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
     clients: &mut Clients<R, W, B, Rng>,
     next_client: usize,
     buffer: &mut DataBuffer,
+    instant: InstantCallback,
 ) -> (bool, usize) {
     let mut current_client: Option<usize> = clients
         .iter_mut()
@@ -403,7 +404,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
         .enumerate()
         .skip(next_client)
         .find_map(|(index, (_, (c, ct)))| match ct {
-            ClientType::Reader(r) => send_data_block(c, r, buffer).then_some(index + 1),
+            ClientType::Reader(r) => send_data_block(c, r, buffer, instant).then_some(index + 1),
             _ => None,
         });
     if current_client.is_none() {
@@ -415,7 +416,9 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
             .take(next_client)
             .enumerate()
             .find_map(|(index, (_, (c, ct)))| match ct {
-                ClientType::Reader(r) => send_data_block(c, r, buffer).then_some(index + 1),
+                ClientType::Reader(r) => {
+                    send_data_block(c, r, buffer, instant).then_some(index + 1)
+                }
                 _ => None,
             });
     }

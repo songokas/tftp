@@ -1,13 +1,14 @@
 use log::error;
+use log::trace;
 
 use crate::buffer::new_data_block_07;
 use crate::buffer::resize_data_block_07;
 use crate::buffer::SliceMutExt;
 use crate::config::ENCRYPTION_TAG_SIZE;
+use crate::config::MAX_DATA_BLOCK_SIZE;
 use crate::encryption::StreamEncryptor;
 use crate::encryption::StreamNonce;
-use crate::encryption::STREAM_BLOCK_SIZE;
-use crate::encryption::STREAM_NONCE_SIZE;
+use crate::encryption::MIN_STREAM_CAPACITY;
 use crate::error::EncryptionError;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
@@ -15,8 +16,6 @@ use crate::std_compat::io::Result;
 use crate::std_compat::io::Seek;
 use crate::std_compat::io::SeekFrom;
 use crate::types::DataBlock07;
-
-const MIN_CAPACITY: u8 = STREAM_BLOCK_SIZE + STREAM_NONCE_SIZE + ENCRYPTION_TAG_SIZE;
 
 // layout: block size 2, nonce 19, blocks with encryption tag 16
 pub struct StreamReader<R> {
@@ -39,16 +38,21 @@ impl<R> StreamReader<R> {
 
 impl<R: Read> Read for StreamReader<R> {
     fn read(&mut self, data: &mut [u8]) -> Result<usize> {
-        if !(MIN_CAPACITY as usize..u16::MAX as usize).contains(&data.len()) {
+        if !(MIN_STREAM_CAPACITY as usize..=MAX_DATA_BLOCK_SIZE as usize).contains(&data.len()) {
             return Err(ErrorKind::Unsupported.into());
         }
 
-        let from = if let Some(nonce) = self.nonce.take() {
+        let from = if let Some(nonce) = self.nonce.as_ref() {
             let block_size = data.len() as u16;
             let s = data
                 .write_bytes(block_size.to_be_bytes(), 0_usize)
                 .ok_or(ErrorKind::InvalidData)?;
-            self.buffer = new_data_block_07(block_size).into();
+
+            // we do not expect the buffer size to change
+            if self.buffer.is_none() {
+                self.buffer = new_data_block_07(block_size).into();
+            }
+
             data.write_bytes(nonce, s).ok_or(ErrorKind::InvalidData)?
         } else {
             0
@@ -62,7 +66,9 @@ impl<R: Read> Read for StreamReader<R> {
             .reader
             .read(buffer.get_mut(..block_size).ok_or(ErrorKind::InvalidData)?)?;
         buffer.truncate(read_count);
-        
+
+        trace!("Encrypting file block {buffer:x?}");
+
         self.stream_encryptor
             .encrypt(buffer, block_size)
             .map_err(|e| {
@@ -73,9 +79,13 @@ impl<R: Read> Read for StreamReader<R> {
                 }
             })?;
 
-        data.write_bytes(buffer, from)
-            .ok_or(ErrorKind::InvalidData)
-            .map_err(Into::into)
+        let written = data
+            .write_bytes(buffer, from)
+            .ok_or(ErrorKind::InvalidData)?;
+
+        self.nonce.take();
+
+        Ok(written)
     }
 }
 
@@ -90,6 +100,10 @@ impl<S: Seek> Seek for StreamReader<S> {
 mod tests {
     use std::io::Cursor;
     use std::vec::Vec;
+
+    use crate::std_compat::io::ErrorKind;
+    use crate::std_compat::io::Read;
+    use crate::std_compat::io::Result;
 
     use super::*;
 
@@ -140,6 +154,22 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn test_read_failure() {
+        let reader = AlwaysFailReader {};
+        let encryptor = create_stream_encryptor();
+        let mut reader = StreamReader::new(
+            encryptor,
+            reader,
+            [1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3],
+        );
+
+        let mut buffer = [0_u8; 100];
+        let result = reader.read(&mut buffer);
+        assert!(matches!(result.unwrap_err().kind(), ErrorKind::Unsupported));
+        assert!(reader.nonce.is_some());
+    }
+
     fn create_stream_encryptor() -> StreamEncryptor {
         StreamEncryptor::new(
             &[
@@ -148,5 +178,13 @@ mod tests {
             ],
             &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3],
         )
+    }
+
+    struct AlwaysFailReader {}
+
+    impl Read for AlwaysFailReader {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
+            Err(Into::into(ErrorKind::Unsupported))
+        }
     }
 }

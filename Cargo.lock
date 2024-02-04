@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "tftp"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "arrayvec",
  "base64",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "tftp-std-binary"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cargo-deb",
  "clap",

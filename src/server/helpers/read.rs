@@ -1,4 +1,4 @@
-use core::num::NonZeroU16;
+use core::num::NonZeroU8;
 
 use log::debug;
 use log::error;
@@ -26,12 +26,21 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
     connection: &mut Connection<B, Rng>,
     block_reader: &mut R,
     buffer: &mut DataBuffer,
+    instant: InstantCallback,
 ) -> bool {
-    let retry = connection.last_updated.elapsed()
-        > connection
-            .options
-            .retry_packet_after_timeout
-            .mul_f32(connection.retry_packet_multiplier.get() as f32);
+    let timeout = connection
+        .options
+        .retry_packet_after_timeout
+        .mul_f32(connection.retry_packet_multiplier.get() as f32);
+    let retry = connection.last_sent.elapsed() > timeout;
+    if retry {
+        debug!(
+            "Retrying data elapsed {}ms timeout {}ms",
+            connection.last_updated.elapsed().as_millis(),
+            timeout.as_millis()
+        );
+        connection.retry_packet_multiplier = connection.retry_packet_multiplier.saturating_add(2);
+    }
     // ensure min buffer size
     let expected_min_buffer_size =
         DATA_PACKET_HEADER_SIZE as usize + connection.options.block_size as usize;
@@ -62,8 +71,17 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
         }
     };
     prepend_data_header(packet_block.block, buffer);
+    debug!(
+        "Send data block {} size {}",
+        packet_block.block,
+        buffer.len()
+    );
     buffer.truncate(DATA_PACKET_HEADER_SIZE as usize + packet_block.size);
-    connection.send_bytes(PacketType::Data, buffer)
+    let sent = connection.send_bytes(PacketType::Data, buffer);
+    if sent {
+        connection.last_sent = instant();
+    }
+    sent
 }
 
 pub fn handle_read<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
@@ -94,10 +112,12 @@ pub fn handle_read<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Co
                 connection.last_updated = instant();
                 connection.transfer += bytes_freed;
                 connection.retry_packet_multiplier =
-                    NonZeroU16::new(1).expect("Non zero multiplier");
-            } else {
-                connection.retry_packet_multiplier =
-                    connection.retry_packet_multiplier.saturating_add(1);
+                    if connection.retry_packet_multiplier.get() - 1 > 0 {
+                        NonZeroU8::new(connection.retry_packet_multiplier.get() - 1)
+                            .expect("non zero value")
+                    } else {
+                        NonZeroU8::new(1).expect("non zero integer")
+                    };
             }
             if block_reader.is_finished() {
                 info!(

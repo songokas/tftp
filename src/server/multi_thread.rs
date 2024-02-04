@@ -240,7 +240,7 @@ fn spawn_reader<
             if timeout_client(&mut connection, request_timeout, &mut send_buffer) {
                 return;
             }
-            let sent = send_data_block(&mut connection, &mut reader, &mut send_buffer);
+            let sent = send_data_block(&mut connection, &mut reader, &mut send_buffer, instant);
             wait_control.sending(sent);
 
             resize_buffer(&mut receive_buffer, max_buffer_size);

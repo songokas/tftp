@@ -1,4 +1,7 @@
+use core::cmp::max;
 use core::cmp::Ordering;
+
+use log::trace;
 
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
@@ -100,16 +103,14 @@ where
         }
 
         let block_buffer = if let Some(b) = self.blocks.iter_mut().find(|b| b.index.is_none()) {
-            // resize_data_block(&mut b.data, self.block_size);
             b
         } else {
             let data = new_data_block(self.block_size);
-            let _ = self.blocks.push(Buffer {
-                data,
-                index: index.into(),
-            });
+            let _ = self.blocks.push(Buffer { data, index: None });
             self.blocks.last_mut().expect("last block")
         };
+
+        trace!("Reading block {index}");
 
         let read = self.reader.read(&mut block_buffer.data)?;
         block_buffer.data.truncate(read);
@@ -138,6 +139,7 @@ where
 
     fn free_block(&mut self, block: u16) -> usize {
         let index = self.block_mapper.index(block);
+        // block order could be random
         let blocks_to_remove = self.blocks.iter_mut().filter(|b| {
             if let Some(bindex) = b.index {
                 bindex <= index
@@ -146,10 +148,15 @@ where
             }
         });
         let mut size = 0;
+        let mut last_block_removed = None;
         for block_to_remove in blocks_to_remove {
-            self.block_read = block_to_remove.index.expect("existing index");
+            last_block_removed = max(last_block_removed, block_to_remove.index);
             block_to_remove.index = None;
             size += block_to_remove.data.len();
+        }
+
+        if let Some(index) = last_block_removed {
+            self.block_read = index;
         }
         size
     }
@@ -172,6 +179,9 @@ struct Buffer {
 
 #[cfg(test)]
 mod tests {
+    use crate::std_compat::io::ErrorKind;
+    use crate::std_compat::io::Read;
+    use crate::std_compat::io::Result;
     use std::io::Cursor;
 
     use super::*;
@@ -370,6 +380,42 @@ mod tests {
         assert!(reader.is_finished());
     }
 
+    #[test]
+    fn test_read_is_always_for_new_block() {
+        let cursor = Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let mut reader = MultipleBlockReader::new(cursor, 2, 4);
+        let mut buffer = [0_u8; 100];
+        let result = reader.next(&mut buffer, false).unwrap().unwrap();
+        assert_eq!(result.block, 1);
+        let result = reader.next(&mut buffer, false).unwrap().unwrap();
+        assert_eq!(result.block, 2);
+
+        assert_eq!(2, reader.free_block(1));
+
+        let result = reader.next(&mut buffer, false).unwrap().unwrap();
+        assert_eq!(result.block, 2);
+        let result = reader.next(&mut buffer, false).unwrap().unwrap();
+        assert_eq!(result.block, 3);
+
+        assert_eq!(4, reader.free_block(3));
+
+        let result = reader.next(&mut buffer, false).unwrap().unwrap();
+        assert_eq!(result.block, 4);
+    }
+
+    #[test]
+    fn test_read_failure() {
+        let reader = AlwaysFailReader {};
+        let mut reader = MultipleBlockReader::new(reader, 2, 4);
+        let mut buffer = [0_u8; 100];
+        let result = reader.next(&mut buffer, false);
+        assert!(matches!(result.unwrap_err(), StorageError::File(_)));
+        let result = reader.next(&mut buffer, true);
+        assert!(matches!(result.unwrap_err(), StorageError::File(_)));
+        let result = reader.next(&mut buffer, false);
+        assert!(matches!(result.unwrap_err(), StorageError::File(_)));
+    }
+
     #[ignore]
     #[test]
     fn size_of() {
@@ -381,5 +427,13 @@ mod tests {
             expected_size,
             std::mem::size_of::<MultipleBlockReader<std::fs::File>>()
         );
+    }
+
+    struct AlwaysFailReader {}
+
+    impl Read for AlwaysFailReader {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
+            Err(ErrorKind::Unsupported).map_err(Into::into)
+        }
     }
 }

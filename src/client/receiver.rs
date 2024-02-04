@@ -111,7 +111,7 @@ where
                         || last_block_ack + options.window_size as u64 == index
                         || written.unwrap_or(0) < options.block_size_with_encryption() as usize
                     {
-                        debug!("Ack send {}", block);
+                        trace!("Ack send {}", block);
                         let packet = Packet::Ack(AckPacket { block });
                         socket.send_to(&mut packet.to_bytes(), endpoint)?;
                         last_block_ack = index;
@@ -153,14 +153,13 @@ where
                 if s != endpoint {
                     continue;
                 }
-                trace!("Received packet size {}", n);
                 n
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                 let elapsed = timeout.elapsed();
                 if elapsed > config.request_timeout {
                     if let Ok(s) = socket.local_addr() {
-                        debug!("Receive timeout for {}", s);
+                        debug!("Received timeout for {}", s);
                     }
                     return Err(PacketError::Timeout(elapsed).into());
                 }
@@ -181,7 +180,10 @@ where
         }
 
         let result = match Packet::from_bytes(&receive_buffer) {
-            Ok(Packet::Data(p)) => write_block(&mut block_writer, p.block, p.data),
+            Ok(Packet::Data(p)) => {
+                debug!("Received block {} data size {}", p.block, p.data.len());
+                write_block(&mut block_writer, p.block, p.data)
+            }
             Ok(Packet::Error(p)) => {
                 return Err(PacketError::RemoteError(p.message).into());
             }

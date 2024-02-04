@@ -40,19 +40,21 @@ impl<R> BlockingReader<R> {
 }
 
 impl<R: Read> Read for BlockingReader<R> {
-    // reader error with WouldBlock if there is no data to read
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let expected_size = buf.len();
+    // reader will error with WouldBlock if there is no data to read
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
+        let expected_size = buffer.len();
         let result = if !self.temp_buf.is_empty() {
             let temp_len = self.temp_buf.len();
-            for (to_buf, data) in buf.iter_mut().zip(self.temp_buf.iter()) {
+            for (to_buf, data) in buffer.iter_mut().zip(self.temp_buf.iter()) {
                 *to_buf = *data
             }
             self.temp_buf.clear();
 
-            self.file.read(&mut buf[temp_len..]).map(|s| temp_len + s)
+            self.file
+                .read(buffer.get_mut(temp_len..).ok_or(ErrorKind::InvalidData)?)
+                .map(|s| temp_len + s)
         } else {
-            self.file.read(buf)
+            self.file.read(buffer)
         };
         match result {
             Ok(0) => {
@@ -70,7 +72,7 @@ impl<R: Read> Read for BlockingReader<R> {
                     return Ok(n);
                 }
 
-                self.temp_buf = buf[..n].to_vec();
+                self.temp_buf = buffer[..n].to_vec();
 
                 trace!("Not enough data: read {n} expected {expected_size}");
 
@@ -112,13 +114,17 @@ mod tests {
         let mut buff: [u8; 2] = [0; 2];
         let result = blocking_reader.read(&mut buff);
         assert!(matches!(result, Err(e) if e.kind() == io::ErrorKind::WouldBlock));
+        assert_eq!(blocking_reader.temp_buf.len(), 0);
 
         let _ = cursor.write(&[bytes_to_send[0]]).unwrap();
         let result = blocking_reader.read(&mut buff);
         assert!(matches!(result, Err(e) if e.kind() == io::ErrorKind::WouldBlock));
+        assert_eq!(blocking_reader.temp_buf.len(), 1);
 
         let _ = cursor.write(&[bytes_to_send[1]]).unwrap();
         let read = blocking_reader.read(&mut buff).unwrap();
+        assert_eq!(read, 2);
+        assert_eq!(blocking_reader.temp_buf.len(), 0);
         received.extend(&buff[..read]);
 
         let _ = cursor.write(&[bytes_to_send[2]]).unwrap();
@@ -126,14 +132,18 @@ mod tests {
         let _ = cursor.write(&[bytes_to_send[4]]).unwrap();
 
         let read = blocking_reader.read(&mut buff).unwrap();
+        assert_eq!(blocking_reader.temp_buf.len(), 0);
+        assert_eq!(read, 2);
         received.extend(&buff[..read]);
 
         let result = blocking_reader.read(&mut buff);
+        assert_eq!(blocking_reader.temp_buf.len(), 1);
         assert!(matches!(result, Err(e) if e.kind() == io::ErrorKind::WouldBlock));
 
         finished.store(true, Ordering::Relaxed);
 
         let read = blocking_reader.read(&mut buff).unwrap();
+        assert_eq!(read, 1);
         received.extend(&buff[..read]);
 
         assert_eq!(bytes_expected, received);

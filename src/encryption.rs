@@ -24,6 +24,7 @@ use crate::buffer::extend_from_slice;
 use crate::buffer::SliceExt;
 use crate::config::ENCRYPTION_NONCE_SIZE;
 use crate::config::ENCRYPTION_PADDING_SIZE;
+use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::config::MAX_EXTENSION_VALUE_SIZE;
 use crate::error::EncodingErrorType;
 use crate::error::EncryptionError;
@@ -41,6 +42,7 @@ pub const STREAM_NONCE_SIZE: u8 = 19;
 pub const ENCRYPTION_KEY_SIZE: u8 = size_of::<PrivateKey>() as u8;
 pub const PUBLIC_KEY_SIZE: u8 = size_of::<PublicKey>() as u8;
 pub const STREAM_BLOCK_SIZE: u8 = 2;
+pub const MIN_STREAM_CAPACITY: u8 = STREAM_BLOCK_SIZE + STREAM_NONCE_SIZE + ENCRYPTION_TAG_SIZE;
 
 pub const ENCODED_PUBLIC_KEY_LENGTH: u8 = ((4 * PUBLIC_KEY_SIZE / 3) + 3) & !3;
 pub const ENCODED_NONCE_LENGTH: u8 = ((4 * ENCRYPTION_NONCE_SIZE / 3) + 3) & !3;

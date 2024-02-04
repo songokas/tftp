@@ -1,4 +1,4 @@
-use core::num::NonZeroU16;
+use core::num::NonZeroU8;
 
 use log::*;
 use rand::CryptoRng;
@@ -224,6 +224,7 @@ impl<'a, Rng: CryptoRng + RngCore + Copy> ConnectionBuilder<'a, Rng> {
             Connection {
                 socket: new_socket,
                 last_updated: instant(),
+                last_sent: instant(),
                 transfer: 0,
                 options: self.options,
                 endpoint: client,
@@ -231,7 +232,7 @@ impl<'a, Rng: CryptoRng + RngCore + Copy> ConnectionBuilder<'a, Rng> {
                 finished: false,
                 invalid: false,
                 last_acknowledged: 0,
-                retry_packet_multiplier: NonZeroU16::new(1).expect("Non zero multiplier"),
+                retry_packet_multiplier: NonZeroU8::new(1).expect("Non zero multiplier"),
             },
             block_writer(writer),
             self.used_extensions,
@@ -356,10 +357,11 @@ impl<'a, Rng: CryptoRng + RngCore + Copy> ConnectionBuilder<'a, Rng> {
                 endpoint: client,
                 encryptor,
                 last_updated: instant(),
+                last_sent: instant(),
                 finished: false,
                 invalid: false,
                 last_acknowledged: 0,
-                retry_packet_multiplier: NonZeroU16::new(1).expect("Non zero multiplier"),
+                retry_packet_multiplier: NonZeroU8::new(1).expect("Non zero multiplier"),
             },
             r,
             self.used_extensions,

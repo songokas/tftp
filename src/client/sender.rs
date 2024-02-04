@@ -176,7 +176,7 @@ where
             match block_reader.next(&mut send_buffer[DATA_PACKET_HEADER_SIZE.into()..], retry) {
                 Ok(b) => b,
                 Err(StorageError::File(e)) if e.kind() == ErrorKind::WouldBlock => {
-                    debug!("Reading from a file {local_file_path} would block");
+                    trace!("Reading from a file {local_file_path} would block");
                     None
                 }
                 Err(e) => return Err(e.into()),

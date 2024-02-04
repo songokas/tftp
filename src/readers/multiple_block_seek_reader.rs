@@ -1,3 +1,5 @@
+use log::trace;
+
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
 use crate::block_mapper::BlockMapper;
@@ -103,6 +105,8 @@ where
         if self.finished_block_size.is_some() || block_len >= self.max_blocks_to_read as u64 {
             return Ok(None);
         }
+
+        trace!("Reading block {index}");
 
         #[allow(clippy::seek_from_current)]
         if matches!(self.reader.seek(SeekFrom::Current(0)), Ok(p) if p != self.last_offset) {

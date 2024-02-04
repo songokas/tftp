@@ -18,8 +18,8 @@ encrypt traffic or data.
 Install deb
 
 ```
-wget https://github.com/songokas/tftp/releases/download/v0.5.2/tftp_0.5.2_amd64.deb \
-  && sudo apt install ./tftp_0.5.2_amd64.deb
+wget https://github.com/songokas/tftp/releases/download/v0.5.3/tftp_0.5.3_amd64.deb \
+  && sudo apt install ./tftp_0.5.3_amd64.deb
 ```
 
 Download binary
