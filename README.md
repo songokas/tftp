@@ -18,8 +18,8 @@ encrypt traffic or data.
 Install deb
 
 ```
-wget https://github.com/songokas/tftp/releases/download/v0.5.3/tftp_0.5.3_amd64.deb \
-  && sudo apt install ./tftp_0.5.3_amd64.deb
+wget https://github.com/songokas/tftp/releases/download/v0.6.0/tftp-dus_0.6.0_amd64.deb \
+  && sudo apt install ./tftp-dus_0.6.0_amd64.deb
 ```
 
 Download binary
@@ -37,30 +37,30 @@ cargo install --bins --root=. --git=https://github.com/songokas/tftp
 Run the server and send a file
 
 ```bash
-tftp server 127.0.0.1:9000 /tmp
-echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin 
+tftp-dus server 127.0.0.1:9000 /tmp
+echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin
 ```
 
 ## Features
 
-* low memory consumption
-* supports tsize, blksize, timeout, windowsize options
-* send/receive encrypted files
-* authorization of public keys
-* optional stack only functionality (currently lib only)
-* compatible with third party clients,servers
-* large file support
-* ability to synchronize new files in a folder
+- low memory consumption
+- supports tsize, blksize, timeout, windowsize options
+- send/receive encrypted files
+- authorization of public keys
+- optional stack only functionality (currently lib only)
+- compatible with third party clients,servers
+- large file support
+- ability to synchronize new files in a folder
 
 ### Configuration
 
 Run help to see all available options
 
 ```bash
-tftp server --help
-tftp send --help
-tftp receive --help
-tftp sync --help
+tftp-dus server --help
+tftp-dus send --help
+tftp-dus receive --help
+tftp-dus sync --help
 ```
 
 #### Using encryption with server
@@ -70,14 +70,14 @@ As long as the binary is compiled with feature=encryption optional encryption wi
 server will generate a random key per client if no private key is provided
 
 ```bash
-tftp server 127.0.0.1:9000 /tmp
+tftp-dus server 127.0.0.1:9000 /tmp
 ```
 
 restrict who is able to access the server (server public key will be printed in the logs)
 
 ```bash
 # ~/.authorized_keys base64 encoded key per line 1TGOop6cYn8meO0bOtnRbsQ4tfd0zRfGJhaMGCZVZ6M=
-tftp server 127.0.0.1:9000 /tmp --private-key `openssl rand -base64 32` --authorized-keys ~/.authorized_keys
+tftp-dus server 127.0.0.1:9000 /tmp --private-key `openssl rand -base64 32` --authorized-keys ~/.authorized_keys
 ```
 
 #### Using encryption with client
@@ -88,19 +88,19 @@ Client should be able to communicate even if the server does not support encrypt
 client will exchange public keys and encrypt the traffic afterwards (client public key will be printed in the logs)
 
 ```bash
-echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --encryption-level protocol
+echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin --encryption-level protocol
 ```
 
 client will exchange public keys and encrypt the data traffic
 
 ```bash
-echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --encryption-level data
+echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin --encryption-level data
 ```
 
 if the server public key is known and `--encryption-level protocol` is used client will encrypt all traffic from the start
 
 ```bash
-echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --server-public-key 1TGOop6cYn8meO0bOtnRbsQ4tfd0zRfGJhaMGCZVZ6M= --encryption-level protocol
+echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin --server-public-key 1TGOop6cYn8meO0bOtnRbsQ4tfd0zRfGJhaMGCZVZ6M= --encryption-level protocol
 ```
 
 #### Allow port change if needed for third party tftp
@@ -108,13 +108,13 @@ echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --server-public-key 1TGOop6cY
 server
 
 ```bash
-tftp server 127.0.0.1:9000 /tmp --require-server-port-change
+tftp-dus server 127.0.0.1:9000 /tmp --require-server-port-change
 ```
 
 client
 
 ```bash
-echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --allow-server-port-change
+echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin --allow-server-port-change
 ```
 
 #### Receive directory list from the server
@@ -122,19 +122,19 @@ echo "hello" | tftp send 127.0.0.1:9000 /dev/stdin --allow-server-port-change
 server
 
 ```bash
-tftp server 127.0.0.1:9000 /tmp --directory-list dir
+tftp-dus server 127.0.0.1:9000 /tmp --directory-list dir
 ```
 
 client
 
 ```bash
-tftp receive 127.0.0.1:9000 subfolder/dir --local-path /dev/stdout
+tftp-dus receive 127.0.0.1:9000 subfolder/dir --local-path /dev/stdout
 ```
 
 #### Uploading files created in a folder
 
 ```bash
-tftp sync 127.0.0.1:9000 /folder
+tftp-dus sync 127.0.0.1:9000 /folder
 ```
 
 Adding a user service to start on login
@@ -148,7 +148,7 @@ Description=tfp sync for directory to server
 WantedBy=default.target
 
 [Service]
-ExecStart=/usr/bin/tftp sync server /directory
+ExecStart=/usr/bin/tftp-dus sync server /directory
 Restart=on-failure
 EOF
 
@@ -159,64 +159,64 @@ systemctl --user enable tftp-sync-directory
 ### Stats
 
 ```
-                                             Send 100Mb                                                     
-        +----------------------------------------------------------------------------------+   
-     18 |-+             +              +          +          +         +          +      +-|   
-        |                                                                                  |   
-        | x                                                                                |   
-        |                                                                                  |   
-     16 |-+                                                                              +-|   
-        |                                                                                  |   
-        |                                                                                  |   
-     14 |-+                                                                              +-|   
-        |                                                                                  |   
-        |                                                                                  |   
-     12 |-+                                                                              +-|   
-Time    |                                                                                  |   
-        |                                                                                  |   
-     10 |-+x                                                                             +-|   
-        |                                                                                  |   
-        |                                                                                  |   
-      8 |-+                                                                              +-|   
-        |     x                                                                            |   
-        |                                                                                  |   
-      6 |-+      x                                                                       +-|   
-        |            x  x                                                                  |   
-        |               +  x  x  x     +          +  x       +         +          +   x    |   
-      4 +----------------------------------------------------------------------------------+   
-        0               10             20         30         40        50         60           
-                                             WindowSize                                                                                                                                                          
+                                             Send 100Mb
+        +----------------------------------------------------------------------------------+
+     18 |-+             +              +          +          +         +          +      +-|
+        |                                                                                  |
+        | x                                                                                |
+        |                                                                                  |
+     16 |-+                                                                              +-|
+        |                                                                                  |
+        |                                                                                  |
+     14 |-+                                                                              +-|
+        |                                                                                  |
+        |                                                                                  |
+     12 |-+                                                                              +-|
+Time    |                                                                                  |
+        |                                                                                  |
+     10 |-+x                                                                             +-|
+        |                                                                                  |
+        |                                                                                  |
+      8 |-+                                                                              +-|
+        |     x                                                                            |
+        |                                                                                  |
+      6 |-+      x                                                                       +-|
+        |            x  x                                                                  |
+        |               +  x  x  x     +          +  x       +         +          +   x    |
+      4 +----------------------------------------------------------------------------------+
+        0               10             20         30         40        50         60
+                                             WindowSize
 
-                                                                                                                        
-                                                                                                                        
-                                             Receive 100Mb                                                   
-        +----------------------------------------------------------------------------------+   
-     18 |-+             +              +          +          +         +          +      +-|   
-        |                                                                                  |   
-        | x                                                                                |   
-     16 |-+                                                                              +-|   
-        |                                                                                  |   
-     14 |-+                                                                              +-|   
-        |                                                                                  |   
-        |                                                                                  |   
-     12 |-+                                                                              +-|   
-        |                                                                                  |   
-        |  x                                                                               |   
-Time 10 |-+                                                                              +-|   
-        |                                                                                  |   
-        |                                                                                  |   
-      8 |-+                                                                              +-|   
-        |                                                                                  |   
-      6 |-+   x                                                                          +-|   
-        |                                                                                  |   
-        |        x   x                                                                     |   
-      4 |-+             x  x  x  x                                                       +-|   
-        |                                            x                                x    |   
-        |               +              +          +          +         +          +        |   
-      2 +----------------------------------------------------------------------------------+   
-        0               10             20         30         40        50         60           
-                                             WinddowSize                                      
-              
+
+
+                                             Receive 100Mb
+        +----------------------------------------------------------------------------------+
+     18 |-+             +              +          +          +         +          +      +-|
+        |                                                                                  |
+        | x                                                                                |
+     16 |-+                                                                              +-|
+        |                                                                                  |
+     14 |-+                                                                              +-|
+        |                                                                                  |
+        |                                                                                  |
+     12 |-+                                                                              +-|
+        |                                                                                  |
+        |  x                                                                               |
+Time 10 |-+                                                                              +-|
+        |                                                                                  |
+        |                                                                                  |
+      8 |-+                                                                              +-|
+        |                                                                                  |
+      6 |-+   x                                                                          +-|
+        |                                                                                  |
+        |        x   x                                                                     |
+      4 |-+             x  x  x  x                                                       +-|
+        |                                            x                                x    |
+        |               +              +          +          +         +          +        |
+      2 +----------------------------------------------------------------------------------+
+        0               10             20         30         40        50         60
+                                             WinddowSize
+
 ```
 
 [More info](./info)

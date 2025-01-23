@@ -3,14 +3,14 @@ use std::path::Path;
 
 use log::*;
 use rand::rngs::OsRng;
-use tftp::client::send_file;
-use tftp::config::ConnectionOptions;
+use tftp_dus::client::send_file;
+use tftp_dus::config::ConnectionOptions;
 #[cfg(not(feature = "encryption"))]
-use tftp::encryption::EncryptionLevel;
-use tftp::error::BoxedResult;
-use tftp::std_compat::io::Read;
-use tftp::std_compat::io::Seek;
-use tftp::types::FilePath;
+use tftp_dus::encryption::EncryptionLevel;
+use tftp_dus::error::BoxedResult;
+use tftp_dus::std_compat::io::Read;
+use tftp_dus::std_compat::io::Seek;
+use tftp_dus::types::FilePath;
 
 use crate::cli::ClientCliConfig;
 use crate::encryption_io::handle_hosts_file;

@@ -1,9 +1,9 @@
 use core::time::Duration;
 use std::net::ToSocketAddrs;
 
-use tftp::client::ClientConfig;
-use tftp::server::ServerConfig;
-use tftp::types::DefaultString;
+use tftp_dus::client::ClientConfig;
+use tftp_dus::server::ServerConfig;
+use tftp_dus::types::DefaultString;
 
 use crate::cli::ClientCliConfig;
 use crate::cli::ServerCliConfig;
@@ -12,8 +12,8 @@ use crate::error::BinResult;
 use crate::macros::cfg_encryption;
 
 cfg_encryption! {
-    use tftp::encryption::*;
-    use tftp::key_management::*;
+    use tftp_dus::encryption::*;
+    use tftp_dus::key_management::*;
     use crate::io::create_buff_reader;
 }
 

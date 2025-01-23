@@ -10,8 +10,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use log::trace;
-use tftp::error::BoxedResult;
-use tftp::types::FilePath;
+use tftp_dus::error::BoxedResult;
+use tftp_dus::types::FilePath;
 
 pub fn create_delayed_reader(
     path: &FilePath,

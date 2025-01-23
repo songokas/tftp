@@ -15,7 +15,7 @@ fn main() -> Result<(), Error> {
 
     let mut cmd = Args::command();
     for &shell in Shell::value_variants() {
-        let path = generate_to(shell, &mut cmd, "tftp", outdir.clone())?;
+        let path = generate_to(shell, &mut cmd, "tftp-dus", outdir.clone())?;
 
         println!("cargo:warning=completion file is generated: {path:?}");
     }

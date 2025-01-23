@@ -101,11 +101,10 @@ mod tests {
     use std::io::Cursor;
     use std::vec::Vec;
 
+    use super::*;
     use crate::std_compat::io::ErrorKind;
     use crate::std_compat::io::Read;
     use crate::std_compat::io::Result;
-
-    use super::*;
 
     #[test]
     fn test_read() {

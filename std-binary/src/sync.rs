@@ -21,7 +21,7 @@ use notify::EventKind;
 use notify::RecommendedWatcher;
 use notify::RecursiveMode;
 use notify::Watcher;
-use tftp::types::FilePath;
+use tftp_dus::types::FilePath;
 
 use crate::blocking_reader::create_delayed_reader;
 use crate::cli::ClientCliConfig;

@@ -1,24 +1,24 @@
-use tftp::encryption::decode_private_key;
-use tftp::encryption::EncryptionKey;
-use tftp::encryption::PrivateKey;
-use tftp::encryption::PublicKey;
-use tftp::encryption::StreamEncryptor;
-use tftp::encryption::STREAM_NONCE_SIZE;
-use tftp::error::BoxedResult;
-use tftp::error::EncryptionError;
-use tftp::key_management::append_to_known_hosts;
-use tftp::key_management::get_from_known_hosts;
-use tftp::readers::encrypted_stream_reader::StreamReader;
-use tftp::std_compat::io::Read;
-use tftp::std_compat::io::Seek;
-use tftp::std_compat::io::Write;
-use tftp::types::FilePath;
-use tftp::writers::encrypted_stream_writer::StreamWriter;
+use std::fs::File as StdFile;
 
 use log::warn;
 use rand::CryptoRng;
 use rand::RngCore;
-use std::fs::File as StdFile;
+use tftp_dus::encryption::decode_private_key;
+use tftp_dus::encryption::EncryptionKey;
+use tftp_dus::encryption::PrivateKey;
+use tftp_dus::encryption::PublicKey;
+use tftp_dus::encryption::StreamEncryptor;
+use tftp_dus::encryption::STREAM_NONCE_SIZE;
+use tftp_dus::error::BoxedResult;
+use tftp_dus::error::EncryptionError;
+use tftp_dus::key_management::append_to_known_hosts;
+use tftp_dus::key_management::get_from_known_hosts;
+use tftp_dus::readers::encrypted_stream_reader::StreamReader;
+use tftp_dus::std_compat::io::Read;
+use tftp_dus::std_compat::io::Seek;
+use tftp_dus::std_compat::io::Write;
+use tftp_dus::types::FilePath;
+use tftp_dus::writers::encrypted_stream_writer::StreamWriter;
 
 use crate::io::create_buff_reader;
 use crate::std_compat::fs::File;
@@ -57,15 +57,16 @@ where
 pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, EncryptionError> {
     #[cfg(feature = "std")]
     use std::io::BufRead;
+
     #[cfg(not(feature = "std"))]
-    use tftp::std_compat::io::BufRead;
+    use tftp_dus::std_compat::io::BufRead;
 
     let result = decode_private_key(private.as_bytes());
 
     if result.is_err() {
         if let Ok(mut reader) = create_buff_reader(private) {
             #[cfg(not(feature = "std"))]
-            let mut buf = tftp::types::DefaultString::new();
+            let mut buf = tftp_dus::types::DefaultString::new();
             #[cfg(feature = "std")]
             let mut buf = String::new();
             if reader.read_line(&mut buf).is_ok() {

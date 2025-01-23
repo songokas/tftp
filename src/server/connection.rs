@@ -7,7 +7,6 @@ use rand::RngCore;
 
 use crate::buffer::resize_buffer;
 use crate::config::ConnectionOptions;
-
 use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::encryption::*;
 use crate::macros::cfg_encryption;

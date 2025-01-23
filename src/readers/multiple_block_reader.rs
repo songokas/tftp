@@ -106,6 +106,7 @@ where
             b
         } else {
             let data = new_data_block(self.block_size);
+            #[allow(clippy::let_unit_value)]
             let _ = self.blocks.push(Buffer { data, index: None });
             self.blocks.last_mut().expect("last block")
         };
@@ -179,12 +180,12 @@ struct Buffer {
 
 #[cfg(test)]
 mod tests {
-    use crate::std_compat::io::ErrorKind;
-    use crate::std_compat::io::Read;
-    use crate::std_compat::io::Result;
     use std::io::Cursor;
 
     use super::*;
+    use crate::std_compat::io::ErrorKind;
+    use crate::std_compat::io::Read;
+    use crate::std_compat::io::Result;
 
     #[test]
     fn test_next_read_and_repeat() {

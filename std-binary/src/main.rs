@@ -6,7 +6,7 @@ mod encryption_io;
 
 #[cfg(not(feature = "encryption"))]
 mod encryption_io {
-    use tftp::encryption::PublicKey;
+    use tftp_dus::encryption::PublicKey;
 
     pub fn handle_hosts_file(
         _known_hosts_file: Option<&str>,
@@ -35,7 +35,7 @@ use receiver::start_receive;
 use sender::start_send;
 #[cfg(feature = "sync")]
 use sync::start_sync;
-use tftp::server::server;
+use tftp_dus::server::server;
 
 use crate::cli::Args;
 use crate::cli::Commands;
@@ -60,12 +60,12 @@ pub mod std_compat {
         pub type BytesCursor = Cursor<Vec<u8>>;
 
         pub trait AnyReader:
-            tftp::std_compat::io::Read + tftp::std_compat::io::Seek + Send + 'static
+            tftp_dus::std_compat::io::Read + tftp_dus::std_compat::io::Seek + Send + 'static
         {
         }
 
         impl<T> AnyReader for T where
-            T: tftp::std_compat::io::Read + tftp::std_compat::io::Seek + Send + 'static
+            T: tftp_dus::std_compat::io::Read + tftp_dus::std_compat::io::Seek + Send + 'static
         {
         }
 
@@ -80,9 +80,9 @@ pub mod std_compat {
 #[cfg(not(feature = "std"))]
 pub mod std_compat;
 
-// tftp send localhost:3000 /tmp/a --remote-path long/a
-// tftp receive localhost:3000 long/a --local-path /tmp/a
-// tftp server localhost:300 /tmp --allow-overwrite
+// tftp-dus send localhost:3000 /tmp/a --remote-path long/a
+// tftp-dus receive localhost:3000 long/a --local-path /tmp/a
+// tftp-dus server localhost:300 /tmp --allow-overwrite
 fn main() -> BinResult<()> {
     let args = Args::parse();
     Builder::from_env(Env::default().default_filter_or(args.verbosity.as_str()))
@@ -147,17 +147,17 @@ mod tests {
     use std::thread::spawn;
     use std::time::Duration;
 
-    use tftp::config::DEFAULT_DATA_BLOCK_SIZE;
-    use tftp::config::MAX_DATA_BLOCK_SIZE;
-    use tftp::encryption::*;
-    use tftp::error::DefaultBoxedResult;
-    use tftp::key_management::AuthorizedKeys;
-    use tftp::server::server;
-    use tftp::server::ServerConfig;
-    use tftp::std_compat::io;
-    use tftp::types::FilePath;
+    use tftp_dus::config::DEFAULT_DATA_BLOCK_SIZE;
+    use tftp_dus::config::MAX_DATA_BLOCK_SIZE;
+    use tftp_dus::encryption::*;
+    use tftp_dus::error::DefaultBoxedResult;
+    use tftp_dus::key_management::AuthorizedKeys;
+    use tftp_dus::server::server;
+    use tftp_dus::server::ServerConfig;
+    use tftp_dus::std_compat::io;
+    use tftp_dus::types::FilePath;
     #[allow(unused_imports)]
-    use tftp::types::ShortString;
+    use tftp_dus::types::ShortString;
 
     use super::*;
     use crate::cli::ClientCliConfig;
@@ -528,7 +528,7 @@ mod tests {
         fn write_fmt(
             &mut self,
             _: core::fmt::Arguments<'_>,
-        ) -> Result<(), tftp::std_compat::io::Error> {
+        ) -> Result<(), tftp_dus::std_compat::io::Error> {
             todo!()
         }
 
@@ -547,7 +547,7 @@ mod tests {
                 io::SeekFrom::End(p) => std::io::SeekFrom::End(p),
             };
             self.cursor.lock().unwrap().seek(pos).map_err(|_| {
-                tftp::std_compat::io::Error::from(tftp::std_compat::io::ErrorKind::Other)
+                tftp_dus::std_compat::io::Error::from(tftp_dus::std_compat::io::ErrorKind::Other)
             })
         }
     }
@@ -596,7 +596,7 @@ mod tests {
                 io::SeekFrom::End(p) => std::io::SeekFrom::End(p),
             };
             self.cursor.seek(pos).map_err(|_| {
-                tftp::std_compat::io::Error::from(tftp::std_compat::io::ErrorKind::Other)
+                tftp_dus::std_compat::io::Error::from(tftp_dus::std_compat::io::ErrorKind::Other)
             })
         }
     }

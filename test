@@ -387,29 +387,29 @@ test_bin() {
 
 
 test_lib() {
-    cargo test -p tftp
-    cargo test -p tftp --no-default-features --features std
-    cargo test -p tftp --no-default-features --features alloc
-    cargo test -p tftp --no-default-features --features encryption
-    cargo test -p tftp --no-default-features --features std,alloc
-    cargo test -p tftp --no-default-features --features alloc,encryption
-    cargo test -p tftp --no-default-features --features std,encryption
-    cargo test -p tftp --no-default-features --features seek
-    cargo test -p tftp --no-default-features
+    cargo test -p tftp-dus
+    cargo test -p tftp-dus --no-default-features --features std
+    cargo test -p tftp-dus --no-default-features --features alloc
+    cargo test -p tftp-dus --no-default-features --features encryption
+    cargo test -p tftp-dus --no-default-features --features std,alloc
+    cargo test -p tftp-dus --no-default-features --features alloc,encryption
+    cargo test -p tftp-dus --no-default-features --features std,encryption
+    cargo test -p tftp-dus --no-default-features --features seek
+    cargo test -p tftp-dus --no-default-features
 }
 
 build_release_targets() {
     cargo build -p tftp-std-binary --release
-    cp ./target/release/tftp ./target/tftp
+    cp ./target/release/tftp-dus ./target/tftp
 
     cargo build -p tftp-std-binary --no-default-features --features encryption,seek --release
-    cp ./target/release/tftp ./target/tftp-stack-encryption
+    cp ./target/release/tftp-dus ./target/tftp-stack-encryption
 
     cargo build -p tftp-std-binary --no-default-features --features alloc,seek --release
-    cp ./target/release/tftp ./target/tftp-alloc
+    cp ./target/release/tftp-dus ./target/tftp-alloc
 
     cargo build -p tftp-std-binary --no-default-features --features seek --release
-    cp ./target/release/tftp ./target/tftp-stack
+    cp ./target/release/tftp-dus ./target/tftp-stack
 }
 
 test_all() {

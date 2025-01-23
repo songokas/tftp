@@ -2,6 +2,12 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.6.0] - 2025-01-23
+
+### Changed
+
+- rename package,binaries to tftp-dus to remove clashes with other tftp packages
+
 ## [0.5.3] - 2024-02-03
 
 ### Fixed
@@ -53,7 +59,7 @@ All visible changes will be documented here. This project adheres to Semantic Ve
 
 ### Fixed
 
-- Flow control honour retry_timeout provided 
+- Flow control honour retry_timeout provided
 - Receivers returning incorrect block number on existing blocks
 - Trim end of private key
 
@@ -96,4 +102,4 @@ All visible changes will be documented here. This project adheres to Semantic Ve
 
 ### Added
 
-- Initial tftp binary and library realese
+- Initial tftp-dus binary and library realese

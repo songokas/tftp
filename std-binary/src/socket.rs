@@ -20,17 +20,17 @@ use socket2::Domain;
 use socket2::Protocol;
 use socket2::Socket as Socket2;
 use socket2::Type;
-use tftp::error::BoxedResult;
-use tftp::socket::*;
-use tftp::std_compat::io;
-use tftp::std_compat::net::SocketAddr;
-use tftp::types::DataBuffer;
+use tftp_dus::error::BoxedResult;
+use tftp_dus::socket::*;
+use tftp_dus::std_compat::io;
+use tftp_dus::std_compat::net::SocketAddr;
+use tftp_dus::types::DataBuffer;
 
 use crate::macros::cfg_no_std;
 use crate::std_compat::io::from_io_err;
 
 cfg_no_std! {
-    use tftp::std_compat::net::IpVersion;
+    use tftp_dus::std_compat::net::IpVersion;
     use std::net::SocketAddrV4;
     use std::net::SocketAddrV6;
     use std::net::Ipv4Addr;

@@ -5,7 +5,6 @@ use crate::readers::block_reader::BlockReader;
 use crate::readers::multiple_block_reader::MultipleBlockReader;
 use crate::readers::single_block_reader::SingleBlockReader;
 use crate::std_compat::io::Read;
-
 #[cfg(feature = "seek")]
 use crate::std_compat::io::Seek;
 

@@ -88,6 +88,7 @@ fn normalize_remote_name(file_path: &FilePath) -> Result<FilePath, FileError> {
             f
         });
     result.pop();
+    #[allow(clippy::redundant_as_str)]
     if result.as_str().is_empty() {
         return Err(FileError::InvalidFileName);
     }

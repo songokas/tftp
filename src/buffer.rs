@@ -1,14 +1,17 @@
 use core::cmp::max;
 
-use crate::{
-    config::{DATA_PACKET_HEADER_SIZE, MAX_BUFFER_SIZE, MIN_BUFFER_SIZE},
-    types::{DataBlock, DataBlock07, DataBuffer},
-};
+use crate::config::DATA_PACKET_HEADER_SIZE;
+use crate::config::MAX_BUFFER_SIZE;
+use crate::config::MIN_BUFFER_SIZE;
+use crate::types::DataBlock;
+use crate::types::DataBlock07;
+use crate::types::DataBuffer;
 
 pub trait SliceMutExt {
     fn write_bytes(self, data: impl AsRef<[u8]>, from_index: impl Into<usize>) -> Option<usize>;
 }
 
+#[allow(dead_code)]
 pub trait SliceExt {
     fn slice_to_array<const N: usize>(&self, position: impl Into<usize>) -> Option<[u8; N]>;
 

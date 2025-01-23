@@ -18,9 +18,9 @@ function list_remote_dirs() {
     # echo "t $test_dir e $endpoint o${3}" >> /tmp/a
 
     if [[ "$3" ]]; then
-        tftp --verbosity warn receive "$endpoint" "$test_dir" "${3}" --request-timeout 500 --local-path /dev/stdout 2> /dev/null
+        tftp-dus --verbosity warn receive "$endpoint" "$test_dir" "${3}" --request-timeout 500 --local-path /dev/stdout 2> /dev/null
     else
-        tftp --verbosity warn receive "$endpoint" "$test_dir" --request-timeout 500 --local-path /dev/stdout 2> /dev/null
+        tftp-dus --verbosity warn receive "$endpoint" "$test_dir" --request-timeout 500 --local-path /dev/stdout 2> /dev/null
     fi
 }
 
@@ -54,7 +54,7 @@ function _tftp_autocomplete() {
         done
         opts=$(list_remote_dirs "$cur" "$prev" "${options[*]}" | tr '\n' ' ')
     elif [[ "$scope" =~ ^(receive|sync|send|server)$ ]]; then
-        opts=$(tftp "$scope" --help | grep -o -E '\--[a-z-]+')
+        opts=$(tftp-dus "$scope" --help | grep -o -E '\--[a-z-]+')
     fi
 
     COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

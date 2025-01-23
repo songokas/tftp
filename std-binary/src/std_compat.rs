@@ -3,7 +3,7 @@ pub mod fs {
     use std::fs::File as StdFile;
     use std::io::SeekFrom as StdSeekFrom;
 
-    use tftp::std_compat::io;
+    use tftp_dus::std_compat::io;
 
     use crate::std_compat::io::from_io_err;
 
@@ -56,8 +56,8 @@ pub mod io {
     use std::io::SeekFrom as StdSeekFrom;
     use std::vec::Vec as StdVec;
 
-    use tftp::std_compat::io;
-    use tftp::types::DefaultString;
+    use tftp_dus::std_compat::io;
+    use tftp_dus::types::DefaultString;
 
     use crate::std_compat::fs::File;
 

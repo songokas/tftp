@@ -1,18 +1,19 @@
+use core::str::FromStr;
+
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueHint;
-use core::str::FromStr;
-use tftp::config::DEFAULT_RETRY_PACKET_TIMEOUT;
-use tftp::config::DEFAULT_WINDOW_SIZE;
-use tftp::config::EXTENSION_BLOCK_SIZE_MIN;
-use tftp::config::EXTENSION_TIMEOUT_SIZE_MAX;
-use tftp::config::EXTENSION_WINDOW_SIZE_MIN;
-use tftp::config::MAX_BLOCKS_FOR_MULTI_READER;
-use tftp::config::MAX_CLIENTS;
-use tftp::config::MAX_DATA_BLOCK_SIZE;
-use tftp::types::DefaultString;
-use tftp::types::FilePath;
-use tftp::types::ShortString;
+use tftp_dus::config::DEFAULT_RETRY_PACKET_TIMEOUT;
+use tftp_dus::config::DEFAULT_WINDOW_SIZE;
+use tftp_dus::config::EXTENSION_BLOCK_SIZE_MIN;
+use tftp_dus::config::EXTENSION_TIMEOUT_SIZE_MAX;
+use tftp_dus::config::EXTENSION_WINDOW_SIZE_MIN;
+use tftp_dus::config::MAX_BLOCKS_FOR_MULTI_READER;
+use tftp_dus::config::MAX_CLIENTS;
+use tftp_dus::config::MAX_DATA_BLOCK_SIZE;
+use tftp_dus::types::DefaultString;
+use tftp_dus::types::FilePath;
+use tftp_dus::types::ShortString;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

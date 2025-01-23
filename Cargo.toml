@@ -1,10 +1,10 @@
 [package]
-name = "tftp"
-version = "0.5.3"
+name = "tftp-dus"
+version = "0.6.0"
 edition = "2021"
 
 [profile.release]
-strip = "debuginfo"
+strip = true
 
 [workspace]
 members = ["std-binary"]

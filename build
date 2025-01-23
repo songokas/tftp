@@ -13,20 +13,20 @@ build() {
     mkdir -p dist
     for target in ${TARGETS[@]}; do
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE"
-        cp target/$target/release/tftp dist/
+        cp target/$target/release/tftp-dus dist/
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features std
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features alloc
-        cp target/$target/release/tftp dist/tftp-alloc
+        cp target/$target/release/tftp-dus dist/tftp-dus-alloc
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features alloc,encryption,seek
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features std,encryption
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features encryption,seek
-        cp target/$target/release/tftp dist/tftp-stack-encryption
+        cp target/$target/release/tftp-dus dist/tftp-dus-stack-encryption
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features seek
-        cp target/$target/release/tftp dist/tftp-stack
+        cp target/$target/release/tftp-dus dist/tftp-dus-stack
     done
 
     # cargo build -p tftp-std-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
-    # cp target/x86_64-unknown-linux-musl/release/tftp dist/tftp-static
+    # cp target/x86_64-unknown-linux-musl/release/tftp-dus dist/tftp-static
 }
 
 build_pi() {
@@ -37,17 +37,17 @@ release_bins() {
     for target in ${BIN_RELEASE_TARGETS[@]}; do
 
         cross build -p tftp-std-binary --target "$target" --release --no-default-features --features encryption,seek
-        cp target/$target/release/tftp dist/tftp-stack-$target
+        cp target/$target/release/tftp-dus dist/tftp-dus-stack-$target
         # deb depends on this target
         cross build -p tftp-std-binary --target "$target" --release
-        cp target/$target/release/tftp dist/tftp-$target
+        cp target/$target/release/tftp-dus dist/tftp-dus-$target
     done
 
     for target in ${BIN_WINDOWS_TARGETS[@]}; do
         cross build -p tftp-std-binary --target "$target" --release
-        cp target/$target/release/tftp.exe dist/tftp-$target.exe
+        cp target/$target/release/tftp-dus.exe dist/tftp-dus-$target.exe
         cross build -p tftp-std-binary --target "$target" --release --no-default-features --features encryption,seek
-        cp target/$target/release/tftp.exe dist/tftp-stack-$target.exe
+        cp target/$target/release/tftp-dus.exe dist/tftp-dus-stack-$target.exe
     done
 }
 
@@ -56,7 +56,7 @@ release_dist() {
     release_bins
 
     # cargo build -p tftp-std-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
-    # cp target/x86_64-unknown-linux-musl/release/tftp dist/tftp-static
+    # cp target/x86_64-unknown-linux-musl/release/tftp-dus dist/tftp-static
 
     release_deb
     sign

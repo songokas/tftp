@@ -5,9 +5,11 @@ use std::collections::BTreeMap;
 
 use rand::Rng;
 use test::Bencher;
-use tftp::config::MAX_BUFFER_SIZE;
-use tftp::config::MAX_DATA_BLOCK_SIZE;
-use tftp::packet::{ByteConverter, DataPacket, Packet};
+use tftp_dus::config::MAX_BUFFER_SIZE;
+use tftp_dus::config::MAX_DATA_BLOCK_SIZE;
+use tftp_dus::packet::ByteConverter;
+use tftp_dus::packet::DataPacket;
+use tftp_dus::packet::Packet;
 
 #[bench]
 fn test_create_bytes_with_iter(b: &mut Bencher) {
@@ -248,7 +250,7 @@ fn test_arrayvec_retrieve_20(b: &mut Bencher) {
 #[cfg(feature = "encryption")]
 #[bench]
 fn test_encrypt_decrypt(b: &mut Bencher) {
-    use tftp::types::DataBuffer;
+    use tftp_dus::types::DataBuffer;
 
     let encryptor = create_encryptor();
     let mut rng = rand::thread_rng();
@@ -267,11 +269,11 @@ fn test_encrypt_decrypt(b: &mut Bencher) {
 }
 
 #[cfg(feature = "encryption")]
-fn create_encryptor() -> tftp::encryption::Encryptor<rand::rngs::ThreadRng> {
+fn create_encryptor() -> tftp_dus::encryption::Encryptor<rand::rngs::ThreadRng> {
     use chacha20poly1305::KeyInit;
     use chacha20poly1305::XChaCha20Poly1305;
     use rand::thread_rng;
-    tftp::encryption::Encryptor {
+    tftp_dus::encryption::Encryptor {
         cipher: XChaCha20Poly1305::new(
             &[
                 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233,

@@ -22,7 +22,7 @@ _tftp() {
 '-V[Print version]' \
 '--version[Print version]' \
 ":: :_tftp_commands" \
-"*::: :->tftp" \
+"*::: :->tftp-dus" \
 && ret=0
     case $state in
     (tftp)
@@ -171,7 +171,7 @@ _tftp_commands() {
 'server:' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
-    _describe -t commands 'tftp commands' commands "$@"
+    _describe -t commands 'tftp-dus commands' commands "$@"
 }
 (( $+functions[_tftp__help_commands] )) ||
 _tftp__help_commands() {
@@ -182,56 +182,56 @@ _tftp__help_commands() {
 'server:' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
-    _describe -t commands 'tftp help commands' commands "$@"
+    _describe -t commands 'tftp-dus help commands' commands "$@"
 }
 (( $+functions[_tftp__help__help_commands] )) ||
 _tftp__help__help_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp help help commands' commands "$@"
+    _describe -t commands 'tftp-dus help help commands' commands "$@"
 }
 (( $+functions[_tftp__help__receive_commands] )) ||
 _tftp__help__receive_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp help receive commands' commands "$@"
+    _describe -t commands 'tftp-dus help receive commands' commands "$@"
 }
 (( $+functions[_tftp__receive_commands] )) ||
 _tftp__receive_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp receive commands' commands "$@"
+    _describe -t commands 'tftp-dus receive commands' commands "$@"
 }
 (( $+functions[_tftp__help__send_commands] )) ||
 _tftp__help__send_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp help send commands' commands "$@"
+    _describe -t commands 'tftp-dus help send commands' commands "$@"
 }
 (( $+functions[_tftp__send_commands] )) ||
 _tftp__send_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp send commands' commands "$@"
+    _describe -t commands 'tftp-dus send commands' commands "$@"
 }
 (( $+functions[_tftp__help__server_commands] )) ||
 _tftp__help__server_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp help server commands' commands "$@"
+    _describe -t commands 'tftp-dus help server commands' commands "$@"
 }
 (( $+functions[_tftp__server_commands] )) ||
 _tftp__server_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp server commands' commands "$@"
+    _describe -t commands 'tftp-dus server commands' commands "$@"
 }
 (( $+functions[_tftp__help__sync_commands] )) ||
 _tftp__help__sync_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp help sync commands' commands "$@"
+    _describe -t commands 'tftp-dus help sync commands' commands "$@"
 }
 (( $+functions[_tftp__sync_commands] )) ||
 _tftp__sync_commands() {
     local commands; commands=()
-    _describe -t commands 'tftp sync commands' commands "$@"
+    _describe -t commands 'tftp-dus sync commands' commands "$@"
 }
 
 if [ "$funcstack[1]" = "_tftp" ]; then
-    _tftp "$@"
+    _tftp-dus "$@"
 else
-    compdef _tftp tftp
+    compdef _tftp-dus tftp
 fi

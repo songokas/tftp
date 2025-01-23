@@ -1,19 +1,22 @@
-use crate::{
-    buffer::{extend_from_slice, SliceExt},
-    config::{ENCRYPTION_NONCE_SIZE, ENCRYPTION_PADDING_SIZE},
-    error::EncryptedPacketError,
-};
+use rand::CryptoRng;
+use rand::RngCore;
 
-use rand::{CryptoRng, RngCore};
-
-use crate::{
-    config::{DATA_PACKET_HEADER_SIZE, ENCRYPTION_TAG_SIZE},
-    encryption::{
-        apply_bit_padding, remove_bit_padding, Encryptor, Nonce, PublicKey, PUBLIC_KEY_SIZE,
-    },
-    packet::PacketType,
-    types::{DataBuffer, PacketBlock},
-};
+use crate::buffer::extend_from_slice;
+use crate::buffer::SliceExt;
+use crate::config::DATA_PACKET_HEADER_SIZE;
+use crate::config::ENCRYPTION_NONCE_SIZE;
+use crate::config::ENCRYPTION_PADDING_SIZE;
+use crate::config::ENCRYPTION_TAG_SIZE;
+use crate::encryption::apply_bit_padding;
+use crate::encryption::remove_bit_padding;
+use crate::encryption::Encryptor;
+use crate::encryption::Nonce;
+use crate::encryption::PublicKey;
+use crate::encryption::PUBLIC_KEY_SIZE;
+use crate::error::EncryptedPacketError;
+use crate::packet::PacketType;
+use crate::types::DataBuffer;
+use crate::types::PacketBlock;
 
 #[allow(unused)]
 pub struct PaddedPacketBlock<'a> {

@@ -10,7 +10,7 @@ _tftp() {
     do
         case "${cmd},${i}" in
             ",$1")
-                cmd="tftp"
+                cmd="tftp-dus"
                 ;;
             tftp,help)
                 cmd="tftp__help"
@@ -413,4 +413,4 @@ _tftp() {
     esac
 }
 
-complete -F _tftp -o nosort -o bashdefault -o default tftp
+complete -F _tftp-dus -o nosort -o bashdefault -o default tftp
