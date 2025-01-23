@@ -246,13 +246,13 @@ test_directory_list() {
     $server server 127.0.0.1:9000 $TEST_DIR/server --directory-list dir & pids+=($!)
 
     for level in data optional-data protocol optional-protocol none; do
-        local received=$($client receive 127.0.0.1:9000 dir --local-path /dev/stdout --encryption-level $level)
+        local received=$($client receive 127.0.0.1:9000 dir --local-path /dev/stdout --encryption-level $level | sort)
         local expected="b
 samples/"
         if [ "$expected" != "$received" ]; then
             exit 1
         fi
-        local received=$($client receive 127.0.0.1:9000 samples/dir --local-path /dev/stdout --encryption-level $level)
+        local received=$($client receive 127.0.0.1:9000 samples/dir --local-path /dev/stdout --encryption-level $level | sort)
         if [[ "samples/a" != "$received" ]]; then
             exit 1
         fi
