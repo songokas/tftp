@@ -26,6 +26,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
       - name: Run tests
         run: |
-          cargo +nightly fmt --check
+          cargo fmt --check
           cargo clippy
           ./test test_all
