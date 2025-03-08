@@ -25,17 +25,19 @@ rand = { version = "0.8", optional = false, default-features = false, features =
 polling = "3"
 socket2 = { version = "0.5", features = ["all"] }
 notify = { version = "6", optional = true }
+otlp-metrics-exporter = { version = "0.1", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
 
 [features]
-default = ["alloc", "encryption", "multi_thread", "seek", "sync"]
+default = ["alloc", "encryption", "multi_thread", "seek", "sync", "metrics"]
 # no std is still using std dependency for filesystem, sockets, std::io
 std = ["tftp-dus/std"]
 alloc = ["tftp-dus/alloc"]
 encryption = ["tftp-dus/encryption"]
 seek = ["tftp-dus/seek"]
+metrics = ["tftp-dus/metrics", "otlp-metrics-exporter"]
 multi_thread = ["tftp-dus/multi_thread", "std"]
 sync = ["notify", "std", "alloc"]
 

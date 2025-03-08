@@ -2,6 +2,7 @@ use core::num::NonZeroU8;
 use core::time::Duration;
 
 use log::*;
+
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -10,6 +11,8 @@ use crate::config::ConnectionOptions;
 use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::encryption::*;
 use crate::macros::cfg_encryption;
+use crate::metrics::counter;
+use crate::metrics::histogram;
 use crate::packet::ByteConverter;
 use crate::packet::Packet;
 use crate::packet::PacketType;
@@ -43,6 +46,7 @@ pub struct Connection<B, Rng> {
     /// last block index acknowledged
     pub last_acknowledged: u64,
     pub last_sent: Instant,
+    pub started: Instant,
     // total file size transferred
     pub transfer: usize,
     // multiplier for retry_packet_after_timeout
@@ -50,7 +54,8 @@ pub struct Connection<B, Rng> {
 
     pub endpoint: SocketAddr,
     pub finished: bool,
-    pub invalid: bool,
+    pub invalid: Option<Instant>,
+    pub writter: bool,
 }
 
 impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
@@ -150,5 +155,15 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
             return false;
         }
         true
+    }
+}
+
+impl<B, Rng> Drop for Connection<B, Rng> {
+    fn drop(&mut self) {
+        let _connection_type = if self.writter { "write" } else { "read" };
+        counter!("tftp.server.connection.transfer.size", "connection_type" => _connection_type, "error" => self.invalid.is_some().to_string())
+            .increment(self.transfer as u64);
+        histogram!("tftp.server.connection.duration",  "connection_type" => _connection_type, "error" => self.invalid.is_some().to_string())
+            .record(self.started.elapsed());
     }
 }

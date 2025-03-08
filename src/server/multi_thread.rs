@@ -5,6 +5,7 @@ use std::thread::JoinHandle;
 
 use log::info;
 use log::trace;
+
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -17,6 +18,8 @@ use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
 use crate::macros::cfg_stack;
 use crate::map::Map;
+use crate::metrics::counter;
+use crate::metrics::gauge;
 use crate::readers::block_reader::BlockReader;
 use crate::readers::Readers;
 use crate::server::connection::ClientType;
@@ -134,6 +137,8 @@ where
             continue;
         }
 
+        counter!("tftp.server.incoming_connections").increment(1);
+
         receive_buffer.truncate(received_length);
 
         if handles.len() >= config.max_connections as usize {
@@ -218,6 +223,7 @@ where
         };
         let _ = handles.insert(from_client, handle);
         handles.retain(|_, t| !t.is_finished());
+        gauge!("tftp.server.open_connections").set(handles.len() as f64);
     }
 }
 
@@ -236,6 +242,7 @@ fn spawn_reader<
         let mut send_buffer = create_max_buffer(connection.options.block_size);
         let mut wait_control = WaitControl::new();
         let max_buffer_size = receive_buffer.len();
+
         loop {
             if timeout_client(&mut connection, request_timeout, &mut send_buffer) {
                 return;
@@ -252,7 +259,9 @@ fn spawn_reader<
                         wait_control.receiver_idle();
                         continue;
                     }
-                    Err(_) => return,
+                    Err(_) => {
+                        return;
+                    }
                 };
             wait_control.receiving();
             receive_buffer.truncate(received_length);
@@ -276,6 +285,7 @@ fn spawn_writer<
         let mut receive_buffer = create_max_buffer(connection.options.block_size);
         let mut send_buffer = create_max_buffer(connection.options.block_size);
         let receive_max_buffer_size = receive_buffer.len();
+
         loop {
             if timeout_client(&mut connection, request_timeout, &mut send_buffer) {
                 return;
@@ -289,7 +299,9 @@ fn spawn_writer<
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                         continue;
                     }
-                    Err(_) => return,
+                    Err(_) => {
+                        return;
+                    }
                 };
             receive_buffer.truncate(received_length);
             handle_write(

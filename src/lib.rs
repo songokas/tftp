@@ -174,3 +174,71 @@ pub mod key_management {
     pub fn create_initial_keys() {}
     pub type AuthorizedKeys = ();
 }
+
+#[cfg(feature = "metrics")]
+mod metrics {
+    pub use metrics::counter;
+    pub use metrics::gauge;
+    pub use metrics::histogram;
+}
+#[cfg(not(feature = "metrics"))]
+mod metrics {
+    pub struct Counter;
+    impl Counter {
+        pub fn increment(&self, _: u64) {}
+    }
+    pub struct Gauge;
+    impl Gauge {
+        pub fn set(&self, _: f64) {}
+    }
+    pub struct Histogram;
+    impl Histogram {
+        pub fn record(&self, _: core::time::Duration) {}
+    }
+
+    macro_rules! counter {
+        (target: $target:expr, level: $level:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {{
+            crate::metrics::Counter {}
+        }};
+        (target: $target:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Counter {}
+        };
+        (level: $level:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Counter {}
+        };
+        ($name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Counter {}
+        };
+    }
+    macro_rules! gauge {
+        (target: $target:expr, level: $level:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {{
+            crate::metrics::Gauge {}
+        }};
+        (target: $target:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Gauge {}
+        };
+        (level: $level:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Gauge {}
+        };
+        ($name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Gauge {}
+        };
+    }
+    macro_rules! histogram {
+        (target: $target:expr, level: $level:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {{
+            crate::metrics::Histogram {}
+        }};
+        (target: $target:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Histogram {}
+        };
+        (level: $level:expr, $name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Histogram {}
+        };
+        ($name:expr $(, $label_key:expr $(=> $label_value:expr)?)* $(,)?) => {
+            crate::metrics::Histogram {}
+        };
+    }
+    pub(crate) use counter;
+    pub(crate) use gauge;
+    pub(crate) use histogram;
+}

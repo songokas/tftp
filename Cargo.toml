@@ -30,6 +30,7 @@ micromath = { version = "2", optional = false }
 
 # remove once chacha20poly1305, aead supports heapless 0.8
 heapless_07 = { package = "heapless", version = "0.7", optional = false, default-features = false }
+metrics = { version = "0.24", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
@@ -37,7 +38,7 @@ vfs = "0.9"
 arrayvec = { version = "0.7", optional = false, default-features = false }
 
 [features]
-default = ["alloc", "encryption", "multi_thread", "seek"]
+default = ["alloc", "encryption", "multi_thread", "seek", "metrics"]
 std = []
 alloc = ["chacha20poly1305?/alloc", "x25519-dalek?/alloc"]
 encryption = ["x25519-dalek", "chacha20poly1305", "base64"]

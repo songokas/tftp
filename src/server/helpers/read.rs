@@ -66,7 +66,7 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
                 ),
             };
             connection.send_packet(Packet::Error(error_packet), buffer);
-            connection.invalid = true;
+            connection.invalid = instant().into();
             return false;
         }
     };
@@ -130,7 +130,7 @@ pub fn handle_read<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Co
         }
         Ok(Packet::Error(p)) => {
             error!("Error received {:?} {}", p.code, p.message);
-            connection.invalid = true;
+            connection.invalid = instant().into();
             return None;
         }
         _ => {

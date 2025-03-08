@@ -19,6 +19,8 @@ use crate::error::DefaultBoxedResult;
 use crate::error::PacketError;
 use crate::error::StorageError;
 use crate::macros::cfg_encryption;
+use crate::metrics::counter;
+use crate::metrics::histogram;
 use crate::packet::AckPacket;
 use crate::packet::ByteConverter;
 use crate::packet::ErrorCode;
@@ -88,6 +90,9 @@ where
         initial_rtt.elapsed().as_secs_f32()
     );
 
+    histogram!("tftp.client.handshake.duration", "connection_type" => "read")
+        .record(initial_rtt.elapsed());
+
     #[cfg(feature = "encryption")]
     let (mut socket, options) = configure_socket(socket, initial_keys, options, _rng);
 
@@ -96,6 +101,7 @@ where
 
     let mut last_block_ack = 0;
     let mut total = 0;
+    let started = instant();
 
     // server sent data packet so no encryption
     if let Some(packet_length) = received_length.take() {
@@ -122,6 +128,10 @@ where
 
             if packet_length != options.block_size_with_encryption() as usize {
                 info!("Client finished receiving {local_file_path} {total} bytes");
+                histogram!("tftp.client.connection.duration", "connection_type" => "read")
+                    .record(started.elapsed());
+                counter!("tftp.client.connection.transfer.size", "connection_type" => "read")
+                    .increment(total as u64);
                 return Ok((packet_length, None));
             }
         }
@@ -215,6 +225,10 @@ where
 
                     if w < options.block_size_with_encryption() as usize {
                         info!("Client finished receiving {local_file_path} {total} bytes");
+                        histogram!("tftp.client.connection.duration", "connection_type" => "read")
+                            .record(started.elapsed());
+                        counter!("tftp.client.connection.transfer.size", "connection_type" => "read")
+                            .increment(total as u64);
                         return Ok((total, options.remote_public_key()));
                     }
                 }

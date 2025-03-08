@@ -65,7 +65,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
         }
         Ok(Packet::Error(p)) => {
             error!("Error received {:?} {}", p.code, p.message);
-            connection.invalid = true;
+            connection.invalid = instant().into();
             return None;
         }
         _ => {
@@ -82,7 +82,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
             if let Some(w) = written {
                 if let Err(e) = handle_file_size((connection.transfer + w) as u64, max_file_size) {
                     connection.send_packet(Packet::Error(e), send_buffer);
-                    connection.invalid = true;
+                    connection.invalid = instant().into();
                     return None;
                 }
             }
@@ -118,7 +118,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
         }
         Err(e) => {
             connection.send_packet(Packet::Error(e), send_buffer);
-            connection.invalid = true;
+            connection.invalid = instant().into();
             return None;
         }
     }

@@ -4,6 +4,7 @@ use core::time::Duration;
 use log::debug;
 use log::info;
 use log::trace;
+
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -22,6 +23,8 @@ use crate::error::StorageError;
 use crate::flow_control::RateControl;
 use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
+use crate::metrics::counter;
+use crate::metrics::histogram;
 use crate::packet::prepend_data_header;
 use crate::packet::AckPacket;
 use crate::packet::ByteConverter;
@@ -106,6 +109,7 @@ where
         .unwrap_or_else(|| Duration::from_millis(1));
 
     debug!("Initial exchange took {}", initial_rtt.as_secs_f32());
+    histogram!("tftp.client.handshake.duration", "connection_type" => "write").record(initial_rtt);
 
     #[cfg(feature = "encryption")]
     let (mut socket, options) = configure_socket(socket, initial_keys, options, _rng);
@@ -155,6 +159,7 @@ where
 
     let mut send_buffer = create_max_buffer(options.block_size);
     let send_max_buffer_size = send_buffer.len();
+    let started = instant();
     loop {
         if stats_calculate.elapsed() > flow_control_period {
             rate_control.calculate_transmit_rate(
@@ -292,6 +297,10 @@ where
                         "Client finished sending {local_file_path} {} bytes",
                         total_confirmed
                     );
+                    histogram!("tftp.client.connection.duration", "connection_type" => "write")
+                        .record(started.elapsed());
+                    counter!("tftp.client.connection.transfer.size", "connection_type" => "write")
+                        .increment(total_confirmed as u64);
                     return Ok((total_confirmed, options.remote_public_key()));
                 }
             }

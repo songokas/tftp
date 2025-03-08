@@ -132,7 +132,7 @@ pub fn timeout_client<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     request_timeout: Duration,
     buffer: &mut DataBuffer,
 ) -> bool {
-    if connection.invalid || connection.finished {
+    if connection.invalid.is_some() || connection.finished {
         return true;
     }
     if connection.last_updated.elapsed() <= request_timeout {

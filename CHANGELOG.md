@@ -2,6 +2,12 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.6.1] - 2025-03-09
+
+### Changed
+
+- metrics added
+
 ## [0.6.0] - 2025-01-23
 
 ### Changed

@@ -18,6 +18,7 @@ use crate::macros::cfg_seek;
 use crate::macros::cfg_stack;
 use crate::map::Entry;
 use crate::map::Map;
+use crate::metrics::gauge;
 use crate::readers::block_reader::BlockReader;
 use crate::readers::Readers;
 use crate::server::connection::ClientType;
@@ -382,6 +383,8 @@ where
             }
         }
 
+        gauge!("tftp.server.open_connections").set(clients.len() as f64);
+
         trace!(
             "Processed connection from {from_client} in {}",
             processed_in.elapsed().as_secs_f32(),
@@ -399,7 +402,7 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
         .iter_mut()
         .filter(|(_, (connection, client_type))| {
             matches!(client_type, ClientType::Reader(_))
-                && !(connection.invalid || connection.finished)
+                && !(connection.invalid.is_some() || connection.finished)
         })
         .enumerate()
         .skip(next_client)
@@ -411,7 +414,8 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
         current_client = clients
             .iter_mut()
             .filter(|(_, (connection, ct))| {
-                matches!(ct, ClientType::Reader(_)) && !(connection.invalid || connection.finished)
+                matches!(ct, ClientType::Reader(_))
+                    && !(connection.invalid.is_some() || connection.finished)
             })
             .take(next_client)
             .enumerate()

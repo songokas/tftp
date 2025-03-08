@@ -89,6 +89,51 @@ fn main() -> BinResult<()> {
         .format_target(cfg!(debug_assertions))
         .init();
 
+    #[cfg(feature = "metrics")]
+    if let Ok(metrics_remote_addr) = std::env::var("METRICS_REMOTE_ADDR") {
+        let headers = std::env::var("METRICS_HEADERS")
+            .map(|s| s.split(',').map(|s| {
+                let (k, v) = s.split_once('=').expect(r#"expected env format METRICS_HEADERS="Authorization=Basic base64,DUMMY=1"#);
+                (k.to_string(), v.to_string())
+        })
+        .collect::<Vec<(String, String)>>())
+        .unwrap_or_default();
+
+        let config = otlp_metrics_exporter::transport::TransportConfig {
+            remote_addr: metrics_remote_addr,
+            endpoint: std::env::var("METRICS_ENDPOINT")
+                .unwrap_or_else(|_| "/api/v1/otlp/v1/metrics".to_string()),
+            headers,
+            timeout: core::time::Duration::from_secs(
+                std::env::var("METRICS_TIMEOUT")
+                    .map(|s| s.parse().expect("METRICS_TIMEOUT should be a number"))
+                    .unwrap_or(5),
+            ),
+        };
+        let recorder = otlp_metrics_exporter::install_recorder(
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+            std::env::var("METRICS_INSTANCE_ID").unwrap_or_else(|_| {
+                use rand::distributions::Alphanumeric;
+                use rand::Rng;
+                OsRng
+                    .sample_iter(&Alphanumeric)
+                    .take(16)
+                    .map(char::from)
+                    .collect()
+            }),
+        );
+        otlp_metrics_exporter::transport::send_metrics_with_interval(
+            config,
+            core::time::Duration::from_secs(
+                std::env::var("METRICS_INTERVAL")
+                    .map(|s| s.parse().expect("METRICS_INTERVAL should be a number"))
+                    .unwrap_or(15),
+            ),
+            recorder,
+        );
+    }
+
     match args.command {
         Commands::Send {
             local_path,
