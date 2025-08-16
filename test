@@ -13,10 +13,10 @@ TEST_DIR="./target/tftp-232342"
 test_full_config() {
     local server="$1"
     local client="$2"
-    local private_key="tn4oZ8Rtgci2CNULF7UYdgeKz0i+jiK0O2Gs0PPjZk8="
-    local public_key="uNzZDPe9sRhuXRTAM8YjCSmt7OHhlBahKCPOarNwCk0="
-    local client_private_key="ZoCtWKMLP8bPQFbOHMu9AzkVMaUIxiXhDYhQwDGlNas="
-    local client_public_key="hX0vxxwVcP/uegcppn46e8maSXFduJDG1IywVYhlMmA="
+    local private_key="XnXn2SAxtXlUAXlobJsCW9BRg6XKNcKCS4XNoaMjJJk="
+    local public_key="q62LxBAfk9i8EszckOMbEL731AxryOuHcrTQHmXzjWg="
+    local client_private_key="t4JQnsfYIIcah6RMAnetDTjtV7OyQ+sAXMnBV68tvfY="
+    local client_public_key="Ww+C2l/aCJPoNvnB8YKNibUCaGITFRp/lnowz8Rpai0="
     local server_pids=()
     local pids=()
 
@@ -39,7 +39,7 @@ test_full_config() {
        --max-file-size 100000000 --block-size 512 --encryption-level protocol --private-key "$client_private_key" \
        --known-hosts $TEST_DIR/known
 
-    kill "${server_pids[@]}"
+    kill -9 "${server_pids[@]}"
 
     cmp -s $TEST_DIR/delete/file $TEST_DIR/server/new-path
 
@@ -64,7 +64,7 @@ test_large_files() {
     wait "${pids[@]}"
 
     sleep 1
-    kill "${server_pids[@]}"
+    kill -9 "${server_pids[@]}"
 
     cmp -s $TEST_DIR/client/samples/111M $TEST_DIR/server/samples/111M
     cmp -s $TEST_DIR/client/samples/112M $TEST_DIR/server/samples/112M
@@ -177,7 +177,7 @@ test_high_load() {
     for ((i=size+1;i<=max_size;i++)); do
         cmp -s $TEST_DIR/server/samples/$i $TEST_DIR/delete/$i
     done
-    kill "${server_pids[@]}"
+    kill -9 "${server_pids[@]}"
 
 }
 
@@ -186,12 +186,11 @@ test_double_encryption() {
     local client="$2"
     local data=$(openssl rand -base64 2000)
     local server_pids=()
-    local pids=()
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server & pids+=($!)
+    $server server 127.0.0.1:9000 $TEST_DIR/server & server_pids+=($!)
 
     for level in data optional-data protocol optional-protocol none; do
         local remote_path=$(openssl rand -hex 12)
@@ -203,22 +202,22 @@ test_double_encryption() {
         fi
     done;
 
-    kill "${pids[@]}"
+    kill -9 "${server_pids[@]}"
 }
 
 test_encryption_level() {
     local server="$1"
     local client="$2"
+    local protos="${3:-"data optional-data protocol optional-protocol none"}"
     local data="hello"
     local server_pids=()
-    local pids=()
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server & pids+=($!)
+    $server server 127.0.0.1:9000 $TEST_DIR/server & server_pids+=($!)
 
-    for level in data optional-data protocol optional-protocol none; do
+    for level in ; do
         local remote_path=$(openssl rand -hex 12)
         echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --encryption-level $level
         local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --encryption-level $level)
@@ -227,7 +226,7 @@ test_encryption_level() {
         fi
     done;
 
-    kill "${pids[@]}"
+    kill -9 "${server_pids[@]}"
 }
 
 test_directory_list() {
@@ -235,7 +234,6 @@ test_directory_list() {
     local client="$2"
     local data="hello"
     local server_pids=()
-    local pids=()
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
@@ -243,7 +241,7 @@ test_directory_list() {
     echo "$data" > $TEST_DIR/server/samples/a
     echo "$data" > $TEST_DIR/server/b
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server --directory-list dir & pids+=($!)
+    $server server 127.0.0.1:9000 $TEST_DIR/server --directory-list dir & server_pids+=($!)
 
     for level in data optional-data protocol optional-protocol none; do
         local received=$($client receive 127.0.0.1:9000 dir --local-path /dev/stdout --encryption-level $level | sort)
@@ -258,7 +256,7 @@ samples/"
         fi
     done;
 
-    kill "${pids[@]}"
+    kill -9 "${server_pids[@]}"
 }
 
 test_standard_tftp() {
@@ -266,12 +264,11 @@ test_standard_tftp() {
     local client="$2"
     local data=$(openssl rand -hex 1500)
     local server_pids=()
-    local pids=()
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server --require-server-port-change --max-window-size 1 & pids+=($!)
+    $server server 127.0.0.1:9000 $TEST_DIR/server --require-server-port-change --max-window-size 1 & server_pids+=($!)
 
     local remote_path=$(openssl rand -hex 12)
     echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --allow-server-port-change --window-size 1
@@ -280,16 +277,16 @@ test_standard_tftp() {
         exit 1
     fi
 
-    kill "${pids[@]}"
+    kill -9 "${server_pids[@]}" 
 }
 
 test_encryption_authorized_only() {
     local server="$1"
     local client="$2"
-    local private_key="tn4oZ8Rtgci2CNULF7UYdgeKz0i+jiK0O2Gs0PPjZk8="
-    local public_key="uNzZDPe9sRhuXRTAM8YjCSmt7OHhlBahKCPOarNwCk0="
-    local client_private_key="ZoCtWKMLP8bPQFbOHMu9AzkVMaUIxiXhDYhQwDGlNas="
-    local client_public_key="hX0vxxwVcP/uegcppn46e8maSXFduJDG1IywVYhlMmA="
+    local private_key="XnXn2SAxtXlUAXlobJsCW9BRg6XKNcKCS4XNoaMjJJk="
+    local public_key="q62LxBAfk9i8EszckOMbEL731AxryOuHcrTQHmXzjWg="
+    local client_private_key="t4JQnsfYIIcah6RMAnetDTjtV7OyQ+sAXMnBV68tvfY="
+    local client_public_key="Ww+C2l/aCJPoNvnB8YKNibUCaGITFRp/lnowz8Rpai0="
     local data="hello"
     local server_pids=()
     local pids=()
@@ -301,7 +298,7 @@ test_encryption_authorized_only() {
     echo "127.0.0.1:9000 $public_key" > $TEST_DIR/known
     head -c 10M /dev/urandom > $TEST_DIR/client/file
 
-    $server server 127.0.0.1:9000 $TEST_DIR/server --required-full-encryption false --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
+    $server server 127.0.0.1:9000 $TEST_DIR/server --require-full-encryption false --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
 
     local remote_path=$(openssl rand -hex 12)
     # disallow no public key
@@ -333,8 +330,7 @@ test_encryption_authorized_only() {
         fi
     done;
 
-
-    kill "${server_pids[@]}" 
+    kill -9 "${server_pids[@]}"
 }
 
 test_curl_client() {
@@ -349,7 +345,7 @@ test_curl_client() {
     $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 104857600 & server_pids+=($!)
     curl -T $TEST_DIR/client/samples/100M tftp://127.0.0.1:9000
     curl -o $TEST_DIR/delete/100M tftp://127.0.0.1:9000/100M
-    kill "${server_pids[@]}" 
+    kill -9 "${server_pids[@]}" 
 }
 
 
@@ -450,7 +446,7 @@ test_all() {
     # non encryption server communication with encrypted clients
     for server in ${non_encryption_targets[@]}; do
         for client in ${encryption_targets[@]}; do
-            test_encryption_level $server $client
+            test_encryption_level $server $client "optional-data optional-protocol none"
             test_standard_tftp $server $client
         done
     done

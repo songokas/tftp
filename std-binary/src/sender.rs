@@ -43,7 +43,6 @@ where
         block_size: config.block_size as u16,
         retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
         file_size: None,
-        encryption_keys: None,
         #[cfg(feature = "encryption")]
         encryption_level: config
             .encryption_level

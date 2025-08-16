@@ -2,9 +2,7 @@ use core::time::Duration;
 
 use log::debug;
 
-use crate::encryption::EncryptionKeys;
 use crate::encryption::EncryptionLevel;
-use crate::encryption::PublicKey;
 use crate::macros::cfg_alloc;
 use crate::macros::cfg_stack;
 
@@ -48,13 +46,13 @@ cfg_stack!(
     /// how many single readers available window size = 1
     pub const MAX_SINGLE_READERS: u16 = 64;
     /// how many multi readers available window size > 1
-    pub const MAX_MULTI_READERS: u16 = 16;
+    pub const MAX_MULTI_READERS: u16 = 8;
     /// how many seek readers available window size > 1
     pub const MAX_MULTI_SEEK_READERS: u16 = 64;
     pub const DEFAULT_WINDOW_SIZE: u8 = 4;
 );
 
-pub const MAX_EXTENSION_VALUE_SIZE: u8 = 45;
+pub const MAX_EXTENSION_VALUE_SIZE: u8 = 88; // current max ENCODED_SIGNATURE_LENGTH;
 pub const MAX_DEFAULT_STRING_SIZE: u8 = 140;
 pub const MAX_FILE_PATH_SIZE: u8 = 150;
 
@@ -71,7 +69,6 @@ pub struct ConnectionOptions {
     pub block_size: u16,
     pub retry_packet_after_timeout: Duration,
     pub file_size: Option<u64>,
-    pub encryption_keys: Option<EncryptionKeys>,
     pub encryption_level: EncryptionLevel,
     pub window_size: u16,
 }
@@ -82,7 +79,6 @@ impl Default for ConnectionOptions {
             block_size: DEFAULT_DATA_BLOCK_SIZE,
             retry_packet_after_timeout: DEFAULT_RETRY_PACKET_TIMEOUT,
             file_size: None,
-            encryption_keys: None,
             encryption_level: EncryptionLevel::None,
             window_size: EXTENSION_WINDOW_SIZE_MIN,
         }
@@ -100,18 +96,7 @@ impl ConnectionOptions {
         self
     }
 
-    pub fn remote_public_key(&self) -> Option<PublicKey> {
-        match self.encryption_keys {
-            Some(EncryptionKeys::LocalToRemote(_, p)) => p.into(),
-            _ => None,
-        }
-    }
-
     pub fn block_size_with_encryption(&self) -> u16 {
-        if !self.is_encrypting() {
-            return self.block_size;
-        }
-
         match self.encryption_level {
             EncryptionLevel::Data => {
                 self.block_size - ENCRYPTION_TAG_SIZE as u16 - ENCRYPTION_NONCE_SIZE as u16
@@ -129,10 +114,7 @@ impl ConnectionOptions {
     }
 
     pub fn is_encrypting(&self) -> bool {
-        matches!(
-            self.encryption_keys,
-            Some(crate::encryption::EncryptionKeys::LocalToRemote(..))
-        )
+        self.encryption_level != EncryptionLevel::None
     }
 }
 

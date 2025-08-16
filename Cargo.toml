@@ -1,6 +1,6 @@
 [package]
 name = "tftp-dus"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 
 [profile.release]
@@ -18,6 +18,7 @@ x25519-dalek = { version = "2", optional = true, default-features = false, featu
     "zeroize",
     "static_secrets",
 ] }
+ed25519-dalek = { version = "2", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true, default-features = false, features = [
     "heapless",
     "getrandom",
@@ -40,7 +41,11 @@ arrayvec = { version = "0.7", optional = false, default-features = false }
 [features]
 default = ["alloc", "encryption", "multi_thread", "seek", "metrics"]
 std = []
-alloc = ["chacha20poly1305?/alloc", "x25519-dalek?/alloc"]
-encryption = ["x25519-dalek", "chacha20poly1305", "base64"]
+alloc = [
+    "chacha20poly1305?/alloc",
+    "x25519-dalek?/alloc",
+    "ed25519-dalek?/alloc",
+]
+encryption = ["x25519-dalek", "chacha20poly1305", "base64", "ed25519-dalek"]
 seek = []
 multi_thread = ["std"]

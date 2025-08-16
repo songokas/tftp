@@ -4,7 +4,6 @@ use core::time::Duration;
 use log::debug;
 use log::info;
 use log::trace;
-
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -13,10 +12,13 @@ use crate::block_mapper::BlockMapper;
 use crate::buffer::create_max_buffer;
 use crate::buffer::resize_buffer;
 use crate::client::connection::query_server;
+use crate::client::connection::QueryOptions;
+use crate::client::connection::QueryResult;
+use crate::client::extensions::create_extensions;
 use crate::config::print_options;
 use crate::config::ConnectionOptions;
 use crate::config::DATA_PACKET_HEADER_SIZE;
-use crate::encryption::PublicKey;
+use crate::encryption::VerifyingKey;
 use crate::error::BoxedResult;
 use crate::error::PacketError;
 use crate::error::StorageError;
@@ -65,7 +67,7 @@ pub fn send_file<
     #[allow(unused_mut)] mut socket: Sock,
     instant: InstantCallback,
     _rng: Rng,
-) -> BoxedResult<(usize, Option<PublicKey>)>
+) -> BoxedResult<(usize, Option<VerifyingKey>)>
 where
     Sock: Socket,
     Rng: CryptoRng + RngCore + Copy,
@@ -93,15 +95,28 @@ where
 
     rate_control.start_rtt(1);
 
-    #[allow(unused_mut)]
-    let (_, acknowledge, mut options, endpoint) = query_server(
+    #[cfg(not(feature = "encryption"))]
+    let initial_keys = None;
+
+    let extensions = create_extensions(&options, initial_keys.as_ref());
+
+    let QueryResult {
+        received_length: _,
+        acknowledge,
+        options,
+        endpoint,
+        remote_session_public_keys,
+    } = query_server(
         &mut socket,
         &mut receive_buffer,
         Packet::Write,
-        remote_file_path,
-        options,
         instant,
-        &config,
+        QueryOptions {
+            file_path: remote_file_path,
+            options,
+            config: &config,
+            extensions,
+        },
     )?;
 
     let initial_rtt = rate_control
@@ -112,7 +127,13 @@ where
     histogram!("tftp.client.handshake.duration", "connection_type" => "write").record(initial_rtt);
 
     #[cfg(feature = "encryption")]
-    let (mut socket, options) = configure_socket(socket, initial_keys, options, _rng);
+    let (mut socket, options) = configure_socket(
+        socket,
+        initial_keys,
+        options,
+        _rng,
+        remote_session_public_keys.as_ref(),
+    );
 
     print_options("Client using", &options);
 
@@ -301,7 +322,10 @@ where
                         .record(started.elapsed());
                     counter!("tftp.client.connection.transfer.size", "connection_type" => "write")
                         .increment(total_confirmed as u64);
-                    return Ok((total_confirmed, options.remote_public_key()));
+                    return Ok((
+                        total_confirmed,
+                        remote_session_public_keys.and_then(|p| p.auth),
+                    ));
                 }
             }
             Ok(Packet::Error(p)) => {

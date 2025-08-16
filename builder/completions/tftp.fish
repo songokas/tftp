@@ -57,7 +57,7 @@ complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l max-file-size -d
 complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l max-block-size -r
 complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l authorized-keys -d 'Path to a file with authorized public keys. Each line contains base64(public key)' -r -F
 complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l private-key -d 'Base64 encoded private key to use: value or FILE' -r
-complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l required-full-encryption -d 'Require that connections be fully encrypted. This is enabled if authorized keys are provided' -r -f -a "{true	'',false	''}"
+complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l require-full-encryption -d 'Require that connections be fully encrypted. This is enabled if authorized keys are provided' -r -f -a "{true	'',false	''}"
 complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l directory-list -d 'Retrieving specified file provides directory list' -r
 complete -c tftp-dus -n "__fish_seen_subcommand_from server" -l max-directory-depth -d 'Maximum directory depth' -r
 complete -c tftp-dus -n "__fish_seen_subcommand_from server" -s a -l allow-overwrite

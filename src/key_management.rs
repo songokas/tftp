@@ -1,51 +1,13 @@
-use rand::CryptoRng;
-use rand::RngCore;
-use x25519_dalek::EphemeralSecret;
-
-use crate::encryption::decode_public_key;
-use crate::encryption::encode_public_key;
-use crate::encryption::FinalizedKeys;
-use crate::encryption::InitialKey;
-use crate::encryption::InitialKeyPair;
-use crate::encryption::PrivateKey;
-use crate::encryption::PublicKey;
+use crate::encryption::*;
 use crate::error::BoxedError;
 use crate::error::BoxedResult;
 use crate::std_compat::io::BufRead;
 use crate::std_compat::io::Write;
 
 #[cfg(all(feature = "alloc", feature = "encryption"))]
-pub type AuthorizedKeys = alloc::vec::Vec<PublicKey>;
+pub type AuthorizedKeys = alloc::vec::Vec<VerifyingKey>;
 #[cfg(all(not(feature = "alloc"), feature = "encryption"))]
-pub type AuthorizedKeys = heapless::Vec<PublicKey, { crate::config::MAX_CLIENTS as usize }>;
-
-pub fn create_initial_keys(
-    private: &Option<PrivateKey>,
-    mut rng: impl CryptoRng + RngCore,
-) -> InitialKeyPair {
-    match private {
-        Some(k) => InitialKeyPair {
-            public: PublicKey::from(k),
-            private: InitialKey::Static(k.clone()),
-        },
-        None => {
-            let random_key = EphemeralSecret::random_from_rng(&mut rng);
-            InitialKeyPair {
-                public: PublicKey::from(&random_key),
-                private: InitialKey::Ephemeral(random_key),
-            }
-        }
-    }
-}
-
-pub fn create_finalized_keys<R: CryptoRng + RngCore + Copy>(
-    private: &Option<PrivateKey>,
-    remote_public_key: &PublicKey,
-    rng: R,
-) -> FinalizedKeys<R> {
-    let initial_keys = create_initial_keys(private, rng);
-    initial_keys.finalize(remote_public_key, rng)
-}
+pub type AuthorizedKeys = heapless::Vec<VerifyingKey, { crate::config::MAX_CLIENTS as usize }>;
 
 #[allow(unused_must_use)]
 pub fn read_authorized_keys(reader: impl BufRead) -> BoxedResult<AuthorizedKeys> {
@@ -57,7 +19,7 @@ pub fn read_authorized_keys(reader: impl BufRead) -> BoxedResult<AuthorizedKeys>
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
         }
-        let key = decode_public_key(line.as_bytes())?;
+        let key = decode_verifying_key(line.as_bytes())?;
         authorized_keys.push(key);
     }
     Ok::<_, BoxedError>(authorized_keys)
@@ -66,7 +28,7 @@ pub fn read_authorized_keys(reader: impl BufRead) -> BoxedResult<AuthorizedKeys>
 pub fn get_from_known_hosts(
     reader: impl BufRead,
     endpoint: &str,
-) -> BoxedResult<Option<PublicKey>> {
+) -> BoxedResult<Option<VerifyingKey>> {
     for line in reader.lines() {
         let Ok(line) = line else {
             continue;
@@ -76,7 +38,7 @@ pub fn get_from_known_hosts(
         }
         match line.split_once(' ') {
             Some((remote_endpoint, encoded_key)) if remote_endpoint == endpoint => {
-                return Ok(decode_public_key(encoded_key.as_bytes())?.into())
+                return Ok(decode_verifying_key(encoded_key.as_bytes())?.into())
             }
             _ => continue,
         }
@@ -87,12 +49,12 @@ pub fn get_from_known_hosts(
 pub fn append_to_known_hosts(
     mut file: impl Write,
     endpoint: &str,
-    public_key: &PublicKey,
+    public_key: &VerifyingKey,
 ) -> BoxedResult<()> {
     file.write_fmt(format_args!(
         "\n{} {}\n",
         endpoint,
-        encode_public_key(public_key)?
+        encode_verifying_key(public_key)?
     ))?;
     Ok(())
 }
@@ -112,7 +74,7 @@ mod tests {
         path
             .create_file()
             .unwrap()
-            .write_all(b"\n#Hello world\nDRKEZZt4qRdz7gp14XNyvGsFT95Fo/oFj5A+b35s8TI=\n/RtKjvdVy3lnPjPwTyXNvMsWBIFjfaG3kvOQ3VOMItg=")
+            .write_all(b"\n#Hello world\n7n3Y/T6Z/gPQjNNuKiGuPgK2keHbJb4fvq2c6NAvC9Q=\nvyg/gG9yPlX4YS0kSQ9T1cqXWk2grW+kW+Fh1fhZlo8=")
             .unwrap();
         let keys = read_authorized_keys(create_buff_reader(path.open_file().unwrap())).unwrap();
         assert_eq!(keys.len(), 2);
@@ -143,7 +105,8 @@ mod tests {
         let key =
             get_from_known_hosts(create_buff_reader(path.open_file().unwrap()), "server").unwrap();
         let expected =
-            decode_public_key("DRKEZZt4qRdz7gp14XNyvGsFT95Fo/oFj5A+b35s8TI=".as_bytes()).unwrap();
+            decode_verifying_key("DRKEZZt4qRdz7gp14XNyvGsFT95Fo/oFj5A+b35s8TI=".as_bytes())
+                .unwrap();
         assert_eq!(Some(expected), key);
 
         let file = path.append_file().unwrap();

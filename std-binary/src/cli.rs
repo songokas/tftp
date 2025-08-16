@@ -150,7 +150,7 @@ pub struct ServerCliConfig {
         long,
         help = "Require that connections be fully encrypted. This is enabled if authorized keys are provided"
     )]
-    pub required_full_encryption: Option<bool>,
+    pub require_full_encryption: Option<bool>,
 
     #[arg(long)]
     pub require_server_port_change: bool,
@@ -164,6 +164,13 @@ pub struct ServerCliConfig {
 
     #[arg(long, default_value_t = 10, help = "Maximum directory depth")]
     pub max_directory_depth: u16,
+
+    #[cfg(feature = "encryption")]
+    #[arg(
+        long,
+        help = "Provide connection errors to authorized clients only. Enabled by default when require_full_encryption=true"
+    )]
+    pub error_to_authorized_only: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]

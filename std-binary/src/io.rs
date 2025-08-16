@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use env_logger::Builder;
 use env_logger::Env;
 use log::error;
-// use tftp_dus::encryption::PublicKey;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::error::FileError;
 use tftp_dus::server::ServerConfig;
@@ -19,33 +18,12 @@ use tftp_dus::std_compat::io;
 use tftp_dus::std_compat::time::Instant;
 use tftp_dus::types::FilePath;
 
-// use crate::macros::cfg_encryption;
 use crate::macros::cfg_no_std;
 use crate::std_compat::fs::File;
 use crate::std_compat::io::from_io_err;
 use crate::std_compat::io::BoxedReader;
 use crate::std_compat::io::BufReader;
 use crate::std_compat::io::BytesCursor;
-
-// cfg_encryption! {
-//     use tftp_dus::encryption::PrivateKey;
-//     use tftp_dus::encryption::STREAM_NONCE_SIZE;
-//     use tftp_dus::std_compat::io::Read;
-//     use tftp_dus::std_compat::io::Seek;
-//     use tftp_dus::std_compat::io::Write;
-//     use tftp_dus::encryption::StreamEncryptor;
-//     use tftp_dus::encryption::decode_private_key;
-//     use tftp_dus::error::EncryptionError;
-//     use tftp_dus::key_management::append_to_known_hosts;
-//     use tftp_dus::key_management::get_from_known_hosts;
-//     use tftp_dus::readers::encrypted_stream_reader::StreamReader;
-//     use tftp_dus::writers::encrypted_stream_writer::StreamWriter;
-//     use tftp_dus::encryption::EncryptionKey;
-
-//     use rand::CryptoRng;
-//     use rand::RngCore;
-//     use log::warn;
-// }
 
 cfg_no_std! {
     use std::time::UNIX_EPOCH;

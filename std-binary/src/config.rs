@@ -21,7 +21,7 @@ impl ClientCliConfig {
     pub fn try_into(self, prefer_seek: bool) -> BinResult<ClientConfig> {
         #[cfg(feature = "encryption")]
         let remote_public_key = match (&self.server_public_key, &self.known_hosts) {
-            (Some(p), _) => decode_public_key(p.as_bytes())
+            (Some(p), _) => decode_verifying_key(p.as_bytes())
                 .map_err(|e| BinError::from(e.to_string()))?
                 .into(),
             (_, Some(p)) => get_from_known_hosts(
@@ -98,6 +98,14 @@ impl ServerCliConfig {
             .ok_or_else(|| BinError::from("Unable to resolve listen address"))?;
         #[cfg(not(feature = "std"))]
         let listen = crate::socket::std_to_socket_addr(listen);
+
+        #[cfg(feature = "encryption")]
+        let require_full_encryption = self
+            .require_full_encryption
+            .unwrap_or(self.authorized_keys.is_some());
+        #[cfg(not(feature = "encryption"))]
+        let require_full_encryption = false;
+
         Ok(ServerConfig {
             listen,
             directory: self.directory,
@@ -116,12 +124,7 @@ impl ServerCliConfig {
                 .map_err(|e| BinError::from(e.to_string()))?,
             #[cfg(not(feature = "encryption"))]
             private_key: None,
-            #[cfg(feature = "encryption")]
-            required_full_encryption: self
-                .required_full_encryption
-                .unwrap_or(self.authorized_keys.is_some()),
-            #[cfg(not(feature = "encryption"))]
-            required_full_encryption: false,
+            require_full_encryption,
             #[cfg(feature = "encryption")]
             authorized_keys: self
                 .authorized_keys
@@ -137,6 +140,12 @@ impl ServerCliConfig {
             prefer_seek: false,
             directory_list: self.directory_list,
             max_directory_depth: self.max_directory_depth,
+            #[cfg(feature = "encryption")]
+            error_to_authorized_only: self
+                .error_to_authorized_only
+                .unwrap_or(require_full_encryption),
+            #[cfg(not(feature = "encryption"))]
+            error_to_authorized_only: false,
         })
     }
 }

@@ -120,21 +120,17 @@ pub mod encryption {
 
     pub type PublicKey = ();
     pub type Nonce = ();
-
     pub type PrivateKey = ();
+    pub type VerifyingKey = ();
+    pub type SigningKey = ();
     pub type EncryptionKey = ();
+    pub type InitialKeys = ();
+    pub struct PublicKeyPair {
+        pub auth: Option<()>,
+        pub session: (),
+    }
 
     pub type Encryptor<Rng> = PhantomData<Rng>;
-    pub struct FinalizedKeys<Rng> {
-        pub encryptor: Encryptor<Rng>,
-    }
-
-    #[derive(Clone, Debug)]
-    pub enum EncryptionKeys {
-        ClientKey(PublicKey),
-        ServerKey(PublicKey, Nonce),
-        LocalToRemote(PublicKey, PublicKey),
-    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncryptionLevel {

@@ -291,7 +291,7 @@ _tftp() {
             return 0
             ;;
         tftp__server)
-            opts="-a -h --allow-overwrite --max-connections --max-window-size --request-timeout --max-file-size --max-block-size --authorized-keys --private-key --required-full-encryption --require-server-port-change --prefer-seek --directory-list --max-directory-depth --help <LISTEN> <DIRECTORY>"
+            opts="-a -h --allow-overwrite --max-connections --max-window-size --request-timeout --max-file-size --max-block-size --authorized-keys --private-key --require-full-encryption --require-server-port-change --prefer-seek --directory-list --max-directory-depth --help <LISTEN> <DIRECTORY>"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -325,7 +325,7 @@ _tftp() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                --required-full-encryption)
+                --require-full-encryption)
                     COMPREPLY=($(compgen -W "true false" -- "${cur}"))
                     return 0
                     ;;

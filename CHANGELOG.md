@@ -2,6 +2,20 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.7.0] - 2025-08-16
+
+### Changed
+
+- use separate keys for authentication and encryption
+- session encryption keys are always random
+- pkey removed from extensions in favour of spubk
+- cli argument required-full-encryption renamed to require-full-encryption
+
+### Added
+
+- introduced 3 extensions spubk (session public key), apubk (authentication public key), signature
+- server cli argument error_to_authorized_only=true/false to control error reply
+
 ## [0.6.1] - 2025-03-09
 
 ### Changed

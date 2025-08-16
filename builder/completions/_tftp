@@ -108,7 +108,7 @@ _arguments "${_arguments_options[@]}" \
 '--max-block-size=[]:MAX_BLOCK_SIZE: ' \
 '--authorized-keys=[Path to a file with authorized public keys. Each line contains base64(public key)]:AUTHORIZED_KEYS:_files' \
 '--private-key=[Base64 encoded private key to use\: value or FILE]:PRIVATE_KEY: ' \
-'--required-full-encryption=[Require that connections be fully encrypted. This is enabled if authorized keys are provided]:REQUIRED_FULL_ENCRYPTION:(true false)' \
+'--require-full-encryption=[Require that connections be fully encrypted. This is enabled if authorized keys are provided]:REQUIRE_FULL_ENCRYPTION:(true false)' \
 '--directory-list=[Retrieving specified file provides directory list]:DIRECTORY_LIST: ' \
 '--max-directory-depth=[Maximum directory depth]:MAX_DIRECTORY_DEPTH: ' \
 '-a[]' \

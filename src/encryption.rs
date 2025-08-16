@@ -14,6 +14,10 @@ use chacha20poly1305::Key;
 use chacha20poly1305::Tag;
 use chacha20poly1305::XChaCha20Poly1305;
 use chacha20poly1305::XNonce;
+use ed25519_dalek::Signature;
+use ed25519_dalek::SigningKey as ExternalSigningKey;
+use ed25519_dalek::VerifyingKey as ExternalVerifyingKey;
+use ed25519_dalek::SIGNATURE_LENGTH;
 use rand::CryptoRng;
 use rand::RngCore;
 use x25519_dalek::EphemeralSecret;
@@ -35,6 +39,8 @@ use crate::types::ShortString;
 pub type EncryptionKey = [u8; ENCRYPTION_KEY_SIZE as usize];
 pub type PrivateKey = StaticSecret;
 pub type PublicKey = ExternalPublicKey;
+pub type VerifyingKey = ExternalVerifyingKey;
+pub type SigningKey = ExternalSigningKey;
 pub type Nonce = XNonce;
 pub type StreamNonce = [u8; STREAM_NONCE_SIZE as usize];
 
@@ -46,54 +52,105 @@ pub const MIN_STREAM_CAPACITY: u8 = STREAM_BLOCK_SIZE + STREAM_NONCE_SIZE + ENCR
 
 pub const ENCODED_PUBLIC_KEY_LENGTH: u8 = ((4 * PUBLIC_KEY_SIZE / 3) + 3) & !3;
 pub const ENCODED_NONCE_LENGTH: u8 = ((4 * ENCRYPTION_NONCE_SIZE / 3) + 3) & !3;
+pub const ENCODED_SIGNATURE_LENGTH: usize = ((4 * SIGNATURE_LENGTH / 3) + 3) & !3;
 
 const ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
-pub type FinalizeKeysCallback<Rng> = fn(&Option<PrivateKey>, &PublicKey) -> FinalizedKeys<Rng>;
+pub type FinalizeKeysCallback<Rng> =
+    fn(&Option<PrivateKey>, &PublicKey) -> FinalSessionKeyPair<Rng>;
+
+pub struct InitialSessionKeyPair {
+    pub private_key: EphemeralSecret,
+    pub public_key: PublicKey,
+}
+
+pub struct AuthKeyPair {
+    pub private_key: SigningKey,
+    pub public_key: VerifyingKey,
+}
+
+pub struct InitialKeys {
+    pub session: InitialSessionKeyPair,
+    pub auth: Option<AuthKeyPair>,
+}
 
 #[derive(Debug, Clone)]
-pub enum EncryptionKeys {
-    ClientKey(PublicKey),
-    ServerKey(PublicKey),
-    // Local, Remote
-    LocalToRemote(PublicKey, PublicKey),
+pub struct PublicKeyPair {
+    pub auth: Option<VerifyingKey>,
+    pub session: PublicKey,
 }
 
-pub enum InitialKey {
-    Static(PrivateKey),
-    Ephemeral(EphemeralSecret),
+pub fn create_encryptor_with_auth_keys<R: CryptoRng + RngCore + Clone>(
+    rng: R,
+    remote_public_key: &VerifyingKey,
+) -> (Encryptor<R>, PublicKey) {
+    let session_keys = create_session_keys(rng.clone());
+    session_keys.finalize(
+        &PublicKey::from(remote_public_key.to_montgomery().to_bytes()),
+        rng,
+    )
 }
 
-pub struct InitialKeyPair {
-    pub public: PublicKey,
-    pub private: InitialKey,
-}
-
-impl InitialKeyPair {
-    pub fn new(public: PublicKey, private: InitialKey) -> Self {
-        Self { public, private }
+pub fn create_session_keys<R: CryptoRng + RngCore>(mut rng: R) -> InitialSessionKeyPair {
+    let private_key = EphemeralSecret::random_from_rng(&mut rng);
+    let public_key = PublicKey::from(&private_key);
+    InitialSessionKeyPair {
+        private_key,
+        public_key,
     }
+}
 
-    pub fn finalize<R>(self, remote_public_key: &PublicKey, rng: R) -> FinalizedKeys<R> {
-        let key = match self.private {
-            InitialKey::Static(k) => k.diffie_hellman(remote_public_key),
-            InitialKey::Ephemeral(k) => k.diffie_hellman(remote_public_key),
-        };
+pub fn create_auth_keys(private_key: SigningKey) -> AuthKeyPair {
+    AuthKeyPair {
+        public_key: VerifyingKey::from(&private_key),
+        private_key,
+    }
+}
 
-        let key: Key = key.to_bytes().into();
-        FinalizedKeys {
-            encryptor: Encryptor {
+pub fn create_initial_keys<R: CryptoRng + RngCore>(
+    private_key: Option<&SigningKey>,
+    rng: R,
+) -> InitialKeys {
+    InitialKeys {
+        session: create_session_keys(rng),
+        auth: private_key.map(|k| create_auth_keys(k.clone())),
+    }
+}
+
+impl InitialSessionKeyPair {
+    pub fn finalize<R>(self, remote_public_key: &PublicKey, rng: R) -> (Encryptor<R>, PublicKey) {
+        let master_key = self.private_key.diffie_hellman(remote_public_key);
+        let key: Key = master_key.to_bytes().into();
+
+        (
+            Encryptor {
                 cipher: XChaCha20Poly1305::new(&key),
                 rng,
             },
-            public: self.public,
-        }
+            self.public_key,
+        )
     }
 }
 
-pub struct FinalizedKeys<Rng> {
+impl AuthKeyPair {
+    pub fn finalize<R>(self, remote_public_key: &PublicKey, rng: R) -> (Encryptor<R>, PublicKey) {
+        let master_key = StaticSecret::from(self.private_key.to_scalar_bytes())
+            .diffie_hellman(remote_public_key);
+        let key: Key = master_key.to_bytes().into();
+
+        (
+            Encryptor {
+                cipher: XChaCha20Poly1305::new(&key),
+                rng,
+            },
+            PublicKey::from(self.public_key.to_montgomery().to_bytes()),
+        )
+    }
+}
+
+pub struct FinalSessionKeyPair<Rng> {
     pub encryptor: Encryptor<Rng>,
-    pub public: PublicKey,
+    pub public_key: PublicKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,8 +264,6 @@ impl StreamDecryptor {
     }
 }
 
-// always encrypt with random nonce
-// expects nonce at the end for decryption
 pub struct Encryptor<R> {
     pub cipher: XChaCha20Poly1305,
     pub rng: R,
@@ -263,6 +318,30 @@ pub fn encode_public_key(public: &PublicKey) -> Result<ShortString, EncryptionEr
     Ok(public_bytes.into_iter().map(|b| b as char).collect())
 }
 
+pub fn encode_signature(public: &Signature) -> Result<ShortString, EncryptionError> {
+    let mut public_bytes = [0; ENCODED_SIGNATURE_LENGTH];
+    ENGINE
+        .encode_slice(public.to_bytes(), &mut public_bytes)
+        .map_err(|_| EncryptionError::Encode(EncodingErrorType::Signature))?;
+    Ok(public_bytes.into_iter().map(|b| b as char).collect())
+}
+
+pub fn encode_verifying_key(public: &VerifyingKey) -> Result<ShortString, EncryptionError> {
+    let mut public_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH as usize];
+    ENGINE
+        .encode_slice(public.as_bytes(), &mut public_bytes)
+        .map_err(|_| EncryptionError::Encode(EncodingErrorType::PublicKey))?;
+    Ok(public_bytes.into_iter().map(|b| b as char).collect())
+}
+
+pub fn encode_nonce(public: &Nonce) -> Result<ShortString, EncryptionError> {
+    let mut public_bytes = [0; ENCODED_NONCE_LENGTH as usize];
+    ENGINE
+        .encode_slice(public, &mut public_bytes)
+        .map_err(|_| EncryptionError::Encode(EncodingErrorType::Nonce))?;
+    Ok(public_bytes.into_iter().map(|b| b as char).collect())
+}
+
 pub fn encode_private_key(private: &PrivateKey) -> Result<ShortString, EncryptionError> {
     let mut private_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH as usize];
     ENGINE
@@ -271,7 +350,19 @@ pub fn encode_private_key(private: &PrivateKey) -> Result<ShortString, Encryptio
     Ok(private_bytes.into_iter().map(|b| b as char).collect())
 }
 
+pub fn encode_signing_key(private: &SigningKey) -> Result<ShortString, EncryptionError> {
+    let mut private_bytes = [0; ENCODED_PUBLIC_KEY_LENGTH as usize];
+    ENGINE
+        .encode_slice(private.as_bytes(), &mut private_bytes)
+        .map_err(|_| EncryptionError::Encode(EncodingErrorType::PrivateKey))?;
+    Ok(private_bytes.into_iter().map(|b| b as char).collect())
+}
+
 pub fn decode_private_key(data: &[u8]) -> Result<PrivateKey, EncryptionError> {
+    decode(data, EncodingErrorType::PrivateKey)
+}
+
+pub fn decode_signing_key(data: &[u8]) -> Result<SigningKey, EncryptionError> {
     decode(data, EncodingErrorType::PrivateKey)
 }
 
@@ -281,6 +372,29 @@ pub fn decode_nonce(data: &[u8]) -> Result<Nonce, EncryptionError> {
 
 pub fn decode_public_key(data: &[u8]) -> Result<PublicKey, EncryptionError> {
     decode(data, EncodingErrorType::PublicKey)
+}
+
+pub fn decode_verifying_key(data: &[u8]) -> Result<VerifyingKey, EncryptionError> {
+    let mut private_bytes = [0; MAX_EXTENSION_VALUE_SIZE as usize];
+    ENGINE
+        .decode_slice(data, &mut private_bytes)
+        .map_err(|_| EncryptionError::Decode(EncodingErrorType::Signature))?;
+    let bytes: [u8; PUBLIC_KEY_SIZE as usize] = private_bytes[..PUBLIC_KEY_SIZE as usize]
+        .try_into()
+        .map_err(|_| EncryptionError::Decode(EncodingErrorType::PublicKey))?;
+    VerifyingKey::from_bytes(&bytes)
+        .map_err(|_| EncryptionError::Decode(EncodingErrorType::PublicKey))
+}
+
+pub fn decode_signature(data: &[u8]) -> Result<Signature, EncryptionError> {
+    let mut private_bytes = [0; MAX_EXTENSION_VALUE_SIZE as usize];
+    ENGINE
+        .decode_slice(data, &mut private_bytes)
+        .map_err(|_| EncryptionError::Decode(EncodingErrorType::Signature))?;
+    let bytes: [u8; SIGNATURE_LENGTH] = private_bytes[..SIGNATURE_LENGTH]
+        .try_into()
+        .map_err(|_| EncryptionError::Decode(EncodingErrorType::Signature))?;
+    Ok(Signature::from_bytes(&bytes))
 }
 
 // 0010 0200 | 1111 1111 1111 1111
@@ -452,6 +566,18 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_signature() {
+        let data = [
+            (true, "ekX+yBeNuIzuUrnu32rpGw7LPfU6SqCVYQnvkNS5K/0C5rBRPXAo3hcbe17DWNy1xfZimwlG17/n2FCph1SHDQ=="),
+            (false, "amigo%"),
+        ];
+        for (expected, public) in data {
+            let encoded = decode_signature(public.as_bytes());
+            assert_eq!(expected, encoded.is_ok(), "{public}");
+        }
+    }
+
+    #[test]
     fn test_decode_nonce() {
         let data = [
             (true, "tgcjcdnaLMP6HgCy0VxQE4HGJI+nVhPT"),
@@ -482,6 +608,19 @@ mod tests {
             decryptor.decrypt(&mut data, 18).unwrap();
             assert_eq!(data, expected);
         }
+    }
+
+    #[ignore]
+    #[test]
+    fn generate_sign_keys() {
+        let random_bytes: std::vec::Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+
+        let signing_key: SigningKey = SigningKey::from_bytes(&random_bytes.try_into().unwrap());
+        println!(
+            "Sign key: {}\nVerifying key: {}",
+            encode_signing_key(&signing_key).unwrap(),
+            encode_verifying_key(&signing_key.verifying_key()).unwrap()
+        );
     }
 
     fn create_encryptor() -> Encryptor<ThreadRng> {

@@ -117,12 +117,17 @@ pub enum PacketError {
     Timeout(Duration),
     InvalidString(Utf8Error),
     InvalidData(TryFromSliceError),
+    InvalidMode,
 }
 
 impl Display for PacketError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             PacketError::Invalid => write!(f, "Invalid packet received"),
+            PacketError::InvalidMode => write!(
+                f,
+                "Invalid mode received. Only octet/binary mode is supported"
+            ),
             PacketError::RemoteError(s) => write!(f, "{s}"),
             PacketError::Timeout(s) => write!(f, "Timeout occured {}", s.as_secs_f32()),
             PacketError::InvalidString(s) => s.fmt(f),
@@ -207,6 +212,8 @@ pub enum ExtensionError {
     ServerRequiredEncryption(EncryptionLevel),
     InvalidPublicKey,
     InvalidNonce,
+    NotAuthorized,
+    InvalidSignature,
     EncryptionError(EncryptionError),
     InvalidExtension(Extension),
 }
@@ -218,12 +225,13 @@ impl Display for ExtensionError {
         match self {
             ExtensionError::ClientRequiredEncryption(l) => write!(
                 f,
-                "Server does not provide encryption however client requested {l}",
+                "Server does not provide encryption however client requested encryption level {l}",
             ),
             ExtensionError::ServerRequiredEncryption(l) => {
                 write!(f, "Server requires {l} encryption",)
             }
             ExtensionError::InvalidPublicKey => write!(f, "Invalid public key received",),
+            ExtensionError::NotAuthorized => write!(f, "Not Authorized",),
             ExtensionError::InvalidNonce => write!(f, "Invalid nonce received",),
             ExtensionError::EncryptionError(s) => {
                 write!(f, "Invalid extension parsing error {s}")
@@ -231,6 +239,7 @@ impl Display for ExtensionError {
             ExtensionError::InvalidExtension(s) => {
                 write!(f, "Invalid extension {s}")
             }
+            ExtensionError::InvalidSignature => write!(f, "Invalid signature received",),
         }
     }
 }
@@ -246,6 +255,7 @@ pub enum EncodingErrorType {
     PrivateKey,
     PublicKey,
     Nonce,
+    Signature,
 }
 
 impl Display for EncodingErrorType {
@@ -254,6 +264,7 @@ impl Display for EncodingErrorType {
             EncodingErrorType::PrivateKey => write!(f, "private key"),
             EncodingErrorType::PublicKey => write!(f, "public key"),
             EncodingErrorType::Nonce => write!(f, "nonce"),
+            EncodingErrorType::Signature => write!(f, "signature"),
         }
     }
 }

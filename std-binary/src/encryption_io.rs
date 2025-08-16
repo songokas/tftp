@@ -3,11 +3,11 @@ use std::fs::File as StdFile;
 use log::warn;
 use rand::CryptoRng;
 use rand::RngCore;
-use tftp_dus::encryption::decode_private_key;
+use tftp_dus::encryption::decode_signing_key;
 use tftp_dus::encryption::EncryptionKey;
-use tftp_dus::encryption::PrivateKey;
-use tftp_dus::encryption::PublicKey;
+use tftp_dus::encryption::SigningKey;
 use tftp_dus::encryption::StreamEncryptor;
+use tftp_dus::encryption::VerifyingKey;
 use tftp_dus::encryption::STREAM_NONCE_SIZE;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::error::EncryptionError;
@@ -54,14 +54,14 @@ where
     }
 }
 
-pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, EncryptionError> {
+pub fn read_private_value_or_file(private: &str) -> Result<SigningKey, EncryptionError> {
     #[cfg(feature = "std")]
     use std::io::BufRead;
 
     #[cfg(not(feature = "std"))]
     use tftp_dus::std_compat::io::BufRead;
 
-    let result = decode_private_key(private.as_bytes());
+    let result = decode_signing_key(private.as_bytes());
 
     if result.is_err() {
         if let Ok(mut reader) = create_buff_reader(private) {
@@ -70,7 +70,7 @@ pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, Encryptio
             #[cfg(feature = "std")]
             let mut buf = String::new();
             if reader.read_line(&mut buf).is_ok() {
-                if let Ok(p) = decode_private_key(buf.trim_end().as_bytes()) {
+                if let Ok(p) = decode_signing_key(buf.trim_end().as_bytes()) {
                     return Ok(p);
                 }
             }
@@ -81,7 +81,7 @@ pub fn read_private_value_or_file(private: &str) -> Result<PrivateKey, Encryptio
 
 pub fn handle_hosts_file(
     known_hosts_file: Option<&str>,
-    remote_key: Option<PublicKey>,
+    remote_key: Option<VerifyingKey>,
     endpoint: &str,
 ) {
     match known_hosts_file

@@ -6,7 +6,8 @@ use rand::CryptoRng;
 use rand::RngCore;
 
 use crate::config::print_options;
-use crate::encryption::FinalizedKeys;
+use crate::encryption::*;
+use crate::error::ExtensionError;
 use crate::packet::AckPacket;
 use crate::packet::ByteConverter;
 use crate::packet::ErrorCode;
@@ -23,60 +24,54 @@ use crate::std_compat::net::SocketAddr;
 use crate::string::format_str;
 use crate::types::DataBuffer;
 
-pub fn create_builder<'a, Rng>(
+#[allow(dead_code)]
+pub struct SessionKeys {
+    pub server_keys: InitialKeys,
+    pub remote_session_public_key: PublicKey,
+}
+
+pub fn handle_packet<'a, Rng>(
+    builder: &mut ConnectionBuilder<'a, Rng>,
     config: &'a ServerConfig,
-    socket_id: usize,
     buffer: &mut DataBuffer,
     from_client: SocketAddr,
     rng: Rng,
-) -> Option<(ConnectionBuilder<'a, Rng>, ConnectionType)>
+) -> Result<Option<ConnectionType>, ExtensionError>
 where
     Rng: CryptoRng + RngCore + Copy,
 {
-    let mut builder = match ConnectionBuilder::from_new_connection(config, buffer, rng, socket_id) {
-        Ok(b) => b,
-        Err(e) => {
-            debug!("New connection error {}", e);
-            return None;
-        }
-    };
-
-    match Packet::from_bytes(buffer) {
+    Ok(match Packet::from_bytes(buffer) {
         Ok(Packet::Write(p)) => {
             debug!(
                 "New client {from_client} writing to file {} in directory {}",
                 p.file_name, config.directory
             );
 
-            let Ok(()) = builder.with_request(p, config.max_window_size, rng) else {
-                return None;
-            };
-            Some((builder, ConnectionType::Write))
+            builder.with_request(p, config.max_window_size, rng)?;
+            Some(ConnectionType::Write)
         }
         Ok(Packet::Read(p)) => {
             debug!(
                 "New client {from_client} reading file {} in directory {}",
                 p.file_name, config.directory
             );
-
-            let Ok(()) = builder.with_request(p, config.max_window_size, rng) else {
-                return None;
-            };
-            Some((builder, ConnectionType::Read))
+            builder.with_request(p, config.max_window_size, rng)?;
+            Some(ConnectionType::Read)
         }
         _ => {
             debug!("Incorrect packet received {:x?}", buffer);
             None
         }
-    }
+    })
 }
 
 pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     connection: &mut Connection<B, Rng>,
     connection_type: ConnectionType,
     used_extensions: PacketExtensions,
-    encrypt_new_connection: Option<FinalizedKeys<Rng>>,
     buffer: &mut DataBuffer,
+    _session_keys: Option<SessionKeys>,
+    _rng: Rng,
 ) -> Option<()> {
     debug!("Server extensions {:?}", used_extensions);
 
@@ -95,8 +90,13 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
                 return None;
             }
             // new encryption starts only here
-            if let Some(keys) = encrypt_new_connection {
-                connection.encryptor = Some(keys.encryptor);
+            #[cfg(feature = "encryption")]
+            if let Some(keys) = _session_keys {
+                let (encryptor, _) = keys
+                    .server_keys
+                    .session
+                    .finalize(&keys.remote_session_public_key, _rng);
+                connection.encryptor = encryptor.into();
             }
 
             print_options("Server writing using", &connection.options);
@@ -116,8 +116,13 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
             }
 
             // new encryption starts only here
-            if let Some(keys) = encrypt_new_connection {
-                connection.encryptor = Some(keys.encryptor);
+            #[cfg(feature = "encryption")]
+            if let Some(keys) = _session_keys {
+                let (encryptor, _) = keys
+                    .server_keys
+                    .session
+                    .finalize(&keys.remote_session_public_key, _rng);
+                connection.encryptor = encryptor.into();
             }
 
             print_options("Server reading using", &connection.options);

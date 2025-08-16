@@ -102,7 +102,7 @@ Register-ArgumentCompleter -Native -CommandName 'tftp' -ScriptBlock {
             [CompletionResult]::new('--max-block-size', 'max-block-size', [CompletionResultType]::ParameterName, 'max-block-size')
             [CompletionResult]::new('--authorized-keys', 'authorized-keys', [CompletionResultType]::ParameterName, 'Path to a file with authorized public keys. Each line contains base64(public key)')
             [CompletionResult]::new('--private-key', 'private-key', [CompletionResultType]::ParameterName, 'Base64 encoded private key to use: value or FILE')
-            [CompletionResult]::new('--required-full-encryption', 'required-full-encryption', [CompletionResultType]::ParameterName, 'Require that connections be fully encrypted. This is enabled if authorized keys are provided')
+            [CompletionResult]::new('--require-full-encryption', 'required-full-encryption', [CompletionResultType]::ParameterName, 'Require that connections be fully encrypted. This is enabled if authorized keys are provided')
             [CompletionResult]::new('--directory-list', 'directory-list', [CompletionResultType]::ParameterName, 'Retrieving specified file provides directory list')
             [CompletionResult]::new('--max-directory-depth', 'max-directory-depth', [CompletionResultType]::ParameterName, 'Maximum directory depth')
             [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'a')

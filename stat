@@ -108,7 +108,7 @@ send_receive_full_encryption_dump() {
     sudo -v
     sudo tcpdump -s 65535 -i lo -w $OUTPUT_DIR/full_encryption_capture.pcap port 9000 & dump_pids+=($!)
     sleep 1
-    $server server 127.0.0.1:9000 ./target/ --private-key $private_key --required-full-encryption true & server_pids+=($!)
+    $server server 127.0.0.1:9000 ./target/ --private-key $private_key --require-full-encryption true & server_pids+=($!)
     $client send 127.0.0.1:9000 target/send_file --remote-path server_file --encryption-level protocol --server-public-key $public_key
     $client receive 127.0.0.1:9000 server_file --local-path target/receive_file --encryption-level protocol --server-public-key $public_key
     sleep 1

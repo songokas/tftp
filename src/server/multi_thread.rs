@@ -3,9 +3,9 @@ use core::time::Duration;
 use std::thread::spawn;
 use std::thread::JoinHandle;
 
+use log::debug;
 use log::info;
 use log::trace;
-
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -14,19 +14,21 @@ use crate::buffer::create_max_buffer;
 use crate::buffer::resize_buffer;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
-use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
 use crate::macros::cfg_stack;
 use crate::map::Map;
 use crate::metrics::counter;
 use crate::metrics::gauge;
+use crate::packet::ErrorCode;
+use crate::packet::ErrorPacket;
 use crate::readers::block_reader::BlockReader;
 use crate::readers::Readers;
 use crate::server::connection::ClientType;
 use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
+use crate::server::connection_builder::ConnectionBuilder;
 use crate::server::helpers::connection::accept_connection;
-use crate::server::helpers::connection::create_builder;
+use crate::server::helpers::connection::handle_packet;
 use crate::server::helpers::connection::timeout_client;
 use crate::server::helpers::read::handle_read;
 use crate::server::helpers::read::send_data_block;
@@ -52,11 +54,6 @@ cfg_seek! {
 
 cfg_stack! {
     use crate::config::MAX_CLIENTS;
-}
-
-cfg_encryption! {
-    use crate::encryption::encode_public_key;
-    use crate::encryption::PublicKey;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -97,9 +94,12 @@ where
 
     #[cfg(feature = "encryption")]
     if let Some(private_key) = config.private_key.as_ref() {
+        use crate::encryption::encode_verifying_key;
+        use crate::encryption::VerifyingKey;
+
         info!(
             "Server public key {}",
-            encode_public_key(&PublicKey::from(private_key))?
+            encode_verifying_key(&VerifyingKey::from(private_key))?
         );
     }
 
@@ -154,17 +154,31 @@ where
             .or_else(|| NonZeroU32::new(1))
             .expect("Socket id expected");
 
-        let Some((builder, connection_type)) = create_builder(
+        let mut builder = ConnectionBuilder::from_new_connection(
             &config,
-            socket_id.get() as usize,
             &mut receive_buffer,
-            from_client,
             rng,
-        ) else {
-            continue;
-        };
+            socket_id.get() as usize,
+        );
+        let connection_type =
+            match handle_packet(&mut builder, &config, &mut receive_buffer, from_client, rng) {
+                Ok(Some(c)) => c,
+                Ok(None) => continue,
+                Err(e) => {
+                    debug!("Failed to handle packet {e}");
+                    builder.reply_with_error(
+                        &socket,
+                        from_client,
+                        ErrorPacket::new(
+                            ErrorCode::IllegalOperation,
+                            format_str!(DefaultString, "{e}"),
+                        ),
+                    );
+                    continue;
+                }
+            };
 
-        let Ok((mut connection, client_type, used_extensions, encryption_keys)) =
+        let Ok((mut connection, client_type, used_extensions, session_keys)) =
             (match connection_type {
                 ConnectionType::Read => builder
                     .build_reader(
@@ -194,8 +208,9 @@ where
             &mut connection,
             connection_type,
             used_extensions,
-            encryption_keys,
             &mut receive_buffer,
+            session_keys,
+            rng,
         ) else {
             continue;
         };

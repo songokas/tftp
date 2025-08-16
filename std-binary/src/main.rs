@@ -214,7 +214,7 @@ mod tests {
         for w in [1, 4] {
             let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
             let key: [u8; 32] = bytes.try_into().unwrap();
-            let server_private_key: PrivateKey = key.into();
+            let server_private_key: SigningKey = key.into();
             client_send(
                 EncryptionLevel::Protocol,
                 w,
@@ -236,17 +236,18 @@ mod tests {
     #[cfg(feature = "encryption")]
     #[test]
     fn test_client_full_encryption_only_authorized() {
-        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
         for w in [1, 4] {
             let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
             let key: [u8; 32] = bytes.try_into().unwrap();
-            let server_private_key: PrivateKey = key.into();
+            let server_private_key: SigningKey = key.into();
             let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
             let key: [u8; 32] = bytes.try_into().unwrap();
-            let client_private_key: PrivateKey = key.into();
-            let mut authorized_keys = AuthorizedKeys::new();
+            let client_private_key: SigningKey = key.into();
 
-            authorized_keys.push(PublicKey::from(&client_private_key));
+            let mut authorized_keys = AuthorizedKeys::new();
+            authorized_keys.push(VerifyingKey::from(&client_private_key));
+
             client_send(
                 EncryptionLevel::Protocol,
                 w,
@@ -283,9 +284,9 @@ mod tests {
         for w in [1, 4] {
             let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
             let key: [u8; 32] = bytes.try_into().unwrap();
-            let client_private_key: PrivateKey = key.into();
+            let client_private_key: SigningKey = key.into();
             let mut authorized_keys = AuthorizedKeys::new();
-            authorized_keys.push(PublicKey::from(&client_private_key));
+            authorized_keys.push(VerifyingKey::from(&client_private_key));
             client_send(
                 EncryptionLevel::Protocol,
                 w,
@@ -306,7 +307,7 @@ mod tests {
     #[cfg(feature = "encryption")]
     #[test]
     fn test_client_data_encryption() {
-        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
         for w in [1, 4] {
             client_send(EncryptionLevel::Data, w, None, None, None);
             client_receive(EncryptionLevel::Data, w, None, None, None);
@@ -315,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_client_no_encryption() {
-        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
+        // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
         //     .format_timestamp_micros()
         //     .init();
         for w in [1, 4] {
@@ -327,9 +328,9 @@ mod tests {
     fn client_send(
         encryption_level: EncryptionLevel,
         window_size: u64,
-        server_private_key: Option<PrivateKey>,
+        server_private_key: Option<SigningKey>,
         authorized_keys: Option<AuthorizedKeys>,
-        _client_private_key: Option<PrivateKey>,
+        _client_private_key: Option<SigningKey>,
     ) {
         let bytes: Vec<u8> = (0..2000).map(|_| rand::random::<u8>()).collect();
         let expected_size = bytes.len();
@@ -338,7 +339,7 @@ mod tests {
         #[cfg(feature = "encryption")]
         let server_public_key = server_private_key
             .as_ref()
-            .map(|k| encode_public_key(&PublicKey::from(k)).unwrap());
+            .map(|k| encode_verifying_key(&VerifyingKey::from(k)).unwrap());
         let _server = {
             let d = expected_data.clone();
             spawn(move || {
@@ -354,7 +355,7 @@ mod tests {
         #[cfg(feature = "encryption")]
         let client_private_key = _client_private_key
             .as_ref()
-            .map(|k| encode_private_key(k).unwrap());
+            .map(|k| encode_signing_key(k).unwrap());
         let client = {
             let d = bytes.clone();
             spawn(move || {
@@ -372,7 +373,7 @@ mod tests {
             })
         };
         let result = client.join().unwrap();
-        assert!(result.is_ok(), "{:?}", result);
+        assert!(result.is_ok(), "{result:?}");
         assert_eq!(result.unwrap(), expected_size);
         assert_eq!(&bytes, expected_data.lock().unwrap().get_ref());
     }
@@ -380,9 +381,9 @@ mod tests {
     fn client_receive(
         encryption_level: EncryptionLevel,
         window_size: u64,
-        _server_private_key: Option<PrivateKey>,
+        _server_private_key: Option<SigningKey>,
         _authorized_keys: Option<AuthorizedKeys>,
-        _client_private_key: Option<PrivateKey>,
+        _client_private_key: Option<SigningKey>,
     ) {
         let bytes: Vec<u8> = (0..2000).map(|_| rand::random::<u8>()).collect();
         let expected_size = bytes.len();
@@ -391,7 +392,7 @@ mod tests {
         #[cfg(feature = "encryption")]
         let server_public_key = _server_private_key
             .as_ref()
-            .map(|k| encode_public_key(&PublicKey::from(k)).unwrap());
+            .map(|k| encode_verifying_key(&VerifyingKey::from(k)).unwrap());
         let _server = {
             let d = bytes.clone();
             spawn(move || {
@@ -408,7 +409,7 @@ mod tests {
         #[cfg(feature = "encryption")]
         let client_private_key = _client_private_key
             .as_ref()
-            .map(|k| encode_private_key(k).unwrap());
+            .map(|k| encode_signing_key(k).unwrap());
         let client = {
             let d = expected_data.clone();
             spawn(move || {
@@ -508,7 +509,7 @@ mod tests {
         server_port: u16,
         read_bytes: Vec<u8>,
         write_bytes: Arc<Mutex<Cursor<Vec<u8>>>>,
-        private_key: Option<PrivateKey>,
+        private_key: Option<SigningKey>,
         authorized_keys: Option<AuthorizedKeys>,
     ) -> DefaultBoxedResult {
         let listen: std::net::SocketAddr = format!("127.0.0.1:{server_port}").parse().unwrap();
@@ -524,12 +525,13 @@ mod tests {
             max_block_size: MAX_DATA_BLOCK_SIZE,
             authorized_keys,
             private_key,
-            required_full_encryption: false,
+            require_full_encryption: false,
             require_server_port_change: false,
             max_window_size: 4,
             prefer_seek: false,
             directory_list: None,
             max_directory_depth: 10,
+            error_to_authorized_only: false,
         };
 
         let create_reader = |_path: &FilePath, _config: &ServerConfig| {

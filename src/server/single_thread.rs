@@ -1,4 +1,3 @@
-use core::mem::size_of_val;
 use core::num::NonZeroU32;
 use core::time::Duration;
 
@@ -19,13 +18,16 @@ use crate::macros::cfg_stack;
 use crate::map::Entry;
 use crate::map::Map;
 use crate::metrics::gauge;
+use crate::packet::ErrorCode;
+use crate::packet::ErrorPacket;
 use crate::readers::block_reader::BlockReader;
 use crate::readers::Readers;
 use crate::server::connection::ClientType;
 use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
+use crate::server::connection_builder::ConnectionBuilder;
 use crate::server::helpers::connection::accept_connection;
-use crate::server::helpers::connection::create_builder;
+use crate::server::helpers::connection::handle_packet;
 use crate::server::helpers::connection::timeout_client;
 use crate::server::helpers::read::handle_read;
 use crate::server::helpers::write::handle_write;
@@ -45,8 +47,8 @@ use crate::types::FilePath;
 use crate::writers::Writers;
 
 cfg_encryption! {
-    use crate::encryption::encode_public_key;
-    use crate::encryption::PublicKey;
+    use crate::encryption::encode_verifying_key;
+    use crate::encryption::VerifyingKey;
 }
 
 cfg_stack! {
@@ -104,7 +106,7 @@ where
     if let Some(private_key) = config.private_key.as_ref() {
         info!(
             "Server public key {}",
-            encode_public_key(&PublicKey::from(private_key))?
+            encode_verifying_key(&VerifyingKey::from(private_key))?
         );
     }
 
@@ -132,9 +134,17 @@ where
 
     let mut clients: Clients<_, _, _, _> = Clients::new();
 
+    #[cfg(not(feature = "alloc"))]
     trace!(
-        "Size of all clients in memory {} bytes",
-        size_of_val(&clients)
+        "Size of all clients in memory: client={} single_block={} multi_block={} bytes",
+        core::mem::size_of_val(&clients),
+        core::mem::size_of_val(&single_block_readers),
+        core::mem::size_of_val(&multi_block_readers),
+    );
+    #[cfg(all(not(feature = "alloc"), feature = "seek"))]
+    trace!(
+        "Size of all multi_seek={} bytes",
+        core::mem::size_of_val(&multi_block_seek_readers)
     );
 
     let mut send_buffer = create_max_buffer(config.max_block_size);
@@ -263,17 +273,36 @@ where
                     .or_else(|| NonZeroU32::new(1))
                     .expect("Socket id expected");
 
-                let Some((builder, connection_type)) = create_builder(
+                let mut builder = ConnectionBuilder::from_new_connection(
                     &config,
+                    &mut receive_buffer,
+                    rng,
                     socket_id.get() as usize,
+                );
+                let connection_type = match handle_packet(
+                    &mut builder,
+                    &config,
                     &mut receive_buffer,
                     from_client,
                     rng,
-                ) else {
-                    continue;
+                ) {
+                    Ok(Some(c)) => c,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        debug!("Failed to handle packet {e}");
+                        builder.reply_with_error(
+                            &socket,
+                            from_client,
+                            ErrorPacket::new(
+                                ErrorCode::IllegalOperation,
+                                format_str!(DefaultString, "{e}"),
+                            ),
+                        );
+                        continue;
+                    }
                 };
 
-                let Ok((mut connection, client_type, used_extensions, encryption_keys)) =
+                let Ok((mut connection, client_type, used_extensions, connection_keys)) =
                     (match connection_type {
                         ConnectionType::Read => {
                             #[cfg(feature = "alloc")]
@@ -316,8 +345,9 @@ where
                     &mut connection,
                     connection_type,
                     used_extensions,
-                    encryption_keys,
                     &mut receive_buffer,
+                    connection_keys,
+                    rng,
                 ) else {
                     continue;
                 };

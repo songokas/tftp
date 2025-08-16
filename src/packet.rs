@@ -18,7 +18,7 @@ use crate::types::PacketBlock;
 #[cfg(feature = "alloc")]
 pub type PacketExtensions = Map<Extension, ExtensionValue>;
 #[cfg(not(feature = "alloc"))]
-pub type PacketExtensions = Map<Extension, ExtensionValue, { Extension::SIZE as usize + 2 }>;
+pub type PacketExtensions = Map<Extension, ExtensionValue, { Extension::SIZE as usize }>; // must be power of 2
 
 pub trait ByteConverter<'a> {
     fn from_bytes(bytes: &'a [u8]) -> PacketResult<Self>
@@ -199,7 +199,7 @@ impl FromStr for Mode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "octet" => Self::Octet,
-            _ => return Err(PacketError::Invalid),
+            _ => return Err(PacketError::InvalidMode),
         })
     }
 }
@@ -213,43 +213,35 @@ pub enum Extension {
     Timeout,
     // file size
     TransferSize,
-    // client/server public key
-    PublicKey,
+    // // client/server public key
+    // PublicKey,
     // required encryption level
     EncryptionLevel,
     // "1" and "65535"
     WindowSize,
+    // client/server public key used for session only
+    SessionPublicKey,
+    // client/server public key used for authentication
+    AuthPublicKey,
+    // signature
+    Signature,
 }
 
-// #[cfg(not(feature = "alloc"))]
-// impl hash32::Hash for Extension {
-//     fn hash<H>(&self, state: &mut H)
-//     where
-//         H: hash32::Hasher,
-//     {
-//         let t = self.clone() as u8;
-//         state.write(&[t]);
-//     }
-// }
-
 impl Extension {
-    pub const SIZE: u8 = 6;
+    // TODO auto size
+    pub const SIZE: u8 = 8;
 
     pub fn as_str(&self) -> &str {
         match self {
             Self::BlockSize => "blksize",
             Self::Timeout => "timeout",
             Self::TransferSize => "tsize",
-            Self::PublicKey => "pkey",
             Self::EncryptionLevel => "enclevel",
             Self::WindowSize => "windowsize",
+            Self::SessionPublicKey => "spubk",
+            Self::AuthPublicKey => "apubk",
+            Self::Signature => "sig",
         }
-    }
-}
-
-impl Display for Extension {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.as_str())
     }
 }
 
@@ -261,11 +253,19 @@ impl FromStr for Extension {
             "blksize" | "BLKSIZE" => Self::BlockSize,
             "timeout" | "TIMEOUT" => Self::Timeout,
             "tsize" | "TSIZE" => Self::TransferSize,
-            "pkey" | "PKEY" => Self::PublicKey,
+            "spubk" | "SPUBK" => Self::SessionPublicKey,
+            "apubk" | "APUBK" => Self::AuthPublicKey,
+            "sig" | "SIG" => Self::Signature,
             "enclevel" | "ENCLEVEL" => Self::EncryptionLevel,
             "windowsize" | "WINDOWSIZE" => Self::WindowSize,
             _ => return Err(PacketError::Invalid),
         })
+    }
+}
+
+impl Display for Extension {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -356,7 +356,7 @@ impl<'a> ByteConverter<'a> for RequestPacket {
             Some(n) => (rest.get(n + 1..), from_utf8(&rest[..n])?),
             _ => return Err(PacketError::Invalid),
         };
-        let mode = octet.parse().map_err(|_duration| PacketError::Invalid)?;
+        let mode = octet.parse()?;
 
         let extensions = match rest {
             Some(b) if !b.is_empty() => OptionalAck::from_bytes(b)?.extensions,

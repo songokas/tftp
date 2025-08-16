@@ -58,28 +58,28 @@ impl<'a> CipherText<'a> {
 pub struct InitialPacket<'a> {
     pub cipher_text: CipherText<'a>,
     pub nonce: &'a Nonce,
-    pub public_key: PublicKey,
+    pub session_public_key: PublicKey,
 }
 
 impl<'a> InitialPacket<'a> {
     pub fn from_bytes(buffer: &'a [u8]) -> Result<Self, EncryptedPacketError> {
-        let public_key: PublicKey = buffer
+        let session_public_key: PublicKey = buffer
             .rslice_to_array(0_usize)
             .ok_or(EncryptedPacketError::PublicKey)?
             .into();
         let nonce: &Nonce = buffer
-            .rslice_to_array_ref(public_key.as_bytes().len())
+            .rslice_to_array_ref(session_public_key.as_bytes().len())
             .ok_or(EncryptedPacketError::Nonce)?
             .into();
         let cipher_text = CipherText::from_bytes(
             buffer
-                .slice_at_end(public_key.as_bytes().len() + nonce.len())
+                .slice_at_end(session_public_key.as_bytes().len() + nonce.len())
                 .ok_or(EncryptedPacketError::CipherText)?,
         )?;
         Ok(Self {
             cipher_text,
             nonce,
-            public_key,
+            session_public_key,
         })
     }
 
@@ -195,7 +195,7 @@ mod tests {
         buffer.extend(nonce);
         buffer.extend(public_key);
         let packet = InitialPacket::from_bytes(&buffer).unwrap();
-        assert_eq!(packet.public_key, public_key.into());
+        assert_eq!(packet.session_public_key, public_key.into());
         assert_eq!(packet.nonce.as_slice(), &nonce);
         assert_eq!(packet.cipher_text.tag, &tag);
         assert_eq!(packet.cipher_text.data, cipher_text);

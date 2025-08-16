@@ -2,7 +2,6 @@ use core::num::NonZeroU8;
 use core::time::Duration;
 
 use log::*;
-
 use rand::CryptoRng;
 use rand::RngCore;
 
@@ -40,6 +39,7 @@ pub enum ConnectionType {
 pub struct Connection<B, Rng> {
     pub socket: B,
     pub options: ConnectionOptions,
+    #[allow(unused)]
     pub encryptor: Option<Encryptor<Rng>>,
     // connection last updated: valid block received, valid block acknowledged
     pub last_updated: Instant,
@@ -55,7 +55,7 @@ pub struct Connection<B, Rng> {
     pub endpoint: SocketAddr,
     pub finished: bool,
     pub invalid: Option<Instant>,
-    pub writter: bool,
+    pub writer: bool,
 }
 
 impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
@@ -160,7 +160,7 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
 
 impl<B, Rng> Drop for Connection<B, Rng> {
     fn drop(&mut self) {
-        let _connection_type = if self.writter { "write" } else { "read" };
+        let _connection_type = if self.writer { "write" } else { "read" };
         counter!("tftp.server.connection.transfer.size", "connection_type" => _connection_type, "error" => self.invalid.is_some().to_string())
             .increment(self.transfer as u64);
         histogram!("tftp.server.connection.duration",  "connection_type" => _connection_type, "error" => self.invalid.is_some().to_string())

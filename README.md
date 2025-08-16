@@ -18,8 +18,8 @@ encrypt traffic or data.
 Install deb
 
 ```
-wget https://github.com/songokas/tftp/releases/download/v0.6.0/tftp-dus_0.6.0_amd64.deb \
-  && sudo apt install ./tftp-dus_0.6.0_amd64.deb
+wget https://github.com/songokas/tftp/releases/download/v0.7.0/tftp-dus_0.7.0_amd64.deb \
+  && sudo apt install ./tftp-dus_0.7.0_amd64.deb
 ```
 
 Download binary

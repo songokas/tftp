@@ -11,9 +11,12 @@ use crate::buffer::create_max_buffer;
 use crate::buffer::resize_buffer;
 use crate::client::connection::query_server;
 use crate::client::connection::send_error;
+use crate::client::connection::QueryOptions;
+use crate::client::connection::QueryResult;
+use crate::client::extensions::create_extensions;
 use crate::config::print_options;
 use crate::config::ConnectionOptions;
-use crate::encryption::PublicKey;
+use crate::encryption::VerifyingKey;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
 use crate::error::PacketError;
@@ -51,7 +54,7 @@ pub fn receive_file<CreateWriter, Sock, W, Rng>(
     #[allow(unused_mut)] mut socket: Sock,
     instant: InstantCallback,
     _rng: Rng,
-) -> BoxedResult<(usize, Option<PublicKey>)>
+) -> BoxedResult<(usize, Option<VerifyingKey>)>
 where
     W: Write,
     Rng: CryptoRng + RngCore + Copy,
@@ -73,16 +76,28 @@ where
     #[cfg(feature = "encryption")]
     let (mut socket, initial_keys) = create_initial_socket(socket, &config, &mut options, _rng)?;
 
+    #[cfg(not(feature = "encryption"))]
+    let initial_keys = None;
     let initial_rtt = instant();
+    let extensions = create_extensions(&options, initial_keys.as_ref());
     #[allow(unused_mut)]
-    let (mut received_length, acknowledge, mut options, endpoint) = query_server(
+    let QueryResult {
+        mut received_length,
+        acknowledge,
+        mut options,
+        endpoint,
+        remote_session_public_keys,
+    } = query_server(
         &mut socket,
         &mut receive_buffer,
         Packet::Read,
-        remote_file_path,
-        options,
         instant,
-        &config,
+        QueryOptions {
+            file_path: remote_file_path,
+            options,
+            config: &config,
+            extensions,
+        },
     )?;
 
     debug!(
@@ -94,7 +109,13 @@ where
         .record(initial_rtt.elapsed());
 
     #[cfg(feature = "encryption")]
-    let (mut socket, options) = configure_socket(socket, initial_keys, options, _rng);
+    let (mut socket, options) = configure_socket(
+        socket,
+        initial_keys,
+        options,
+        _rng,
+        remote_session_public_keys.as_ref(),
+    );
 
     let writer = create_writer(&local_file_path)?;
     let mut block_writer = SingleBlockWriter::new(writer);
@@ -229,7 +250,7 @@ where
                             .record(started.elapsed());
                         counter!("tftp.client.connection.transfer.size", "connection_type" => "read")
                             .increment(total as u64);
-                        return Ok((total, options.remote_public_key()));
+                        return Ok((total, remote_session_public_keys.and_then(|p| p.auth)));
                     }
                 }
             }

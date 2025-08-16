@@ -95,7 +95,7 @@ set edit:completion:arg-completer[tftp] = {|@words|
             cand --max-block-size 'max-block-size'
             cand --authorized-keys 'Path to a file with authorized public keys. Each line contains base64(public key)'
             cand --private-key 'Base64 encoded private key to use: value or FILE'
-            cand --required-full-encryption 'Require that connections be fully encrypted. This is enabled if authorized keys are provided'
+            cand --require-full-encryption 'Require that connections be fully encrypted. This is enabled if authorized keys are provided'
             cand --directory-list 'Retrieving specified file provides directory list'
             cand --max-directory-depth 'Maximum directory depth'
             cand -a 'a'
