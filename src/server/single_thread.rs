@@ -212,7 +212,7 @@ where
             None => {
                 match socket.recv_from(&mut receive_buffer, wait_control.wait_for(clients.len())) {
                     Ok((received, from_client)) => {
-                        // ignore existing connection attemps on the main socket
+                        // ignore existing connection attempts on the main socket
                         if clients.contains_key(&from_client) {
                             next_client_to_receive = 0;
                             continue;

@@ -99,6 +99,7 @@ pub fn create_bound_socket(
     )
     .map_err(from_io_err)?;
 
+    #[cfg(not(target_family = "windows"))]
     socket.set_reuse_address(true).map_err(from_io_err)?;
     #[cfg(not(target_family = "windows"))]
     socket.set_reuse_port(true).map_err(from_io_err)?;

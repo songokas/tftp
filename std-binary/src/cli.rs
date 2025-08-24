@@ -152,8 +152,11 @@ pub struct ServerCliConfig {
     )]
     pub require_full_encryption: Option<bool>,
 
-    #[arg(long)]
-    pub require_server_port_change: bool,
+    #[arg(
+        long,
+        help = "Require that server will change a port after receiving initial packet. This is enabled for windows server"
+    )]
+    pub require_server_port_change: Option<bool>,
 
     #[cfg(feature = "seek")]
     #[arg(long)]
