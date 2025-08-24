@@ -111,7 +111,9 @@ impl ServerCliConfig {
         let require_server_port_change = if self.require_server_port_change.is_none() {
             true
         } else if !require_server_port_change {
-            return BinError::from("Windows server does not support reusing ports. Set require-server-port-change=true");
+            return Err(BinError::from(
+                "Windows server does not support reusing ports. Pass require-server-port-change",
+            ));
         } else {
             require_server_port_change
         };

@@ -88,7 +88,7 @@ pub fn query_server<'a>(
         )?;
         if config.endpoint != endpoint {
             if !config.allow_server_port_change {
-                error!("Server is using a new port, however configuration does not allow it");
+                error!("Server is using a new port, however configuration does not allow it. Pass allow-server-port-change");
                 return Err(PacketError::Invalid.into());
             } else {
                 debug!("Using new endpoint {}", endpoint);

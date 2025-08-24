@@ -154,7 +154,9 @@ pub struct ServerCliConfig {
 
     #[arg(
         long,
-        help = "Require that server will change a port after receiving initial packet. This is enabled for windows server"
+        help = "Require that server will change a port after receiving initial packet. This is enabled for windows server",
+        num_args = 0,
+        default_missing_value = "true"
     )]
     pub require_server_port_change: Option<bool>,
 
@@ -171,7 +173,7 @@ pub struct ServerCliConfig {
     #[cfg(feature = "encryption")]
     #[arg(
         long,
-        help = "Provide connection errors to authorized clients only. Enabled by default when require_full_encryption=true"
+        help = "Provide connection errors to authorized clients only. Enabled by default when require-full-encryption=true"
     )]
     pub error_to_authorized_only: Option<bool>,
 }
