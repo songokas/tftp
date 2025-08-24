@@ -456,6 +456,9 @@ mod tests {
             #[cfg(feature = "encryption")]
             known_hosts: None,
             window_size,
+            #[cfg(target_family = "windows")]
+            allow_server_port_change: true,
+            #[cfg(not(target_family = "windows"))]
             allow_server_port_change: false,
             #[cfg(feature = "encryption")]
             encryption_key: None,
@@ -493,6 +496,9 @@ mod tests {
             #[cfg(feature = "encryption")]
             known_hosts: None,
             window_size,
+            #[cfg(target_family = "windows")]
+            allow_server_port_change: true,
+            #[cfg(not(target_family = "windows"))]
             allow_server_port_change: false,
             #[cfg(feature = "encryption")]
             encryption_key: None,
@@ -526,6 +532,9 @@ mod tests {
             authorized_keys,
             private_key,
             require_full_encryption: false,
+            #[cfg(target_family = "windows")]
+            require_server_port_change: true,
+            #[cfg(not(target_family = "windows"))]
             require_server_port_change: false,
             max_window_size: 4,
             prefer_seek: false,

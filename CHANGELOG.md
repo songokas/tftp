@@ -2,6 +2,12 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.7.1] - 2025-08-24
+
+### Changed
+
+- windows: always change server port after initial packet
+
 ## [0.7.0] - 2025-08-16
 
 ### Changed

@@ -1263,7 +1263,7 @@ dependencies = [
 
 [[package]]
 name = "tftp-dus"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "arrayvec",
  "base64",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "tftp-std-binary"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cargo-deb",
  "clap",

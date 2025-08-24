@@ -106,6 +106,18 @@ impl ServerCliConfig {
         #[cfg(not(feature = "encryption"))]
         let require_full_encryption = false;
 
+        let require_server_port_change = self.require_server_port_change.unwrap_or(false);
+        #[cfg(target_family = "windows")]
+        let require_server_port_change = if self.require_server_port_change.is_none() {
+            true
+        } else if !require_server_port_change {
+            return Err(BinError::from(
+                "Windows server does not support reusing ports. Pass require-server-port-change",
+            ));
+        } else {
+            require_server_port_change
+        };
+
         Ok(ServerConfig {
             listen,
             directory: self.directory,
@@ -133,7 +145,7 @@ impl ServerCliConfig {
                 .map_err(|e| BinError::from(e.to_string()))?,
             #[cfg(not(feature = "encryption"))]
             authorized_keys: None,
-            require_server_port_change: self.require_server_port_change,
+            require_server_port_change,
             #[cfg(feature = "seek")]
             prefer_seek: self.prefer_seek,
             #[cfg(not(feature = "seek"))]

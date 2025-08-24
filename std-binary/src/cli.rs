@@ -148,12 +148,19 @@ pub struct ServerCliConfig {
     #[cfg(feature = "encryption")]
     #[arg(
         long,
-        help = "Require that connections be fully encrypted. This is enabled if authorized keys are provided"
+        help = "Require that connections be fully encrypted. This is enabled if authorized keys are provided",
+        num_args = 0..=1,
+        default_missing_value = "true"
     )]
     pub require_full_encryption: Option<bool>,
 
-    #[arg(long)]
-    pub require_server_port_change: bool,
+    #[arg(
+        long,
+        help = "Require that server will change a port after receiving initial packet. This is enabled for windows server",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    pub require_server_port_change: Option<bool>,
 
     #[cfg(feature = "seek")]
     #[arg(long)]
@@ -168,7 +175,9 @@ pub struct ServerCliConfig {
     #[cfg(feature = "encryption")]
     #[arg(
         long,
-        help = "Provide connection errors to authorized clients only. Enabled by default when require_full_encryption=true"
+        help = "Provide connection errors to authorized clients only. Enabled by default when require-full-encryption=true",
+        num_args = 0..=1,
+        default_missing_value = "true"
     )]
     pub error_to_authorized_only: Option<bool>,
 }
