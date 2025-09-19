@@ -2,7 +2,7 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
-## Unreleased
+## [0.7.2] - 2025-09-19
 
 ### Fixed
 
@@ -12,10 +12,6 @@ All visible changes will be documented here. This project adheres to Semantic Ve
 ### Changed
 
 - default listen address for receiver and sender: it is based on the endpoint now
-
-### Changed
-
-- windows: always change server port after initial packet
 
 ## [0.7.1] - 2025-08-24
 
