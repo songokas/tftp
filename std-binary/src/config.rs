@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::time::Duration;
 use std::net::ToSocketAddrs;
 
@@ -18,7 +19,7 @@ cfg_encryption! {
 }
 
 impl ClientCliConfig {
-    pub fn try_into(self, prefer_seek: bool) -> BinResult<ClientConfig> {
+    pub fn try_into(self, listen: SocketAddr, prefer_seek: bool) -> BinResult<ClientConfig> {
         #[cfg(feature = "encryption")]
         let remote_public_key = match (&self.server_public_key, &self.known_hosts) {
             (Some(p), _) => decode_verifying_key(p.as_bytes())
@@ -59,8 +60,6 @@ impl ClientCliConfig {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| BinError::from("Unable to resolve endpoint address"))?;
-        #[cfg(not(feature = "std"))]
-        let endpoint = crate::socket::std_to_socket_addr(endpoint);
 
         #[cfg(feature = "encryption")]
         let encryption_key: Option<EncryptionKey> = self
@@ -75,7 +74,7 @@ impl ClientCliConfig {
         let encryption_key = None;
 
         Ok(ClientConfig {
-            listen: self.listen,
+            listen,
             endpoint,
             request_timeout: Duration::from_millis(self.request_timeout),
             max_file_size: self.max_file_size,
@@ -96,8 +95,6 @@ impl ServerCliConfig {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| BinError::from("Unable to resolve listen address"))?;
-        #[cfg(not(feature = "std"))]
-        let listen = crate::socket::std_to_socket_addr(listen);
 
         #[cfg(feature = "encryption")]
         let require_full_encryption = self

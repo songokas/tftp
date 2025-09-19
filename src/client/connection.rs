@@ -25,7 +25,7 @@ use crate::packet::PacketType;
 use crate::packet::RequestPacket;
 use crate::socket::Socket;
 use crate::std_compat::io::ErrorKind;
-use crate::std_compat::net::SocketAddr;
+use core::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;

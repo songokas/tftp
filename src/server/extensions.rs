@@ -309,8 +309,6 @@ mod tests {
 
     fn create_config() -> ServerConfig {
         let listen: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-        #[cfg(not(feature = "std"))]
-        let listen = std_to_socket_addr(listen);
         ServerConfig {
             listen,
             directory: FilePath::new(),
@@ -328,20 +326,6 @@ mod tests {
             directory_list: None,
             max_directory_depth: 10,
             error_to_authorized_only: false,
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
-    fn std_to_socket_addr(addr: std::net::SocketAddr) -> crate::std_compat::net::SocketAddr {
-        match addr {
-            std::net::SocketAddr::V4(a) => crate::std_compat::net::SocketAddr {
-                ip: crate::std_compat::net::IpVersion::Ipv4(a.ip().octets()),
-                port: a.port(),
-            },
-            std::net::SocketAddr::V6(a) => crate::std_compat::net::SocketAddr {
-                ip: crate::std_compat::net::IpVersion::Ipv6(a.ip().octets()),
-                port: a.port(),
-            },
         }
     }
 }

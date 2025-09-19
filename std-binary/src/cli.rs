@@ -29,8 +29,8 @@ pub struct ClientCliConfig {
     #[arg(value_parser = try_from_str::<DefaultString>, value_hint = ValueHint::Hostname)]
     pub endpoint: DefaultString,
 
-    #[arg(short, long, default_value = "0.0.0.0:0", value_parser = try_from_str::<DefaultString>, value_hint = ValueHint::Hostname)]
-    pub listen: DefaultString,
+    #[arg(short, long, help = "defaults to ivp4 0.0.0.0:0 or ipv6 ::0 based on endpoint", value_parser = try_from_str::<DefaultString>, value_hint = ValueHint::Hostname)]
+    pub listen: Option<DefaultString>,
 
     #[arg(
         long,

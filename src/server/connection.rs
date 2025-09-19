@@ -17,9 +17,9 @@ use crate::packet::Packet;
 use crate::packet::PacketType;
 use crate::socket::BoundSocket;
 use crate::std_compat::io;
-use crate::std_compat::net::SocketAddr;
 use crate::std_compat::time::Instant;
 use crate::types::DataBuffer;
+use core::net::SocketAddr;
 
 cfg_encryption! {
     use crate::encrypted_packet::EncryptedDataPacket;

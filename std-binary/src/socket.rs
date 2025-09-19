@@ -1,7 +1,10 @@
+use core::net::IpAddr;
+use core::net::Ipv4Addr;
+use core::net::Ipv6Addr;
+use core::net::SocketAddr;
 use core::num::NonZeroUsize;
 use core::time::Duration;
 use std::collections::HashSet;
-use std::net::SocketAddr as StdSocketAddr;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 #[cfg(not(target_family = "windows"))]
@@ -23,27 +26,12 @@ use socket2::Type;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::socket::*;
 use tftp_dus::std_compat::io;
-use tftp_dus::std_compat::net::SocketAddr;
 use tftp_dus::types::DataBuffer;
 
-use crate::macros::cfg_no_std;
 use crate::std_compat::io::from_io_err;
 
-cfg_no_std! {
-    use tftp_dus::std_compat::net::IpVersion;
-    use std::net::SocketAddrV4;
-    use std::net::SocketAddrV6;
-    use std::net::Ipv4Addr;
-    use std::net::Ipv6Addr;
-}
-
-pub fn create_socket(
-    listen: &str,
-    socket_id: usize,
-    reuse: bool,
-    capacity: usize,
-) -> BoxedResult<impl Socket> {
-    let address: StdSocketAddr = listen
+pub fn obtain_listen_socket(listen: &str) -> BoxedResult<SocketAddr> {
+    let address = listen
         .to_socket_addrs()
         .map_err(|e| {
             error!("Socket parse error: {e}");
@@ -51,6 +39,33 @@ pub fn create_socket(
         })?
         .next()
         .ok_or_else(|| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
+    Ok(address)
+}
+
+pub fn obtain_listen_socket_based_on_endpoint(endpoint: &str) -> BoxedResult<SocketAddr> {
+    let endpoints_addresses = endpoint.to_socket_addrs().map_err(|e| {
+        error!("Invalid endpoint address={endpoint}: {e}");
+        io::Error::from(io::ErrorKind::AddrNotAvailable)
+    })?;
+
+    for listen in endpoints_addresses {
+        if listen.is_ipv4() {
+            return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
+        }
+        if listen.is_ipv6() {
+            return Ok(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0));
+        }
+    }
+    error!("Could not find listen address based on endpoint={endpoint}");
+    Err(io::Error::from(io::ErrorKind::AddrNotAvailable).into())
+}
+
+pub fn create_socket(
+    address: SocketAddr,
+    socket_id: usize,
+    reuse: bool,
+    capacity: usize,
+) -> BoxedResult<impl Socket> {
     let socket = Socket2::new(
         Domain::for_address(address),
         Type::DGRAM,
@@ -58,6 +73,7 @@ pub fn create_socket(
     )
     .map_err(from_io_err)?;
 
+    #[cfg(not(target_family = "windows"))]
     socket.set_reuse_address(reuse).map_err(from_io_err)?;
     #[cfg(not(target_family = "windows"))]
     socket.set_reuse_port(reuse).map_err(from_io_err)?;
@@ -87,11 +103,10 @@ pub fn create_socket(
 }
 
 pub fn create_bound_socket(
-    listen: &str,
+    listen: SocketAddr,
     socket_id: usize,
     endpoint: SocketAddr,
 ) -> BoxedResult<impl BoundSocket> {
-    let endpoint = socket_addr_to_std(endpoint);
     let socket = Socket2::new(
         Domain::for_address(endpoint),
         Type::DGRAM,
@@ -104,10 +119,7 @@ pub fn create_bound_socket(
     #[cfg(not(target_family = "windows"))]
     socket.set_reuse_port(true).map_err(from_io_err)?;
 
-    let address: StdSocketAddr = listen
-        .parse()
-        .map_err(|_| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
-    socket.bind(&address.into()).map_err(from_io_err)?;
+    socket.bind(&listen.into()).map_err(from_io_err)?;
 
     let socket: UdpSocket = socket.into();
     socket.set_nonblocking(true).map_err(from_io_err)?;
@@ -154,11 +166,7 @@ impl Socket for UdpUnboundSocket {
         #[cfg(feature = "std")]
         let result = self.socket.recv_from(buff);
         #[cfg(not(feature = "std"))]
-        let result = self
-            .socket
-            .recv_from(buff)
-            .map(|(b, s)| (b, std_to_socket_addr(s)))
-            .map_err(from_io_err);
+        let result = self.socket.recv_from(buff).map_err(from_io_err);
         if let Ok((size, client)) = result.as_ref() {
             trace!("Received from {client} {size} {:x?}", buff);
         }
@@ -169,10 +177,7 @@ impl Socket for UdpUnboundSocket {
         #[cfg(feature = "std")]
         let result = self.socket.send_to(buff, client);
         #[cfg(not(feature = "std"))]
-        let result = self
-            .socket
-            .send_to(&buff, socket_addr_to_std(client))
-            .map_err(from_io_err);
+        let result = self.socket.send_to(&buff, client).map_err(from_io_err);
         trace!("Send to {client} {} {:x?}", buff.len(), buff);
         result
     }
@@ -181,10 +186,7 @@ impl Socket for UdpUnboundSocket {
         #[cfg(feature = "std")]
         return self.socket.local_addr();
         #[cfg(not(feature = "std"))]
-        self.socket
-            .local_addr()
-            .map(|s| std_to_socket_addr(s))
-            .map_err(from_io_err)
+        self.socket.local_addr().map_err(from_io_err)
     }
 
     #[cfg(not(feature = "multi_thread"))]
@@ -261,10 +263,7 @@ impl BoundSocket for UdpBoundSocket {
         #[cfg(feature = "std")]
         return self.socket.local_addr();
         #[cfg(not(feature = "std"))]
-        self.socket
-            .local_addr()
-            .map(|s| std_to_socket_addr(s))
-            .map_err(from_io_err)
+        self.socket.local_addr().map_err(from_io_err)
     }
 }
 
@@ -281,32 +280,6 @@ impl ToSocketId for UdpBoundSocket {
     }
 }
 
-#[cfg(not(feature = "std"))]
-pub fn std_to_socket_addr(addr: StdSocketAddr) -> SocketAddr {
-    match addr {
-        StdSocketAddr::V4(a) => SocketAddr {
-            ip: IpVersion::Ipv4(a.ip().octets()),
-            port: a.port(),
-        },
-        StdSocketAddr::V6(a) => SocketAddr {
-            ip: IpVersion::Ipv6(a.ip().octets()),
-            port: a.port(),
-        },
-    }
-}
-
-pub fn socket_addr_to_std(addr: SocketAddr) -> StdSocketAddr {
-    #[cfg(feature = "std")]
-    return addr;
-    #[cfg(not(feature = "std"))]
-    match addr.ip {
-        IpVersion::Ipv4(b) => StdSocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(b), addr.port)),
-        IpVersion::Ipv6(b) => {
-            StdSocketAddr::V6(SocketAddrV6::new(Ipv6Addr::from(b), addr.port, 0, 0))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
@@ -315,8 +288,8 @@ mod tests {
 
     #[test]
     fn test_receive_wait_for() {
-        let mut socket_r = create_socket("127.0.0.1:9000", 1, false, 1).unwrap();
-        let socket_s = create_socket("127.0.0.1:0", 0, false, 1).unwrap();
+        let mut socket_r = create_socket("127.0.0.1:9000".parse().unwrap(), 1, false, 1).unwrap();
+        let socket_s = create_socket("127.0.0.1:0".parse().unwrap(), 0, false, 1).unwrap();
         let mut buf = DataBuffer::new();
         #[allow(unused_must_use)]
         {
@@ -343,8 +316,6 @@ mod tests {
 
         let mut send_buf = DataBuffer::new();
         let addr: std::net::SocketAddr = "127.0.0.1:9000".parse().unwrap();
-        #[cfg(not(feature = "std"))]
-        let addr = std_to_socket_addr(addr);
         socket_s.send_to(&mut send_buf, addr).unwrap();
         let now = Instant::now();
         let wait_for = Duration::from_secs(2);

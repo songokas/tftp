@@ -2,9 +2,9 @@ use core::time::Duration;
 
 use crate::encryption::SigningKey;
 use crate::key_management::AuthorizedKeys;
-use crate::std_compat::net::SocketAddr;
 use crate::types::FilePath;
 use crate::types::ShortString;
+use core::net::SocketAddr;
 
 pub struct ServerConfig {
     pub listen: SocketAddr,

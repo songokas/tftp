@@ -12,10 +12,10 @@ use crate::packet::Extension;
 use crate::packet::Packet;
 use crate::packet::PacketExtensions;
 use crate::socket::Socket;
-use crate::std_compat::net::SocketAddr;
 use crate::string::ensure_size;
 use crate::string::format_str;
 use crate::types::FilePath;
+use core::net::SocketAddr;
 
 pub fn validate_request_options(
     socket: &impl Socket,

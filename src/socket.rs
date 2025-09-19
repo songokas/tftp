@@ -1,8 +1,8 @@
 use core::time::Duration;
 
 use crate::std_compat::io::Result;
-use crate::std_compat::net::SocketAddr;
 use crate::types::DataBuffer;
+use core::net::SocketAddr;
 
 pub trait Socket: ToSocketId {
     fn recv_from(

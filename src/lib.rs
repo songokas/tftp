@@ -46,8 +46,6 @@ mod string {
         ($stype:ident, $($t:tt)*) => {{
             use core::fmt::Write;
             let mut s = crate::types::$stype::new();
-            // #[cfg(not(feature = "alloc"))]
-            // if
             write!(&mut s, $($t)*).expect("number must fit");
             s
         }};

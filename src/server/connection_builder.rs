@@ -34,7 +34,7 @@ use crate::socket::Socket;
 use crate::socket::ToSocketId;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use crate::std_compat::net::SocketAddr;
+use core::net::SocketAddr;
 use crate::std_compat::time::Instant;
 use crate::string::ensure_size;
 use crate::string::format_str;
@@ -145,7 +145,7 @@ where
         S: Socket,
         B: BoundSocket + ToSocketId,
         W: Write,
-        CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
+        CreateBoundSocket: Fn(SocketAddr, usize, SocketAddr) -> BoxedResult<B>,
         CreateWriter: Fn(&FilePath, &ServerConfig) -> BoxedResult<W>,
     {
         let file_name = self.file_name.clone().ok_or(FileError::InvalidFileName)?;
@@ -175,18 +175,13 @@ where
                 return Err(e);
             }
         };
-        let listen = if self.config.require_server_port_change {
-            format_str!(DefaultString, "{}:{}", self.config.listen.ip(), 0)
-        } else {
-            format_str!(
-                DefaultString,
-                "{}:{}",
-                self.config.listen.ip(),
-                self.config.listen.port()
-            )
-        };
 
-        let new_socket = match create_bound_socket(&listen, self.socket_id, client) {
+        let mut listen = self.config.listen;
+        if self.config.require_server_port_change {
+            listen.set_port(0);
+        }
+
+        let new_socket = match create_bound_socket(listen, self.socket_id, client) {
             Ok(s) => s,
             Err(e) => {
                 error!("Failed to create socket {}", e);
@@ -239,7 +234,7 @@ where
     where
         S: Socket,
         B: BoundSocket + ToSocketId,
-        CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
+        CreateBoundSocket: Fn(SocketAddr, usize, SocketAddr) -> BoxedResult<B>,
         CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
     {
         let file_name = self.file_name.clone().ok_or(FileError::InvalidFileName)?;
@@ -283,18 +278,11 @@ where
             }
             _ => (),
         };
-
-        let listen = if self.config.require_server_port_change {
-            format_str!(DefaultString, "{}:{}", self.config.listen.ip(), 0)
-        } else {
-            format_str!(
-                DefaultString,
-                "{}:{}",
-                self.config.listen.ip(),
-                self.config.listen.port()
-            )
-        };
-        let new_socket = match create_bound_socket(&listen, self.socket_id, client) {
+        let mut listen = self.config.listen;
+        if self.config.require_server_port_change {
+            listen.set_port(0);
+        }
+        let new_socket = match create_bound_socket(listen, self.socket_id, client) {
             Ok(s) => s,
             Err(e) => {
                 error!("Failed to create socket {}", e);

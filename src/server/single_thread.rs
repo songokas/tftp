@@ -39,7 +39,7 @@ use crate::socket::ToSocketId;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use crate::std_compat::net::SocketAddr;
+use core::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;
@@ -91,8 +91,8 @@ where
     S: Socket + ToSocketId,
     B: BoundSocket + ToSocketId + Send + 'static,
     Rng: CryptoRng + RngCore + Copy,
-    CreateSocket: Fn(&str, usize, bool, usize) -> BoxedResult<S>,
-    CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
+    CreateSocket: Fn(SocketAddr, usize, bool, usize) -> BoxedResult<S>,
+    CreateBoundSocket: Fn(SocketAddr, usize, SocketAddr) -> BoxedResult<B>,
     CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
     W: Write,
     CreateWriter: Fn(&FilePath, &ServerConfig) -> BoxedResult<W>,
@@ -110,14 +110,9 @@ where
         );
     }
 
-    let listen = format_str!(
-        DefaultString,
-        "{}:{}",
-        &config.listen.ip(),
-        &config.listen.port()
-    );
+
     let mut client_socket_id = NonZeroU32::new(1).expect("Socket id must be more than zero");
-    let mut socket = create_socket(&listen, 0, true, config.max_connections as usize)?;
+    let mut socket = create_socket(config.listen, 0, true, config.max_connections as usize)?;
 
     let mut timeout_duration = instant();
     let mut next_client_to_send = 0;

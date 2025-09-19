@@ -442,7 +442,7 @@ mod tests {
     ) -> BinResult<usize> {
         let cli_config = ClientCliConfig {
             endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
-            listen: "127.0.0.1:0".parse().unwrap(),
+            listen: Some("127.0.0.1:0".parse().unwrap()),
             request_timeout: 1000,
             block_size: DEFAULT_DATA_BLOCK_SIZE as u64,
             retry_timeout: 1000,
@@ -482,7 +482,7 @@ mod tests {
     ) -> BinResult<usize> {
         let cli_config = ClientCliConfig {
             endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
-            listen: "127.0.0.1:0".parse().unwrap(),
+            listen: Some("127.0.0.1:0".parse().unwrap()),
             request_timeout: 1000,
             block_size: DEFAULT_DATA_BLOCK_SIZE as u64,
             retry_timeout: 1000,
@@ -519,8 +519,6 @@ mod tests {
         authorized_keys: Option<AuthorizedKeys>,
     ) -> DefaultBoxedResult {
         let listen: std::net::SocketAddr = format!("127.0.0.1:{server_port}").parse().unwrap();
-        #[cfg(not(feature = "std"))]
-        let listen = std_to_socket_addr(listen);
         let config = ServerConfig {
             listen,
             directory: "/tmp".parse().unwrap(),

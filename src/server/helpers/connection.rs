@@ -20,9 +20,9 @@ use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
 use crate::server::connection_builder::ConnectionBuilder;
 use crate::socket::BoundSocket;
-use crate::std_compat::net::SocketAddr;
 use crate::string::format_str;
 use crate::types::DataBuffer;
+use core::net::SocketAddr;
 
 #[allow(dead_code)]
 pub struct SessionKeys {

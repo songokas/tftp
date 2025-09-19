@@ -41,7 +41,7 @@ use crate::socket::ToSocketId;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use crate::std_compat::net::SocketAddr;
+use core::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::FilePath;
@@ -81,8 +81,8 @@ where
     S: Socket + ToSocketId,
     B: BoundSocket + ToSocketId + Send + 'static,
     Rng: CryptoRng + RngCore + Copy + Send + 'static,
-    CreateSocket: Fn(&str, usize, bool, usize) -> BoxedResult<S>,
-    CreateBoundSocket: Fn(&str, usize, SocketAddr) -> BoxedResult<B>,
+    CreateSocket: Fn(SocketAddr, usize, bool, usize) -> BoxedResult<S>,
+    CreateBoundSocket: Fn(SocketAddr, usize, SocketAddr) -> BoxedResult<B>,
     CreateReader: Fn(&FilePath, &ServerConfig) -> BoxedResult<(Option<u64>, R)>,
     W: Write + Send + 'static,
     CreateWriter: Fn(&FilePath, &ServerConfig) -> BoxedResult<W>,
@@ -103,14 +103,8 @@ where
         );
     }
 
-    let listen = format_str!(
-        DefaultString,
-        "{}:{}",
-        &config.listen.ip(),
-        &config.listen.port()
-    );
     let mut client_socket_id = NonZeroU32::new(1).expect("Socket id must be more than zero");
-    let mut socket = create_socket(&listen, 0, true, config.max_connections as usize)?;
+    let mut socket = create_socket(config.listen, 0, true, config.max_connections as usize)?;
 
     let mut handles = Handles::new();
 
@@ -122,13 +116,16 @@ where
             match socket.recv_from(&mut receive_buffer, Duration::from_secs(1).into()) {
                 Ok(connection_received) => connection_received,
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    handles.retain(|_, t| !t.is_finished());
                     continue;
                 }
                 Err(e) => return Err(e.into()),
             };
 
+        handles.retain(|_, t| !t.is_finished());
+
         trace!(
-            "Received connection from {from_client} in {} exists {}",
+            "Received connection in {}s from_client={from_client} connection exists={}",
             received_in.elapsed().as_secs_f32(),
             handles.contains_key(&from_client),
         );
@@ -237,7 +234,6 @@ where
             },
         };
         let _ = handles.insert(from_client, handle);
-        handles.retain(|_, t| !t.is_finished());
         gauge!("tftp.server.open_connections").set(handles.len() as f64);
     }
 }

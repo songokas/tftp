@@ -35,8 +35,13 @@ where
     R: Read + Seek,
     CreateReader: FnOnce(&FilePath) -> BoxedResult<(Option<u64>, R)>,
 {
-    let socket = create_socket(config.listen.as_str(), 1, false, 1)
-        .map_err(|e| BinError::from(e.to_string()))?;
+    let listen = if let Some(l) = &config.listen {
+        obtain_listen_socket(l).map_err(|e| BinError::from(e.to_string()))?
+    } else {
+        obtain_listen_socket_based_on_endpoint(&config.endpoint)
+            .map_err(|e| BinError::from(e.to_string()))?
+    };
+    let socket = create_socket(listen, 1, false, 1).map_err(|e| BinError::from(e.to_string()))?;
     // init_logger(socket.local_addr().expect("local address"));
 
     let options = ConnectionOptions {
@@ -67,7 +72,7 @@ where
             .parse()
             .expect("Invalid local file name"),
     };
-    let client_config = config.try_into(prefer_seek)?;
+    let client_config = config.try_into(listen, prefer_seek)?;
     let result = match client_config.encryption_key {
         #[cfg(feature = "encryption")]
         Some(key) => send_file(

@@ -370,6 +370,46 @@ test_hpa_tftp_server() {
     sudo systemctl stop tftpd 
 }
 
+test_bug_fix_server_reuse_ipv6_socket_for_receiver() {
+    local server="$1"
+    local client="$2"
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples}
+
+    head -c 1KB /dev/urandom > $TEST_DIR/server/samples/test_file
+
+    $server server "[::1]":9000 $TEST_DIR/server & server_pids+=($!)
+    time $client receive ::1:9000 samples/test_file --local-path $TEST_DIR/client/samples/test_file & pids+=($!)
+    wait "${pids[@]}"
+
+    kill -9 "${server_pids[@]}"
+
+    cmp -s $TEST_DIR/client/samples/test_file $TEST_DIR/server/samples/test_file
+}
+
+test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection() {
+    local server="$1"
+    local client="$2"
+    local server_pids=()
+    local pids=()
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples}
+
+    head -c 1KB /dev/urandom > $TEST_DIR/server/samples/test_file
+
+    $server server "[::1]":9000 $TEST_DIR/server & server_pids+=($!)
+    time $client receive ::1:9000 samples/test_file --local-path $TEST_DIR/client/samples/test_file & pids+=($!)
+    wait "${pids[@]}"
+
+    kill -9 "${server_pids[@]}"
+
+    cmp -s $TEST_DIR/client/samples/test_file $TEST_DIR/server/samples/test_file
+}
+
 test_bin() {
     cargo test -p tftp-std-binary
     cargo test -p tftp-std-binary --no-default-features --features std
@@ -422,6 +462,9 @@ test_all() {
 
     for server in ${encryption_targets[@]}; do
         for client in ${encryption_targets[@]}; do
+            test_bug_fix_server_reuse_ipv6_socket_for_receiver $server $client
+            test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection $server $client
+
             test_full_config $server $client
             test_large_files $server $client 1
             test_large_files $server $client 4
@@ -437,6 +480,8 @@ test_all() {
 
     for server in ${non_encryption_targets[@]}; do
         for client in ${non_encryption_targets[@]}; do
+            test_bug_fix_server_reuse_ipv6_socket_for_receiver $server $client
+            test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection $server $client
             test_large_files $server $client 4
             test_high_load $server $client 4
             test_standard_tftp $server $client
@@ -446,6 +491,8 @@ test_all() {
     # non encryption server communication with encrypted clients
     for server in ${non_encryption_targets[@]}; do
         for client in ${encryption_targets[@]}; do
+            test_bug_fix_server_reuse_ipv6_socket_for_receiver $server $client
+            test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection $server $client
             test_encryption_level $server $client "optional-data optional-protocol none"
             test_standard_tftp $server $client
         done

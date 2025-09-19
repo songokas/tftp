@@ -3,12 +3,11 @@ use core::time::Duration;
 use crate::encryption::EncryptionKey;
 use crate::encryption::SigningKey;
 use crate::encryption::VerifyingKey;
-use crate::std_compat::net::SocketAddr;
-use crate::types::DefaultString;
+use core::net::SocketAddr;
 
 #[derive(Clone)]
 pub struct ClientConfig {
-    pub listen: DefaultString,
+    pub listen: SocketAddr,
     pub endpoint: SocketAddr,
     pub request_timeout: Duration,
     pub max_file_size: u64,
