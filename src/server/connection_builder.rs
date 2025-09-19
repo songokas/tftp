@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::num::NonZeroU8;
 
 use log::*;
@@ -34,7 +35,6 @@ use crate::socket::Socket;
 use crate::socket::ToSocketId;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use core::net::SocketAddr;
 use crate::std_compat::time::Instant;
 use crate::string::ensure_size;
 use crate::string::format_str;

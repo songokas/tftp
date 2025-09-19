@@ -1,3 +1,5 @@
+use core::net::SocketAddr;
+
 use log::error;
 
 use super::config::ServerConfig;
@@ -15,7 +17,6 @@ use crate::socket::Socket;
 use crate::string::ensure_size;
 use crate::string::format_str;
 use crate::types::FilePath;
-use core::net::SocketAddr;
 
 pub fn validate_request_options(
     socket: &impl Socket,

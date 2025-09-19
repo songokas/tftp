@@ -18,7 +18,6 @@ use log::*;
 use polling::Event;
 use polling::Events;
 use polling::Poller;
-// use polling::Source;
 use socket2::Domain;
 use socket2::Protocol;
 use socket2::Socket as Socket2;
@@ -63,7 +62,7 @@ pub fn obtain_listen_socket_based_on_endpoint(endpoint: &str) -> BoxedResult<Soc
 pub fn create_socket(
     address: SocketAddr,
     socket_id: usize,
-    reuse: bool,
+    _reuse: bool,
     capacity: usize,
 ) -> BoxedResult<impl Socket> {
     let socket = Socket2::new(
@@ -74,9 +73,9 @@ pub fn create_socket(
     .map_err(from_io_err)?;
 
     #[cfg(not(target_family = "windows"))]
-    socket.set_reuse_address(reuse).map_err(from_io_err)?;
+    socket.set_reuse_address(_reuse).map_err(from_io_err)?;
     #[cfg(not(target_family = "windows"))]
-    socket.set_reuse_port(reuse).map_err(from_io_err)?;
+    socket.set_reuse_port(_reuse).map_err(from_io_err)?;
     socket.bind(&address.into()).map_err(from_io_err)?;
 
     let socket: UdpSocket = socket.into();

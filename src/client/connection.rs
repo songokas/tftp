@@ -1,4 +1,5 @@
 use core::cmp::min;
+use core::net::SocketAddr;
 use core::time::Duration;
 
 use log::debug;
@@ -25,7 +26,6 @@ use crate::packet::PacketType;
 use crate::packet::RequestPacket;
 use crate::socket::Socket;
 use crate::std_compat::io::ErrorKind;
-use core::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;

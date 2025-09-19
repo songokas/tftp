@@ -1,10 +1,10 @@
+use core::net::SocketAddr;
 use core::time::Duration;
 
 use crate::encryption::SigningKey;
 use crate::key_management::AuthorizedKeys;
 use crate::types::FilePath;
 use crate::types::ShortString;
-use core::net::SocketAddr;
 
 pub struct ServerConfig {
     pub listen: SocketAddr,

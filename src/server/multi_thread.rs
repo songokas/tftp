@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::num::NonZeroU32;
 use core::time::Duration;
 use std::thread::spawn;
@@ -41,7 +42,6 @@ use crate::socket::ToSocketId;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use core::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::FilePath;

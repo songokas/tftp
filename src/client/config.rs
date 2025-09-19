@@ -1,9 +1,9 @@
+use core::net::SocketAddr;
 use core::time::Duration;
 
 use crate::encryption::EncryptionKey;
 use crate::encryption::SigningKey;
 use crate::encryption::VerifyingKey;
-use core::net::SocketAddr;
 
 #[derive(Clone)]
 pub struct ClientConfig {

@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::time::Duration;
 
 use log::error;
@@ -18,7 +19,6 @@ use crate::socket::ToSocketId;
 use crate::std_compat::io::Error;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Result;
-use core::net::SocketAddr;
 use crate::types::DataBuffer;
 
 pub struct EncryptionBoundSocket<S, Rng> {

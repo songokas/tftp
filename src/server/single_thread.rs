@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::num::NonZeroU32;
 use core::time::Duration;
 
@@ -39,7 +40,6 @@ use crate::socket::ToSocketId;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use core::net::SocketAddr;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;
@@ -109,7 +109,6 @@ where
             encode_verifying_key(&VerifyingKey::from(private_key))?
         );
     }
-
 
     let mut client_socket_id = NonZeroU32::new(1).expect("Socket id must be more than zero");
     let mut socket = create_socket(config.listen, 0, true, config.max_connections as usize)?;

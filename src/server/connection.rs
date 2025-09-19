@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::num::NonZeroU8;
 use core::time::Duration;
 
@@ -19,7 +20,6 @@ use crate::socket::BoundSocket;
 use crate::std_compat::io;
 use crate::std_compat::time::Instant;
 use crate::types::DataBuffer;
-use core::net::SocketAddr;
 
 cfg_encryption! {
     use crate::encrypted_packet::EncryptedDataPacket;

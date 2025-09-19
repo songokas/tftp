@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::time::Duration;
 
 use log::debug;
@@ -37,7 +38,6 @@ use crate::time::InstantCallback;
 use crate::types::FilePath;
 use crate::writers::block_writer::BlockWriter;
 use crate::writers::single_block_writer::SingleBlockWriter;
-use core::net::SocketAddr;
 
 cfg_encryption! {
     use crate::client::encryption_socket_builder::create_initial_socket;

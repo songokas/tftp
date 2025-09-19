@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::time::Duration;
 
 use log::debug;
@@ -22,7 +23,6 @@ use crate::server::connection_builder::ConnectionBuilder;
 use crate::socket::BoundSocket;
 use crate::string::format_str;
 use crate::types::DataBuffer;
-use core::net::SocketAddr;
 
 #[allow(dead_code)]
 pub struct SessionKeys {
