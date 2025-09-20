@@ -394,20 +394,25 @@ test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection() {
     local server="$1"
     local client="$2"
     local server_pids=()
-    local pids=()
+    local pids1=()
+    local pids2=()
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples}
 
-    head -c 1KB /dev/urandom > $TEST_DIR/server/samples/test_file
+    head -c 1KB /dev/urandom > $TEST_DIR/server/samples/test_file1
+    head -c 1KB /dev/urandom > $TEST_DIR/server/samples/test_file2
 
-    $server server "[::1]":9000 $TEST_DIR/server & server_pids+=($!)
-    time $client receive ::1:9000 samples/test_file --local-path $TEST_DIR/client/samples/test_file & pids+=($!)
-    wait "${pids[@]}"
+    $server server 127.0.0.1:9000 $TEST_DIR/server & server_pids+=($!)
+    time $client receive 127.0.0.1:9000 samples/test_file1 --listen 127.0.0.1:20010 --local-path $TEST_DIR/client/samples/test_file1 & pids1+=($!)
+    wait "${pids1[@]}"
+    time $client receive 127.0.0.1:9000 samples/test_file2 --listen 127.0.0.1:20010 --local-path $TEST_DIR/client/samples/test_file2 & pids2=($!)
+    wait "${pids2[@]}"
 
     kill -9 "${server_pids[@]}"
 
-    cmp -s $TEST_DIR/client/samples/test_file $TEST_DIR/server/samples/test_file
+    cmp -s $TEST_DIR/client/samples/test_file1 $TEST_DIR/server/samples/test_file1
+    cmp -s $TEST_DIR/client/samples/test_file2 $TEST_DIR/server/samples/test_file2
 }
 
 test_bin() {
