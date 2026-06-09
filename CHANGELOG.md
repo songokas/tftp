@@ -6,7 +6,7 @@ All visible changes will be documented here. This project adheres to Semantic Ve
 
 ### Changed
 
-- cogestion control changed to new rhyno
+- congestion control changed to new reno
 - increased range for min, max block sizes
 
 ### Added
