@@ -149,8 +149,12 @@ pub fn query_server<'a>(
             }
             (_, Ok(Packet::Error(p))) => {
                 // retry in case server does not support extensions
-                if matches!(p.code, ErrorCode::IllegalOperation | ErrorCode::Undefined)
-                    && initial
+                if matches!(
+                    p.code,
+                    ErrorCode::OptionNegotiation
+                        | ErrorCode::IllegalOperation
+                        | ErrorCode::Undefined
+                ) && initial
                     && options.encryption_level == EncryptionLevel::None
                 {
                     debug!("Received error {} retrying without extensions", p.message);

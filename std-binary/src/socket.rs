@@ -120,9 +120,9 @@ pub fn create_bound_socket(
 
     socket.bind(&listen.into()).map_err(from_io_err)?;
 
-    let socket: UdpSocket = socket.into();
+    // let socket: UdpSocket = socket.into();
     socket.set_nonblocking(true).map_err(from_io_err)?;
-    socket.connect(endpoint).map_err(from_io_err)?;
+    socket.connect(&endpoint.into()).map_err(from_io_err)?;
     let poller = Poller::new().map_err(from_io_err)?;
     unsafe {
         poller
@@ -130,7 +130,7 @@ pub fn create_bound_socket(
             .map_err(from_io_err)?;
     }
     let socket = UdpBoundSocket {
-        socket,
+        socket: socket.into(),
         poller,
         socket_id,
         // TODO alloc in stack

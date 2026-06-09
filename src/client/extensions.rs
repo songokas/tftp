@@ -46,7 +46,7 @@ pub fn validate_extensions(
             "Server sent options {} not initialized by client",
             names
         );
-        return Err(ErrorPacket::new(ErrorCode::IllegalOperation, message));
+        return Err(ErrorPacket::new(ErrorCode::OptionNegotiation, message));
     }
     Ok(())
 }

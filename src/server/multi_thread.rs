@@ -167,7 +167,7 @@ where
                         &socket,
                         from_client,
                         ErrorPacket::new(
-                            ErrorCode::IllegalOperation,
+                            ErrorCode::OptionNegotiation,
                             format_str!(DefaultString, "{e}"),
                         ),
                     );

@@ -5,7 +5,8 @@ use log::*;
 use rand::rngs::OsRng;
 use tftp_dus::client::receive_file;
 use tftp_dus::config::ConnectionOptions;
-#[cfg(not(feature = "encryption"))]
+use tftp_dus::config::MIN_DATA_BLOCK_SIZE;
+use tftp_dus::config::MIN_ENCRYPTION_SIZE;
 use tftp_dus::encryption::EncryptionLevel;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::std_compat::io::Write;
@@ -39,18 +40,26 @@ where
     let socket = create_socket(listen, 1, false, 1).map_err(|e| BinError::from(e.to_string()))?;
     // init_logger(socket.local_addr().expect("local address"));
 
+    #[cfg(feature = "encryption")]
+    let encryption_level = config
+        .encryption_level
+        .parse()
+        .map_err(|_| BinError::from("Invalid encryption level specified"))?;
+    #[cfg(not(feature = "encryption"))]
+    let encryption_level = EncryptionLevel::None;
+    if encryption_level != EncryptionLevel::None {
+        if config.block_size < (MIN_DATA_BLOCK_SIZE as u64 + MIN_ENCRYPTION_SIZE as u64) {
+            return Err(BinError::from(format!(
+                "Block size with encryption must be at least {}",
+                MIN_DATA_BLOCK_SIZE + MIN_ENCRYPTION_SIZE as u16
+            )));
+        }
+    }
     let options = ConnectionOptions {
         block_size: config.block_size as u16,
         retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
         file_size: Some(0),
-        #[cfg(feature = "encryption")]
-        encryption_level: config
-            .encryption_level
-            .parse()
-            .map_err(|_| BinError::from("Invalid encryption level specified"))?,
-
-        #[cfg(not(feature = "encryption"))]
-        encryption_level: EncryptionLevel::None,
+        encryption_level,
         window_size: config.window_size as u16,
     };
     #[cfg(feature = "encryption")]

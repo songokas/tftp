@@ -1,3 +1,4 @@
+use core::mem;
 use core::num::NonZeroU8;
 
 use log::debug;
@@ -9,6 +10,7 @@ use rand::RngCore;
 use crate::buffer::resize_buffer;
 use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::error::StorageError;
+use crate::flow_control::FLOW_CONTROL_PERIOD;
 use crate::packet::prepend_data_header;
 use crate::packet::ByteConverter;
 use crate::packet::ErrorCode;
@@ -28,19 +30,41 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
     buffer: &mut DataBuffer,
     instant: InstantCallback,
 ) -> bool {
+    // Replenish send budget each period
+    let elapsed = connection.rate_period.elapsed();
+    if elapsed >= FLOW_CONTROL_PERIOD {
+        connection.packets_to_send = connection
+            .rate_control
+            .packets_to_send(elapsed, connection.options.block_size);
+        connection.rate_period = instant();
+    }
+
+    if connection.packets_to_send == 0 {
+        return false;
+    }
+
     let timeout = connection
         .options
         .retry_packet_after_timeout
         .mul_f32(connection.retry_packet_multiplier.get() as f32);
-    let retry = connection.last_sent.elapsed() > timeout;
+    let timeout_retry = connection
+        .window_sent_at
+        .as_ref()
+        .is_some_and(|t| t.elapsed() > timeout);
+    let fast_retransmit = mem::take(&mut connection.fast_retransmit);
+    let retry = timeout_retry || fast_retransmit;
     if retry {
         debug!(
-            "Retrying data elapsed {}ms timeout {}ms",
+            "Retrying data elapsed {}ms timeout {}ms fast_retransmit={fast_retransmit}",
             connection.last_updated.elapsed().as_millis(),
             timeout.as_millis()
         );
-        connection.retry_packet_multiplier = connection.retry_packet_multiplier.saturating_add(2);
+        if timeout_retry {
+            connection.retry_packet_multiplier =
+                connection.retry_packet_multiplier.saturating_add(2);
+        }
     }
+
     // ensure min buffer size
     let expected_min_buffer_size =
         DATA_PACKET_HEADER_SIZE as usize + connection.options.block_size as usize;
@@ -51,7 +75,12 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
     let packet_block = match block_reader.next(&mut buffer[DATA_PACKET_HEADER_SIZE.into()..], retry)
     {
         Ok(Some(b)) => b,
-        Ok(None) => return false,
+        Ok(None) => {
+            if connection.window_sent_at.is_none() {
+                connection.window_sent_at = Some(instant());
+            }
+            return false;
+        }
         Err(e) => {
             error!("Failed to read {} from {}", e, connection.endpoint);
 
@@ -70,6 +99,15 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
             return false;
         }
     };
+
+    if timeout_retry {
+        connection.rate_control.on_loss(
+            connection.options.block_size,
+            packet_block.block,
+            connection.options.window_size,
+        );
+    }
+
     prepend_data_header(packet_block.block, buffer);
     debug!(
         "Send data block {} size {}",
@@ -79,7 +117,9 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
     buffer.truncate(DATA_PACKET_HEADER_SIZE as usize + packet_block.size);
     let sent = connection.send_bytes(PacketType::Data, buffer);
     if sent {
-        connection.last_sent = instant();
+        connection.window_sent_at = None;
+        connection.packets_to_send = connection.packets_to_send.saturating_sub(1);
+        connection.rate_control.start_rtt(packet_block.block);
     }
     sent
 }
@@ -110,6 +150,7 @@ pub fn handle_read<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Co
             let bytes_freed = block_reader.free_block(p.block);
             if bytes_freed > 0 {
                 connection.last_updated = instant();
+                connection.window_sent_at = None;
                 connection.transfer += bytes_freed;
                 connection.retry_packet_multiplier =
                     if connection.retry_packet_multiplier.get() - 1 > 0 {
@@ -118,6 +159,21 @@ pub fn handle_read<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore + Co
                     } else {
                         NonZeroU8::new(1).expect("non zero integer")
                     };
+                if let Some(_rtt) = connection.rate_control.end_rtt(p.block) {
+                    connection
+                        .rate_control
+                        .on_rtt_complete(connection.options.block_size, p.block);
+                }
+            } else if connection.rate_control.on_dup_ack(
+                p.block,
+                connection.options.block_size,
+                connection.options.window_size,
+            ) {
+                debug!(
+                    "Fast retransmit triggered by 3 duplicate ACKs for block {}",
+                    p.block
+                );
+                connection.fast_retransmit = true;
             }
             if block_reader.is_finished() {
                 info!(

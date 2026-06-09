@@ -10,6 +10,7 @@ use crate::buffer::resize_buffer;
 use crate::config::ConnectionOptions;
 use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::encryption::*;
+use crate::flow_control::RateControl;
 use crate::macros::cfg_encryption;
 use crate::metrics::counter;
 use crate::metrics::histogram;
@@ -45,7 +46,6 @@ pub struct Connection<B, Rng> {
     pub last_updated: Instant,
     /// last block index acknowledged
     pub last_acknowledged: u64,
-    pub last_sent: Instant,
     pub started: Instant,
     // total file size transferred
     pub transfer: usize,
@@ -56,6 +56,11 @@ pub struct Connection<B, Rng> {
     pub finished: bool,
     pub invalid: Option<Instant>,
     pub writer: bool,
+    pub rate_control: RateControl,
+    pub packets_to_send: u32,
+    pub rate_period: Instant,
+    pub window_sent_at: Option<Instant>,
+    pub fast_retransmit: bool,
 }
 
 impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {

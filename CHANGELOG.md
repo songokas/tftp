@@ -2,6 +2,17 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.7.3] - 2026-06-09
+
+### Changed
+
+- cogestion control changed to new rhyno
+- increased range for min, max block sizes
+
+### Added
+
+* option negotation error code (error code 8)
+
 ## [0.7.2] - 2025-09-19
 
 ### Fixed

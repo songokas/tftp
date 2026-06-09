@@ -10,12 +10,6 @@ pub const DEFAULT_DATA_BLOCK_SIZE: u16 = 512;
 // PacketType + block(u16)
 pub const DATA_PACKET_HEADER_SIZE: u8 = 4;
 
-pub const MAX_DATA_BLOCK_SIZE: u16 = 1425;
-
-/// maximum size of the packet buffer
-pub const MAX_BUFFER_SIZE: u16 = MAX_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
-pub const MIN_BUFFER_SIZE: u16 = DEFAULT_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
-
 #[cfg(feature = "encryption")]
 pub const ENCRYPTION_TAG_SIZE: u8 = 16;
 #[cfg(not(feature = "encryption"))]
@@ -31,12 +25,19 @@ pub const ENCRYPTION_NONCE_SIZE: u8 = 24;
 #[cfg(not(feature = "encryption"))]
 pub const ENCRYPTION_NONCE_SIZE: u8 = 0;
 
+pub const MIN_ENCRYPTION_SIZE: u8 =
+    ENCRYPTION_TAG_SIZE + ENCRYPTION_NONCE_SIZE + ENCRYPTION_PADDING_SIZE;
+
+pub const MIN_DATA_BLOCK_SIZE: u16 = 8;
+pub const PREFERRED_DATA_BLOCK_SIZE: u16 = 1425;
+
 cfg_alloc!(
     /// how many clients server can manage at once
     pub const MAX_CLIENTS: u16 = 5000;
     /// max window size
     pub const MAX_BLOCKS_FOR_MULTI_READER: u16 = 1000;
     pub const DEFAULT_WINDOW_SIZE: u8 = 8;
+    pub const MAX_DATA_BLOCK_SIZE: u16 = 65464;
 );
 
 cfg_stack!(
@@ -50,7 +51,12 @@ cfg_stack!(
     /// how many seek readers available window size > 1
     pub const MAX_MULTI_SEEK_READERS: u16 = 64;
     pub const DEFAULT_WINDOW_SIZE: u8 = 4;
+    pub const MAX_DATA_BLOCK_SIZE: u16 = 1425;
 );
+
+/// maximum size of the packet buffer
+pub const MAX_BUFFER_SIZE: u16 = MAX_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
+pub const MIN_BUFFER_SIZE: u16 = MIN_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
 
 pub const MAX_EXTENSION_VALUE_SIZE: u8 = 88; // current max ENCODED_SIGNATURE_LENGTH;
 pub const MAX_DEFAULT_STRING_SIZE: u8 = 140;
@@ -59,8 +65,8 @@ pub const MAX_FILE_PATH_SIZE: u8 = 150;
 pub const DEFAULT_RETRY_PACKET_TIMEOUT: Duration = Duration::from_millis(80);
 pub const EXTENSION_WINDOW_SIZE_MIN: u16 = 1;
 // pub const EXTENSION_WINDOW_SIZE_MAX: u16 = 65535;
-pub const EXTENSION_BLOCK_SIZE_MIN: u16 = DEFAULT_DATA_BLOCK_SIZE;
-// pub const EXTENSION_BULK_SIZE_MAX: u16 = 65464;
+pub const EXTENSION_BLOCK_SIZE_MIN: u16 = MIN_DATA_BLOCK_SIZE;
+pub const EXTENSION_BLOCK_SIZE_MAX: u16 = MAX_DATA_BLOCK_SIZE;
 pub const EXTENSION_TIMEOUT_SIZE_MIN: u8 = 1;
 pub const EXTENSION_TIMEOUT_SIZE_MAX: u8 = 255;
 

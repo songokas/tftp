@@ -28,13 +28,13 @@ test_full_config() {
 
     $server server 127.0.0.1:9000 $TEST_DIR/server -a --max-window-size 4 --request-timeout 10000 \
         --max-file-size 100000000 --max-block-size 512 --authorized-keys $TEST_DIR/authorized --private-key "$private_key" & server_pids+=($!)
-    
+
     time $client send 127.0.0.1:9000 $TEST_DIR/client/file --listen 127.0.0.1:0 --remote-path new-path --request-timeout 10000 \
         --max-file-size 100000000 --block-size 512 --encryption-level protocol --server-public-key "$public_key" --private-key "$client_private_key" \
         --known-hosts $TEST_DIR/known
-    
+
     cmp -s $TEST_DIR/client/file $TEST_DIR/server/new-path
-    
+
    time $client receive 127.0.0.1:9000 new-path --local-path $TEST_DIR/delete/file --listen 127.0.0.1:0 --request-timeout 10000 \
        --max-file-size 100000000 --block-size 512 --encryption-level protocol --private-key "$client_private_key" \
        --known-hosts $TEST_DIR/known
@@ -211,19 +211,49 @@ test_encryption_level() {
     local protos="${3:-"data optional-data protocol optional-protocol none"}"
     local data="hello"
     local server_pids=()
+    local levels=($protos)
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
 
     $server server 127.0.0.1:9000 $TEST_DIR/server & server_pids+=($!)
 
-    for level in ; do
+    for level in "${levels[@]}" ; do
         local remote_path=$(openssl rand -hex 12)
         echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --encryption-level $level
         local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --encryption-level $level)
         if [[ "$data" != "$received" ]]; then
             exit 1
         fi
+    done;
+
+    kill -9 "${server_pids[@]}"
+}
+
+
+test_min_max_block_sizes() {
+    local server="$1"
+    local client="$2"
+    local sizes=($3)
+    local protos="${4:-"none"}"
+    local data="hello"
+    local server_pids=()
+    local levels=($protos)
+
+    rm -rf $TEST_DIR
+    mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
+
+    $server server 127.0.0.1:9000 $TEST_DIR/server & server_pids+=($!)
+
+    for level in "${levels[@]}" ; do
+        for block_size in "${sizes[@]}" ; do
+            local remote_path=$(openssl rand -hex 12)
+            echo "$data" | $client send 127.0.0.1:9000 /dev/stdin --remote-path $remote_path --encryption-level $level --block-size $block_size
+            local received=$($client receive 127.0.0.1:9000 $remote_path --local-path /dev/stdout --encryption-level $level --block-size $block_size)
+            if [[ "$data" != "$received" ]]; then
+                exit 1
+            fi
+        done;
     done;
 
     kill -9 "${server_pids[@]}"
@@ -277,7 +307,7 @@ test_standard_tftp() {
         exit 1
     fi
 
-    kill -9 "${server_pids[@]}" 
+    kill -9 "${server_pids[@]}"
 }
 
 test_encryption_authorized_only() {
@@ -345,7 +375,7 @@ test_curl_client() {
     $server server 127.0.0.1:9000 $TEST_DIR/server --max-file-size 104857600 & server_pids+=($!)
     curl -T $TEST_DIR/client/samples/100M tftp://127.0.0.1:9000
     curl -o $TEST_DIR/delete/100M tftp://127.0.0.1:9000/100M
-    kill -9 "${server_pids[@]}" 
+    kill -9 "${server_pids[@]}"
 }
 
 
@@ -355,19 +385,19 @@ test_hpa_tftp_server() {
 
     rm -rf $TEST_DIR
     mkdir -p $TEST_DIR/{server/samples,client/samples,delete}
-    # --foreground --address 127.0.0.1:9000 does not work 
+    # --foreground --address 127.0.0.1:9000 does not work
     # echo TFTPD_ARGS="--secure --create -vvv /tmp" > /etc/conf.d/tftpd
 
     sudo rm -f /tmp/100M
-    
+
     head -c 100M /dev/urandom > $TEST_DIR/client/samples/100M
 
-    sudo systemctl start tftpd 
+    sudo systemctl start tftpd
 
     $client send 127.0.0.1:69 $TEST_DIR/client/samples/100M --allow-server-port-change
     $client receive 127.0.0.1:69 100M --max-file-size 104857600 --local-path $TEST_DIR/delete/100M --allow-server-port-change
 
-    sudo systemctl stop tftpd 
+    sudo systemctl stop tftpd
 }
 
 test_bug_fix_server_reuse_ipv6_socket_for_receiver() {
@@ -453,6 +483,41 @@ build_release_targets() {
     cp ./target/release/tftp-dus ./target/tftp-stack
 }
 
+test_block_sizes() {
+    test_min_max_block_sizes ./target/tftp ./target/tftp "8 65464" "none"
+    test_min_max_block_sizes ./target/tftp ./target/tftp "49 65464" "data"
+    test_min_max_block_sizes ./target/tftp-stack-encryption ./target/tftp-stack-encryption "8 1425" "none"
+    test_min_max_block_sizes ./target/tftp-stack-encryption ./target/tftp-stack-encryption "49 1425" "data"
+}
+
+test_congestion_recovery() {
+    local server="$1"
+    local client="$2"
+    local server_pids=()
+    local pids=()
+
+    rm -rf "$TEST_DIR"
+    mkdir -p $TEST_DIR/{server,client}
+
+    head -c 10M /dev/urandom > $TEST_DIR/client/file
+
+    # Run 8 concurrent sends to stress the server and induce retransmits
+    $server server 127.0.0.1:9100 $TEST_DIR/server --max-file-size 524288000 & server_pids+=($!)
+    sleep 0.2
+
+    for i in $(seq 1 8); do
+        $client send 127.0.0.1:9100 $TEST_DIR/client/file \
+            --remote-path "file-$i" --listen 127.0.0.1:0 \
+            --request-timeout 30000 & pids+=($!)
+    done
+    wait "${pids[@]}"
+    kill "${server_pids[@]}" 2>/dev/null || true
+
+    for i in $(seq 1 8); do
+        cmp -s $TEST_DIR/client/file $TEST_DIR/server/file-$i
+    done
+}
+
 test_all() {
     local encryption_targets=(./target/tftp ./target/tftp-stack-encryption)
     local non_encryption_targets=(./target/tftp-alloc ./target/tftp-stack)
@@ -465,6 +530,8 @@ test_all() {
     test_sync_full_writes ./target/tftp ./target/tftp 8
     test_sync_partial_writes ./target/tftp ./target/tftp 8
 
+    test_block_sizes
+
     for server in ${encryption_targets[@]}; do
         for client in ${encryption_targets[@]}; do
             test_bug_fix_server_reuse_ipv6_socket_for_receiver $server $client
@@ -473,6 +540,7 @@ test_all() {
             test_full_config $server $client
             test_large_files $server $client 1
             test_large_files $server $client 4
+            test_congestion_recovery $server $client
             test_high_load $server $client 1
             test_high_load $server $client 4
             test_encryption_level $server $client
@@ -480,6 +548,7 @@ test_all() {
             test_standard_tftp $server $client
             test_double_encryption $server $client
             test_directory_list $server $client
+
         done
     done
 

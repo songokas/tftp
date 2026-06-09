@@ -1,3 +1,4 @@
+use core::cmp::max;
 use core::time::Duration;
 
 use log::*;
@@ -23,6 +24,7 @@ cfg_encryption!(
     use ed25519_dalek::Verifier;
     use ed25519_dalek::VerifyingKey;
     use crate::encryption::*;
+    use crate::config::MIN_ENCRYPTION_SIZE;
 );
 
 #[allow(unused_variables)]
@@ -37,7 +39,20 @@ pub fn parse_extensions<R: CryptoRng + RngCore + Copy>(
     if let Some(size) = client_extensions.get(&Extension::BlockSize) {
         let client_block_size: u16 = size.parse().unwrap_or(0);
         if (EXTENSION_BLOCK_SIZE_MIN..=config.max_block_size).contains(&client_block_size) {
-            options.block_size = client_block_size;
+            #[cfg(feature = "encryption")]
+            let min_block_size = if client_extensions
+                .get(&Extension::EncryptionLevel)
+                .and_then(|s| s.parse().ok())
+                .map(|e: EncryptionLevel| e != EncryptionLevel::None)
+                == Some(true)
+            {
+                MIN_ENCRYPTION_SIZE as u16
+            } else {
+                EXTENSION_BLOCK_SIZE_MIN
+            };
+            #[cfg(not(feature = "encryption"))]
+            let min_block_size = EXTENSION_BLOCK_SIZE_MIN;
+            options.block_size = max(client_block_size, min_block_size);
             let _ = used_extensions.insert(
                 Extension::BlockSize,
                 format_str!(ExtensionValue, "{}", options.block_size),

@@ -52,6 +52,28 @@ echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin
 - large file support
 - ability to synchronize new files in a folder
 
+## TFTP Extensions
+
+### Standard extensions
+
+| Extension | RFC | Wire name | Range | Description |
+|---|---|---|---|---|
+| Block size | [rfc2348](https://www.rfc-editor.org/rfc/rfc2348) | `blksize` | 8–65464 | Negotiated payload size per DATA packet. Larger blocks reduce overhead on fast links. |
+| Timeout | [rfc2349](https://www.rfc-editor.org/rfc/rfc2349) | `timeout` | 1–255 s | Retransmit timeout in seconds. Overrides the built-in default. |
+| Transfer size | [rfc2349](https://www.rfc-editor.org/rfc/rfc2349) | `tsize` | 0–2⁶⁴ | File size in bytes. Sent by the client on write; echoed by the server on read so the receiver can pre-allocate. |
+| Window size | [rfc7440](https://www.rfc-editor.org/rfc/rfc7440) | `windowsize` | 1–65535 | Number of DATA blocks in flight before an ACK is required. Increases throughput on high-latency links. |
+
+### Custom extensions (encryption, feature-gated)
+
+These extensions are negotiated in the initial RRQ/WRQ and OACK exchange. They are only sent when the `encryption` feature is compiled in.
+
+| Extension | Wire name | Value | Description |
+|---|---|---|---|
+| Encryption level | `enclevel` | `none` / `data` / `protocol` / `full` / `optional-protocol` / `optional-full` | Requested encryption scope. `data` encrypts only file content; `protocol` encrypts all TFTP packets; `full` combines both. The `optional-*` variants allow falling back to plaintext if the peer does not support encryption. |
+| Session public key | `spubk` | base64 x25519 key | Ephemeral x25519 public key for Diffie–Hellman key exchange. Both sides contribute one; the shared secret seeds the xchacha20poly1305 stream cipher. |
+| Auth public key | `apubk` | base64 ed25519 key | Long-term ed25519 public key of the sender, used to verify the `sig` extension. |
+| Signature | `sig` | base64 ed25519 signature | ed25519 signature over the request, proving possession of the private key that corresponds to `apubk`. The server checks this against its `--authorized-keys` list. |
+
 ### Configuration
 
 Run help to see all available options

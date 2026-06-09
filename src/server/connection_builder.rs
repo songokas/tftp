@@ -16,6 +16,8 @@ use crate::error::AvailabilityError;
 use crate::error::BoxedResult;
 use crate::error::ExtensionError;
 use crate::error::FileError;
+use crate::flow_control::RateControl;
+use crate::flow_control::FLOW_CONTROL_PERIOD;
 use crate::macros::cfg_encryption;
 use crate::macros::cfg_seek;
 use crate::map::Entry;
@@ -193,11 +195,12 @@ where
             warn!("Unable to add socket {} to epoll", new_socket.socket_id());
         }
 
+        let mut rate_control = RateControl::new(instant);
+        rate_control.configure(self.options.block_size, self.options.window_size);
         Ok((
             Connection {
                 socket: new_socket,
                 last_updated: instant(),
-                last_sent: instant(),
                 started: instant(),
                 transfer: 0,
                 options: self.options,
@@ -208,6 +211,11 @@ where
                 last_acknowledged: 0,
                 retry_packet_multiplier: NonZeroU8::new(1).expect("Non zero multiplier"),
                 writer: true,
+                rate_control,
+                packets_to_send: u32::MAX,
+                rate_period: instant(),
+                window_sent_at: None,
+                fast_retransmit: false,
             },
             block_writer(writer),
             self.used_extensions,
@@ -311,6 +319,10 @@ where
             return Err(AvailabilityError::NoReaderAvailable.into());
         };
 
+        let mut rate_control = RateControl::new(instant);
+        rate_control.configure(self.options.block_size, self.options.window_size);
+        let initial_packets =
+            rate_control.packets_to_send(FLOW_CONTROL_PERIOD, self.options.block_size);
         Ok((
             Connection {
                 socket: new_socket,
@@ -319,13 +331,17 @@ where
                 endpoint: client,
                 encryptor: self.handshake_encryption,
                 last_updated: instant(),
-                last_sent: instant(),
                 started: instant(),
                 finished: false,
                 invalid: None,
                 last_acknowledged: 0,
                 retry_packet_multiplier: NonZeroU8::new(1).expect("Non zero multiplier"),
                 writer: false,
+                rate_control,
+                packets_to_send: initial_packets,
+                rate_period: instant(),
+                window_sent_at: None,
+                fast_retransmit: false,
             },
             r,
             self.used_extensions,

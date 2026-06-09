@@ -213,8 +213,6 @@ pub enum Extension {
     Timeout,
     // file size
     TransferSize,
-    // // client/server public key
-    // PublicKey,
     // required encryption level
     EncryptionLevel,
     // "1" and "65535"
@@ -464,6 +462,7 @@ pub enum ErrorCode {
     UnknownId,
     FileAlreadyExists,
     NotSuchUser,
+    OptionNegotiation,
 }
 
 impl Display for ErrorCode {
@@ -477,6 +476,7 @@ impl Display for ErrorCode {
             ErrorCode::UnknownId => write!(f, "UnknownId"),
             ErrorCode::FileAlreadyExists => write!(f, "FileAlreadyExists"),
             ErrorCode::NotSuchUser => write!(f, "NotSuchUser"),
+            ErrorCode::OptionNegotiation => write!(f, "OptionNegotiationFailure"),
         }
     }
 }
@@ -492,6 +492,7 @@ impl ErrorCode {
             5 => ErrorCode::UnknownId,
             6 => ErrorCode::FileAlreadyExists,
             7 => ErrorCode::NotSuchUser,
+            8 => ErrorCode::OptionNegotiation,
             _ => return None,
         }
         .into()

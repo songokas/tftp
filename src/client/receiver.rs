@@ -1,3 +1,4 @@
+use core::cmp::max;
 use core::net::SocketAddr;
 use core::time::Duration;
 
@@ -17,6 +18,7 @@ use crate::client::connection::QueryResult;
 use crate::client::extensions::create_extensions;
 use crate::config::print_options;
 use crate::config::ConnectionOptions;
+use crate::config::PREFERRED_DATA_BLOCK_SIZE;
 use crate::encryption::VerifyingKey;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
@@ -65,7 +67,7 @@ where
         info!("Listening on {} connecting to {}", s, config.endpoint);
     }
 
-    let mut receive_buffer = create_max_buffer(options.block_size);
+    let mut receive_buffer = create_max_buffer(max(PREFERRED_DATA_BLOCK_SIZE, options.block_size));
     let receive_max_buffer_size = receive_buffer.len();
 
     debug!(

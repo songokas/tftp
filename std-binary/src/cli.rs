@@ -5,12 +5,13 @@ use clap::Subcommand;
 use clap::ValueHint;
 use tftp_dus::config::DEFAULT_RETRY_PACKET_TIMEOUT;
 use tftp_dus::config::DEFAULT_WINDOW_SIZE;
+use tftp_dus::config::EXTENSION_BLOCK_SIZE_MAX;
 use tftp_dus::config::EXTENSION_BLOCK_SIZE_MIN;
 use tftp_dus::config::EXTENSION_TIMEOUT_SIZE_MAX;
 use tftp_dus::config::EXTENSION_WINDOW_SIZE_MIN;
 use tftp_dus::config::MAX_BLOCKS_FOR_MULTI_READER;
 use tftp_dus::config::MAX_CLIENTS;
-use tftp_dus::config::MAX_DATA_BLOCK_SIZE;
+use tftp_dus::config::PREFERRED_DATA_BLOCK_SIZE;
 use tftp_dus::types::DefaultString;
 use tftp_dus::types::FilePath;
 use tftp_dus::types::ShortString;
@@ -39,7 +40,7 @@ pub struct ClientCliConfig {
     )]
     pub request_timeout: u64,
 
-    #[arg(long, default_value_t = MAX_DATA_BLOCK_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_BLOCK_SIZE_MIN as u64)..=(MAX_DATA_BLOCK_SIZE as u64)))]
+    #[arg(long, default_value_t = PREFERRED_DATA_BLOCK_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_BLOCK_SIZE_MIN as u64)..=(EXTENSION_BLOCK_SIZE_MAX as u64)))]
     pub block_size: u64,
 
     #[arg(long, default_value_t = DEFAULT_WINDOW_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_WINDOW_SIZE_MIN as u64)..=(MAX_BLOCKS_FOR_MULTI_READER as u64)))]
@@ -129,7 +130,7 @@ pub struct ServerCliConfig {
     )]
     pub max_file_size: u64,
 
-    #[arg(long, default_value_t = MAX_DATA_BLOCK_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_BLOCK_SIZE_MIN as u64)..=(MAX_DATA_BLOCK_SIZE as u64)))]
+    #[arg(long, default_value_t = PREFERRED_DATA_BLOCK_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_BLOCK_SIZE_MIN as u64)..=(EXTENSION_BLOCK_SIZE_MAX as u64)))]
     pub max_block_size: u64,
 
     #[cfg(feature = "encryption")]
