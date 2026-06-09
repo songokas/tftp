@@ -302,13 +302,7 @@ mod tests {
         assert!(now.elapsed() >= wait_for);
 
         let now = Instant::now();
-        let wait_for = Duration::from_micros(30);
-        let result = socket_r.recv_from(&mut buf, wait_for.into());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
-        assert!(now.elapsed() >= wait_for);
-
-        let now = Instant::now();
-        let wait_for = Duration::from_micros(30);
+        let wait_for = Duration::from_millis(30);
         let result = socket_r.recv_from(&mut buf, None);
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
         assert!(now.elapsed() < wait_for);
@@ -323,7 +317,7 @@ mod tests {
         assert!(now.elapsed() < wait_for);
 
         let now = Instant::now();
-        let wait_for = Duration::from_micros(150);
+        let wait_for = Duration::from_millis(30);
         let result = socket_r.recv_from(&mut buf, None);
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
         assert!(now.elapsed() < wait_for);

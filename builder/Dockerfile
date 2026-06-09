@@ -1,4 +1,4 @@
-FROM rust:slim-buster
+FROM rust:slim-bookworm
 
 RUN dpkg --add-architecture armhf && dpkg --add-architecture arm64
 

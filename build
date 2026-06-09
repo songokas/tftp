@@ -63,11 +63,11 @@ release_dist() {
 }
 
 release_deb() {
-    if [[ $(docker images -q buster/cargo-deb 2> /dev/null) == "" ]]; then
-        docker build -t buster/cargo-deb builder
+    if [[ $(docker images -q bookworm/cargo-deb 2> /dev/null) == "" ]]; then
+        docker build -t bookworm/cargo-deb builder
     fi
     for target in ${DEB_RELEASE_TARGETS[@]}; do
-        docker run --mount type=bind,source="$(pwd)",target=/volume --rm buster/cargo-deb -p tftp-std-binary --target $target --no-build --no-strip
+        docker run --mount type=bind,source="$(pwd)",target=/volume --rm bookworm/cargo-deb -p tftp-std-binary --target $target --no-build --no-strip
         cp target/$target/debian/tftp*.deb dist/
     done
     # cargo deb -p tftp-std-binary --target x86_64-unknown-linux-musl
