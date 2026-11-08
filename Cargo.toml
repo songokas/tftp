@@ -10,6 +10,10 @@ strip = true
 members = ["std-binary"]
 
 [dependencies]
+ed25519-dalek = { version = "2", optional = true, default-features = false, features = [
+    "fast",
+    "zeroize",
+] }
 log = "0.4"
 heapless = { version = "0.8", optional = false, default-features = false }
 base64 = { version = "0.21", optional = true, default-features = false }
@@ -18,7 +22,6 @@ x25519-dalek = { version = "2", optional = true, default-features = false, featu
     "zeroize",
     "static_secrets",
 ] }
-ed25519-dalek = { version = "2", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true, default-features = false, features = [
     "heapless",
     "getrandom",
@@ -49,3 +52,4 @@ alloc = [
 encryption = ["x25519-dalek", "chacha20poly1305", "base64", "ed25519-dalek"]
 seek = []
 multi_thread = ["std"]
+metrics = ["dep:metrics", "std"]

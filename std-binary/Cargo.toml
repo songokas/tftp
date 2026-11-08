@@ -37,7 +37,7 @@ std = ["tftp-dus/std"]
 alloc = ["tftp-dus/alloc"]
 encryption = ["tftp-dus/encryption"]
 seek = ["tftp-dus/seek"]
-metrics = ["tftp-dus/metrics", "otlp-metrics-exporter"]
+metrics = ["tftp-dus/metrics", "otlp-metrics-exporter", "std"]
 multi_thread = ["tftp-dus/multi_thread", "std"]
 sync = ["notify", "std", "alloc"]
 

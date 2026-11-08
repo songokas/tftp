@@ -166,9 +166,14 @@ impl<B: BoundSocket, Rng: CryptoRng + RngCore + Copy> Connection<B, Rng> {
 impl<B, Rng> Drop for Connection<B, Rng> {
     fn drop(&mut self) {
         let _connection_type = if self.writer { "write" } else { "read" };
-        counter!("tftp.server.connection.transfer.size", "connection_type" => _connection_type, "error" => self.invalid.is_some().to_string())
+        let _error = if self.invalid.is_some() {
+            "true"
+        } else {
+            "false"
+        };
+        counter!("tftp.server.connection.transfer.size", "connection_type" => _connection_type, "error" => _error)
             .increment(self.transfer as u64);
-        histogram!("tftp.server.connection.duration",  "connection_type" => _connection_type, "error" => self.invalid.is_some().to_string())
+        histogram!("tftp.server.connection.duration",  "connection_type" => _connection_type, "error" =>_error)
             .record(self.started.elapsed());
     }
 }
