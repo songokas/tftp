@@ -29,7 +29,11 @@ pub const MIN_ENCRYPTION_SIZE: u8 =
     ENCRYPTION_TAG_SIZE + ENCRYPTION_NONCE_SIZE + ENCRYPTION_PADDING_SIZE;
 
 pub const MIN_DATA_BLOCK_SIZE: u16 = 8;
-pub const PREFERRED_DATA_BLOCK_SIZE: u16 = 1425;
+pub const PREFERRED_DATA_BLOCK_SIZE: u16 = if MAX_DATA_BLOCK_SIZE < 1425 {
+    MAX_DATA_BLOCK_SIZE
+} else {
+    1425
+};
 
 cfg_alloc!(
     /// how many clients server can manage at once
@@ -41,17 +45,103 @@ cfg_alloc!(
 );
 
 cfg_stack!(
+    /// Parses a limit given through a `TFTP_*` environment variable at build time.
+    const fn build_limit(value: Option<&str>, default: u16) -> u16 {
+        let Some(value) = value else {
+            return default;
+        };
+        let digits = value.as_bytes();
+        assert!(!digits.is_empty(), "TFTP_* build limits must be numbers");
+        let mut limit: u32 = 0;
+        let mut index = 0;
+        while index < digits.len() {
+            assert!(
+                digits[index].is_ascii_digit(),
+                "TFTP_* build limits must be numbers"
+            );
+            limit = limit * 10 + (digits[index] - b'0') as u32;
+            assert!(
+                limit <= u16::MAX as u32,
+                "TFTP_* build limits must fit in 16 bits"
+            );
+            index += 1;
+        }
+        limit as u16
+    }
+
+    const fn default_pool_size(size: u16) -> u16 {
+        if size < 2 {
+            2
+        } else {
+            size
+        }
+    }
+
     // heapless FvIndexMap requires map size to be power of 2
-    pub const MAX_CLIENTS: u16 = 128;
-    pub const MAX_BLOCKS_FOR_MULTI_READER: u16 = 16;
+    pub const MAX_CLIENTS: u16 = build_limit(option_env!("TFTP_MAX_CLIENTS"), 128);
+    const _: () = assert!(
+        MAX_CLIENTS > 1 && MAX_CLIENTS.is_power_of_two(),
+        "TFTP_MAX_CLIENTS must be a power of two greater than 1"
+    );
+
+    pub const MAX_BLOCKS_FOR_MULTI_READER: u16 =
+        build_limit(option_env!("TFTP_MAX_WINDOW_SIZE"), 16);
+    const _: () = assert!(
+        MAX_BLOCKS_FOR_MULTI_READER >= 1,
+        "TFTP_MAX_WINDOW_SIZE must be at least 1"
+    );
+
     /// how many single readers available window size = 1
-    pub const MAX_SINGLE_READERS: u16 = 64;
+    pub const MAX_SINGLE_READERS: u16 = build_limit(
+        option_env!("TFTP_MAX_SINGLE_READERS"),
+        default_pool_size(MAX_CLIENTS / 2),
+    );
+    const _: () = assert!(
+        MAX_SINGLE_READERS > 1 && MAX_SINGLE_READERS.is_power_of_two(),
+        "TFTP_MAX_SINGLE_READERS must be a power of two greater than 1"
+    );
+
     /// how many multi readers available window size > 1
-    pub const MAX_MULTI_READERS: u16 = 8;
+    pub const MAX_MULTI_READERS: u16 = build_limit(
+        option_env!("TFTP_MAX_MULTI_READERS"),
+        default_pool_size(MAX_CLIENTS / 16),
+    );
+    const _: () = assert!(
+        MAX_MULTI_READERS > 1 && MAX_MULTI_READERS.is_power_of_two(),
+        "TFTP_MAX_MULTI_READERS must be a power of two greater than 1"
+    );
+
     /// how many seek readers available window size > 1
-    pub const MAX_MULTI_SEEK_READERS: u16 = 64;
-    pub const DEFAULT_WINDOW_SIZE: u8 = 4;
-    pub const MAX_DATA_BLOCK_SIZE: u16 = 1425;
+    pub const MAX_MULTI_SEEK_READERS: u16 = build_limit(
+        option_env!("TFTP_MAX_SEEK_READERS"),
+        default_pool_size(MAX_CLIENTS / 2),
+    );
+    const _: () = assert!(
+        MAX_MULTI_SEEK_READERS > 1 && MAX_MULTI_SEEK_READERS.is_power_of_two(),
+        "TFTP_MAX_SEEK_READERS must be a power of two greater than 1"
+    );
+
+    const DEFAULT_WINDOW_SIZE_LIMIT: u16 = build_limit(
+        option_env!("TFTP_DEFAULT_WINDOW_SIZE"),
+        if MAX_BLOCKS_FOR_MULTI_READER < 4 {
+            MAX_BLOCKS_FOR_MULTI_READER
+        } else {
+            4
+        },
+    );
+    const _: () = assert!(
+        DEFAULT_WINDOW_SIZE_LIMIT >= 1
+            && DEFAULT_WINDOW_SIZE_LIMIT <= MAX_BLOCKS_FOR_MULTI_READER
+            && DEFAULT_WINDOW_SIZE_LIMIT <= u8::MAX as u16,
+        "TFTP_DEFAULT_WINDOW_SIZE must be between 1 and min(TFTP_MAX_WINDOW_SIZE, 255)"
+    );
+    pub const DEFAULT_WINDOW_SIZE: u8 = DEFAULT_WINDOW_SIZE_LIMIT as u8;
+
+    pub const MAX_DATA_BLOCK_SIZE: u16 = build_limit(option_env!("TFTP_MAX_BLOCK_SIZE"), 1425);
+    const _: () = assert!(
+        MAX_DATA_BLOCK_SIZE >= MIN_DATA_BLOCK_SIZE && MAX_DATA_BLOCK_SIZE <= 65464,
+        "TFTP_MAX_BLOCK_SIZE must be between 8 and 65464"
+    );
 );
 
 /// maximum size of the packet buffer

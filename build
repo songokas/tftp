@@ -8,6 +8,7 @@ RELEASE="release"
 BIN_RELEASE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf x86_64-unknown-linux-musl)
 DEB_RELEASE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf)
 BIN_WINDOWS_TARGETS=(x86_64-pc-windows-gnu)
+STACK_MANIFEST="std-stack-binary/Cargo.toml"
 
 build() {
     mkdir -p dist
@@ -23,10 +24,22 @@ build() {
         cp target/$target/release/tftp-dus dist/tftp-dus-stack-encryption
         cargo build -p tftp-std-binary --target "$target" "--$RELEASE" --no-default-features --features seek
         cp target/$target/release/tftp-dus dist/tftp-dus-stack
+
+        cargo build --manifest-path "$STACK_MANIFEST" --target "$target" "--$RELEASE" --no-default-features --features seek
+        cargo build --manifest-path "$STACK_MANIFEST" --target "$target" "--$RELEASE" --no-default-features --features encryption
+        cargo build --manifest-path "$STACK_MANIFEST" --target "$target" "--$RELEASE"
+        cp std-stack-binary/target/$target/release/tftp-dus-stack-only dist/
     done
 
     # cargo build -p tftp-std-binary --target "x86_64-unknown-linux-musl" "--$RELEASE"
     # cp target/x86_64-unknown-linux-musl/release/tftp-dus dist/tftp-static
+}
+
+# limits can be changed with TFTP_* variables, see README
+build_stack() {
+    mkdir -p dist
+    cargo build --release --manifest-path "$STACK_MANIFEST"
+    cp std-stack-binary/target/release/tftp-dus-stack-only dist/
 }
 
 build_pi() {
@@ -41,7 +54,13 @@ release_bins() {
         # deb depends on this target
         cross build -p tftp-std-binary --target "$target" --release
         cp target/$target/release/tftp-dus dist/tftp-dus-$target
+
+        # from the repository root cross mounts it twice: as the current directory and as a path dependency
+        (cd std-stack-binary && cross build --target "$target" --release)
+        cp std-stack-binary/target/$target/release/tftp-dus-stack-only dist/tftp-dus-stack-only-$target
     done
+
+    # std-stack-binary does not support windows
 
     for target in ${BIN_WINDOWS_TARGETS[@]}; do
         cross build -p tftp-std-binary --target "$target" --release

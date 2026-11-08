@@ -1,0 +1,46 @@
+[package]
+name = "tftp-esp32-idf-example"
+version = "0.7.3"
+edition = "2021"
+publish = false
+description = "tftp-dus server running on an ESP32 with std through ESP-IDF"
+license = "../LICENSE"
+
+# Standalone so that it is never built with the features of the other binaries.
+[workspace]
+
+[lib]
+test = false
+
+[[bin]]
+name = "tftp-esp32-idf-example"
+path = "src/main.rs"
+required-features = ["device"]
+test = false
+bench = false
+
+[dependencies]
+tftp-dus = { path = "..", default-features = false, features = [
+    "std",
+    "alloc",
+    "multi_thread",
+] }
+log = "0.4"
+rand = { version = "0.8", default-features = false, features = ["getrandom"] }
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-svc = "0.53"
+
+[build-dependencies]
+embuild = { version = "0.33", features = ["espidf"] }
+
+[features]
+default = ["device"]
+device = []
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[profile.release]
+opt-level = "s"

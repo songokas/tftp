@@ -4,31 +4,22 @@ use std::fs::read_dir;
 use std::fs::File as StdFile;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
-use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
 use env_logger::Builder;
 use env_logger::Env;
 use log::error;
+use tftp_binary_common::path::validate_path;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::error::FileError;
 use tftp_dus::server::ServerConfig;
-use tftp_dus::std_compat::io;
-use tftp_dus::std_compat::time::Instant;
 use tftp_dus::types::FilePath;
 
-use crate::macros::cfg_no_std;
 use crate::std_compat::fs::File;
 use crate::std_compat::io::from_io_err;
 use crate::std_compat::io::BoxedReader;
-use crate::std_compat::io::BufReader;
 use crate::std_compat::io::BytesCursor;
-
-cfg_no_std! {
-    use std::time::UNIX_EPOCH;
-    use std::time::SystemTime;
-}
 
 pub fn create_writer(path: &FilePath) -> BoxedResult<File> {
     let file = match StdFile::create(path.as_str()).map_err(from_io_err) {
@@ -132,22 +123,6 @@ pub fn create_server_writer(requested_path: &FilePath, config: &ServerConfig) ->
 }
 
 #[allow(dead_code)]
-pub fn create_buff_reader(path: &str) -> io::Result<BufReader<StdFile>> {
-    let file = match StdFile::options()
-        .read(true)
-        .open(path)
-        .map_err(from_io_err)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            return Err(e);
-        }
-    };
-    let file = BufReader::new(file);
-    Ok(file)
-}
-
-#[allow(dead_code)]
 pub fn init_logger(local_addr: SocketAddr) {
     #[allow(unused_imports)]
     use std::io::Write;
@@ -164,18 +139,6 @@ pub fn init_logger(local_addr: SocketAddr) {
         })
         .try_init()
         .unwrap_or_default();
-}
-
-pub fn instant_callback() -> Instant {
-    #[cfg(feature = "std")]
-    return Instant::now();
-    #[cfg(not(feature = "std"))]
-    Instant::from_time(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_micros() as u64
-    })
 }
 
 struct ReaderCreator {}
@@ -215,43 +178,4 @@ fn list_directory(server_dir: &Path, dir: &Path) -> BoxedResult<(Option<u64>, By
     }
     let size = bytes.len() as u64;
     Ok((size.into(), BytesCursor::new(bytes)))
-}
-
-fn validate_path(requested_path: &FilePath, max_depth: usize) -> Result<(), FileError> {
-    let component_count = Path::new(requested_path.as_str())
-        .components()
-        .filter(|c| {
-            matches!(
-                c,
-                Component::Normal(_) | Component::ParentDir | Component::CurDir
-            )
-        })
-        .count();
-    if component_count.saturating_sub(1) <= max_depth {
-        return Ok(());
-    }
-    Err(FileError::InvalidFileName)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_path() {
-        let data = [
-            ("filename", 0, true),
-            ("filename", 1, true),
-            ("dir/file", 0, false),
-            ("dir/file", 1, true),
-            ("/file", 1, true),
-            ("", 1, true),
-            ("../../a", 1, false),
-            ("../../a", 3, true),
-        ];
-        for (p, count, result) in data {
-            let p: FilePath = p.parse().unwrap();
-            assert_eq!(validate_path(&p, count).is_ok(), result, "{p} {count}");
-        }
-    }
 }

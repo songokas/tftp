@@ -1,0 +1,40 @@
+[package]
+name = "tftp-std-stack-binary"
+version = "0.7.3"
+edition = "2021"
+
+authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
+description = "tftp server and client that never allocates on the heap"
+homepage = "https://github.com/songokas/tftp"
+repository = "https://github.com/songokas/tftp"
+license = "../LICENSE"
+readme = "../README.md"
+
+# Standalone on purpose: as a member of the root workspace, `--workspace` builds
+# would unify features and enable tftp-dus/alloc through std-binary.
+[workspace]
+
+[[bin]]
+name = "tftp-dus-stack-only"
+path = "src/main.rs"
+
+[dependencies]
+tftp-dus = { path = "..", default-features = false }
+tftp-binary-common = { path = "../binary-common" }
+heapless = { version = "0.8", default-features = false }
+libc = "0.2"
+log = "0.4"
+rand = { version = "0.8", default-features = false, features = ["getrandom"] }
+socket2 = { version = "0.5", features = ["all"] }
+
+[features]
+default = ["encryption", "seek"]
+encryption = ["tftp-dus/encryption", "tftp-binary-common/encryption"]
+seek = ["tftp-dus/seek"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+strip = true
+panic = "abort"

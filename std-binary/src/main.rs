@@ -1,21 +1,6 @@
 #[cfg(feature = "sync")]
 mod blocking_reader;
 mod cli;
-#[cfg(feature = "encryption")]
-mod encryption_io;
-
-#[cfg(not(feature = "encryption"))]
-mod encryption_io {
-    use tftp_dus::encryption::PublicKey;
-
-    pub fn handle_hosts_file(
-        _known_hosts_file: Option<&str>,
-        _remote_key: Option<PublicKey>,
-        _endpoint: &str,
-    ) {
-    }
-}
-
 mod config;
 mod error;
 mod io;
@@ -29,12 +14,12 @@ mod sync;
 use clap::Parser;
 use env_logger::Builder;
 use env_logger::Env;
-use io::instant_callback;
 use rand::rngs::OsRng;
 use receiver::start_receive;
 use sender::start_send;
 #[cfg(feature = "sync")]
 use sync::start_sync;
+use tftp_binary_common::time::instant_callback;
 use tftp_dus::server::server;
 
 use crate::cli::Args;
@@ -50,12 +35,11 @@ use crate::socket::*;
 #[cfg(feature = "std")]
 pub mod std_compat {
     pub mod fs {
-        pub use std::fs::File;
+        pub use tftp_binary_common::io::File;
     }
     pub mod io {
-        pub use std::io::BufReader;
         pub use std::io::Cursor;
-        pub use std::io::Error;
+        pub use tftp_binary_common::io::from_io_err;
 
         pub type BytesCursor = Cursor<Vec<u8>>;
 
@@ -70,10 +54,6 @@ pub mod std_compat {
         }
 
         pub type BoxedReader = Box<dyn AnyReader>;
-
-        pub fn from_io_err(err: Error) -> Error {
-            err
-        }
     }
 }
 

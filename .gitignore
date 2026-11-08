@@ -3,3 +3,7 @@
 .vscode
 perf.data*
 dist/
+/std-stack-binary/target
+/esp32-example/target
+/esp32-idf-example/target
+/esp32-idf-example/.embuild

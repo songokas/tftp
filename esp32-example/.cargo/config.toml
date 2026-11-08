@@ -1,0 +1,19 @@
+[build]
+target = "riscv32imc-unknown-none-elf"
+
+[target.riscv32imc-unknown-none-elf]
+runner = "espflash flash --monitor --chip esp32c3"
+rustflags = ["-C", "force-frame-pointers", "-C", "link-arg=-Tlinkall.x"]
+
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor --chip esp32"
+rustflags = ["-C", "link-arg=-nostartfiles", "-C", "link-arg=-Wl,-Tlinkall.x"]
+
+[alias]
+test-host = "test --no-default-features --target x86_64-unknown-linux-gnu"
+
+# A microcontroller needs much smaller limits than the defaults
+[env]
+TFTP_MAX_CLIENTS = "4"
+TFTP_MAX_WINDOW_SIZE = "4"
+TFTP_MAX_BLOCK_SIZE = "1024"

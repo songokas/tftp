@@ -18,6 +18,7 @@ clap = { version = "4", features = ["derive"] }
 env_logger = "0.10"
 log = "0.4"
 tftp-dus = { path = "..", default-features = false }
+tftp-binary-common = { path = "../binary-common" }
 rand = { version = "0.8", optional = false, default-features = false, features = [
     "getrandom",
 ] }
@@ -33,9 +34,9 @@ rand = "0.8"
 [features]
 default = ["alloc", "encryption", "multi_thread", "seek", "sync", "metrics"]
 # no std is still using std dependency for filesystem, sockets, std::io
-std = ["tftp-dus/std"]
-alloc = ["tftp-dus/alloc"]
-encryption = ["tftp-dus/encryption"]
+std = ["tftp-dus/std", "tftp-binary-common/std"]
+alloc = ["tftp-dus/alloc", "tftp-binary-common/alloc"]
+encryption = ["tftp-dus/encryption", "tftp-binary-common/encryption"]
 seek = ["tftp-dus/seek"]
 metrics = ["tftp-dus/metrics", "otlp-metrics-exporter", "std"]
 multi_thread = ["tftp-dus/multi_thread", "std"]

@@ -47,10 +47,70 @@ echo "hello" | tftp-dus send 127.0.0.1:9000 /dev/stdin
 - supports tsize, blksize, timeout, windowsize options
 - send/receive encrypted files
 - authorization of public keys
-- optional stack only functionality (currently lib only)
+- optional stack only functionality (library and the Linux and macOS `std-stack-binary`)
+  - `multi_thread` without `alloc` keeps buffers on the stack, but `std::thread::spawn` still heap allocates per connection
 - compatible with third party clients,servers
 - large file support
 - ability to synchronize new files in a folder
+
+## Building `tftp-dus` without `alloc`
+
+`alloc` is enabled by default. Without it, transfers use fixed size stack buffers, so memory use does not grow with file size and limits are set at build time:
+
+```bash
+cargo build --release -p tftp-std-binary --no-default-features --features encryption,seek
+```
+
+| Limit | With `alloc` | Without `alloc` |
+|---|---|---|
+| Clients | 5000 | 128 |
+| Window size (default) | 1000 (8) | 16 (4) |
+| Block size | 65464 | 1425 |
+| Default string, e.g. error message | unbounded | 140 bytes |
+| File path | unbounded | 150 bytes |
+
+- Without `multi_thread`, the server is single threaded and keeps downloads in fixed pools: 64 with window size 1, 8 with a larger window and, with `seek`, 64 seek readers used when the others run out. Downloads that do not fit are refused with a `Server resources busy` error.
+- With `multi_thread`, each connection has its own thread and there are no reader pools.
+- `sync` requires `alloc`, so enabling it turns `alloc` back on.
+- The binary is not heap free: argument parsing, logging, socket polling, path resolution, directory listing and `std::thread::spawn` still allocate. This is a small amount per process or connection and does not depend on file size. Use `std-stack-binary` if nothing may allocate.
+
+## Stack only binary
+
+`std-stack-binary` builds `tftp-dus-stack-only`, a single threaded Linux and macOS client and server that aborts if anything allocates through the Rust allocator.
+
+```bash
+cargo build --release --manifest-path std-stack-binary/Cargo.toml
+```
+
+Compared to `tftp-dus`, addresses must be IP literals, there is no `sync`, `--directory-list` or metrics, and limits are fixed at build time.
+
+### Changing stack limits
+
+Limits of builds without `alloc` come from environment variables read at compile time, so no code changes are needed. Unset variables keep their defaults, and an invalid value fails the build.
+
+```bash
+TFTP_MAX_CLIENTS=512 TFTP_MAX_WINDOW_SIZE=32 ./build build_stack
+```
+
+| Variable | Default | Constraint |
+|---|---|---|
+| `TFTP_MAX_CLIENTS` | 128 | power of two, at least 2 |
+| `TFTP_MAX_WINDOW_SIZE` | 16 | at least 1 |
+| `TFTP_DEFAULT_WINDOW_SIZE` | 4 | at most 255 and `TFTP_MAX_WINDOW_SIZE` |
+| `TFTP_MAX_BLOCK_SIZE` | 1425 | 8 to 65464 |
+| `TFTP_MAX_SINGLE_READERS` | `TFTP_MAX_CLIENTS / 2` | power of two, at least 2 |
+| `TFTP_MAX_MULTI_READERS` | `TFTP_MAX_CLIENTS / 16` | power of two, at least 2 |
+| `TFTP_MAX_SEEK_READERS` | `TFTP_MAX_CLIENTS / 2` | power of two, at least 2 |
+
+The same variables apply to `std-binary` built without `alloc`.
+
+Larger limits need more stack, reserved when the server starts. If it crashes on startup, raise the limit with `ulimit -s` (or `LimitSTACK=` in a systemd unit). More than about 500 clients also needs a higher `ulimit -n`. On macOS the default open file limit is usually 256, so raise it for more than about 120 clients.
+
+## Embedded example
+
+`esp32-example` runs the `tftp-dus` server without `std` on an ESP32-C3 over Wi-Fi, see [its README](esp32-example/README.md).
+
+`esp32-idf-example` runs it with `std` on ESP-IDF and stores files in flash, see [its README](esp32-idf-example/README.md).
 
 ## TFTP Extensions
 

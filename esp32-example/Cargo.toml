@@ -1,0 +1,86 @@
+[package]
+name = "tftp-esp32-example"
+version = "0.7.3"
+edition = "2021"
+publish = false
+description = "tftp-dus server running on an ESP32 without std"
+license = "../LICENSE"
+
+# Standalone so that it is never built with the features of the other binaries.
+[workspace]
+
+[lib]
+test = false
+
+[[bin]]
+name = "tftp-esp32-example"
+path = "src/main.rs"
+required-features = ["device"]
+test = false
+bench = false
+
+[dependencies]
+tftp-dus = { path = "..", default-features = false }
+heapless = { version = "0.8", default-features = false }
+log = "0.4"
+rand = { version = "0.8", default-features = false }
+smoltcp = { version = "0.14", default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-udp",
+    "socket-dhcpv4",
+] }
+
+embassy-futures = { version = "0.1", optional = true }
+esp-alloc = { version = "0.11", optional = true }
+esp-bootloader-esp-idf = { version = "0.6", optional = true }
+esp-hal = { version = "1.2", optional = true, features = ["unstable"] }
+esp-println = { version = "0.18", optional = true, features = ["log-04"] }
+esp-radio = { version = "1.0.0-beta.1", optional = true, features = ["wifi", "unstable"] }
+esp-rtos = { version = "0.4", optional = true, features = ["esp-radio", "esp-alloc"] }
+# tftp-dus always pulls in rand's getrandom, which needs a backend on bare metal
+getrandom = { version = "0.2", optional = true, features = ["custom"] }
+static_cell = { version = "2", optional = true }
+
+[dev-dependencies]
+rand = { version = "0.8", default-features = false, features = ["getrandom"] }
+
+[features]
+default = ["esp32c3"]
+device = [
+    "dep:embassy-futures",
+    "dep:esp-alloc",
+    "dep:esp-bootloader-esp-idf",
+    "dep:esp-hal",
+    "dep:esp-println",
+    "dep:esp-radio",
+    "dep:esp-rtos",
+    "dep:getrandom",
+    "dep:static_cell",
+]
+esp32c3 = [
+    "device",
+    "esp-alloc/esp32c3",
+    "esp-bootloader-esp-idf/esp32c3",
+    "esp-hal/esp32c3",
+    "esp-println/esp32c3",
+    "esp-radio/esp32c3",
+    "esp-rtos/esp32c3",
+]
+esp32 = [
+    "device",
+    "esp-alloc/esp32",
+    "esp-bootloader-esp-idf/esp32",
+    "esp-hal/esp32",
+    "esp-println/esp32",
+    "esp-radio/esp32",
+    "esp-rtos/esp32",
+]
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1

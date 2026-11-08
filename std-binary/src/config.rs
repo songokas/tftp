@@ -2,7 +2,9 @@ use core::net::SocketAddr;
 use core::time::Duration;
 use std::net::ToSocketAddrs;
 
+use tftp_binary_common::client::connection_options;
 use tftp_dus::client::ClientConfig;
+use tftp_dus::config::ConnectionOptions;
 use tftp_dus::server::ServerConfig;
 use tftp_dus::types::DefaultString;
 
@@ -15,10 +17,25 @@ use crate::macros::cfg_encryption;
 cfg_encryption! {
     use tftp_dus::encryption::*;
     use tftp_dus::key_management::*;
-    use crate::io::create_buff_reader;
+    use tftp_binary_common::io::create_line_reader;
+    use tftp_binary_common::keys::read_private_value_or_file;
 }
 
 impl ClientCliConfig {
+    pub fn connection_options(&self, file_size: Option<u64>) -> BinResult<ConnectionOptions> {
+        #[cfg(feature = "encryption")]
+        let encryption_level = self.encryption_level.as_str();
+        #[cfg(not(feature = "encryption"))]
+        let encryption_level = "none";
+        Ok(connection_options(
+            encryption_level,
+            self.block_size,
+            self.window_size,
+            self.retry_timeout,
+            file_size,
+        )?)
+    }
+
     pub fn try_into(self, listen: SocketAddr, prefer_seek: bool) -> BinResult<ClientConfig> {
         #[cfg(feature = "encryption")]
         let remote_public_key = match (&self.server_public_key, &self.known_hosts) {
@@ -26,7 +43,7 @@ impl ClientCliConfig {
                 .map_err(|e| BinError::from(e.to_string()))?
                 .into(),
             (_, Some(p)) => get_from_known_hosts(
-                create_buff_reader(p.as_str()).map_err(|e| BinError::from(e.to_string()))?,
+                create_line_reader(p.as_str()).map_err(|e| BinError::from(e.to_string()))?,
                 &self.endpoint,
             )
             .map_err(|e| BinError::from(e.to_string()))?,
@@ -39,7 +56,7 @@ impl ClientCliConfig {
         let private_key = self
             .private_key
             .as_deref()
-            .map(crate::encryption_io::read_private_value_or_file)
+            .map(read_private_value_or_file)
             .transpose()
             .map_err(|e| BinError::from(e.to_string()))?;
         #[cfg(not(feature = "encryption"))]
@@ -65,7 +82,7 @@ impl ClientCliConfig {
         let encryption_key: Option<EncryptionKey> = self
             .encryption_key
             .as_deref()
-            .map(crate::encryption_io::read_private_value_or_file)
+            .map(read_private_value_or_file)
             .transpose()
             .map_err(|e| BinError::from(e.to_string()))?
             .map(|s| s.to_bytes());
@@ -128,7 +145,7 @@ impl ServerCliConfig {
             private_key: self
                 .private_key
                 .as_deref()
-                .map(crate::encryption_io::read_private_value_or_file)
+                .map(read_private_value_or_file)
                 .transpose()
                 .map_err(|e| BinError::from(e.to_string()))?,
             #[cfg(not(feature = "encryption"))]
@@ -137,7 +154,7 @@ impl ServerCliConfig {
             #[cfg(feature = "encryption")]
             authorized_keys: self
                 .authorized_keys
-                .map(|p| read_authorized_keys(create_buff_reader(p.as_str())?))
+                .map(|p| read_authorized_keys(create_line_reader(p.as_str())?))
                 .transpose()
                 .map_err(|e| BinError::from(e.to_string()))?,
             #[cfg(not(feature = "encryption"))]

@@ -456,6 +456,15 @@ test_bin() {
     cargo test -p tftp-std-binary --no-default-features
 }
 
+test_stack_bin() {
+    local manifest="std-stack-binary/Cargo.toml"
+
+    cargo test --manifest-path $manifest
+    cargo test --manifest-path $manifest --no-default-features
+    cargo test --manifest-path $manifest --no-default-features --features seek
+    cargo test --manifest-path $manifest --no-default-features --features encryption
+    TFTP_MAX_CLIENTS=4 TFTP_MAX_WINDOW_SIZE=4 TFTP_MAX_BLOCK_SIZE=512 cargo test --manifest-path $manifest
+}
 
 test_lib() {
     cargo test -p tftp-dus
@@ -481,6 +490,9 @@ build_release_targets() {
 
     cargo build -p tftp-std-binary --no-default-features --features seek --release
     cp ./target/release/tftp-dus ./target/tftp-stack
+
+    cargo build --manifest-path std-stack-binary/Cargo.toml --release
+    cp std-stack-binary/target/release/tftp-dus-stack-only ./target/tftp-stack-only
 }
 
 test_block_sizes() {
@@ -488,6 +500,8 @@ test_block_sizes() {
     test_min_max_block_sizes ./target/tftp ./target/tftp "49 65464" "data"
     test_min_max_block_sizes ./target/tftp-stack-encryption ./target/tftp-stack-encryption "8 1425" "none"
     test_min_max_block_sizes ./target/tftp-stack-encryption ./target/tftp-stack-encryption "49 1425" "data"
+    test_min_max_block_sizes ./target/tftp-stack-only ./target/tftp-stack-only "8 1425" "none"
+    test_min_max_block_sizes ./target/tftp-stack-only ./target/tftp-stack-only "49 1425" "data"
 }
 
 test_congestion_recovery() {
@@ -518,12 +532,43 @@ test_congestion_recovery() {
     done
 }
 
+test_stack_only_pair() {
+    local server="$1"
+    local client="$2"
+
+    test_bug_fix_server_reuse_ipv6_socket_for_receiver $server $client
+    test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection $server $client
+    test_full_config $server $client
+    test_large_files $server $client 4
+    test_encryption_level $server $client
+    test_encryption_authorized_only $server $client
+    test_standard_tftp $server $client
+}
+
+# directory list and sync are not available in tftp-stack-only
+test_stack_only() {
+    local stack="./target/tftp-stack-only"
+
+    test_stack_only_pair $stack $stack
+    test_large_files $stack $stack 1
+    test_congestion_recovery $stack $stack
+    test_high_load $stack $stack 1
+    test_high_load $stack $stack 4
+    test_double_encryption $stack $stack
+
+    for other in ./target/tftp ./target/tftp-stack-encryption; do
+        test_stack_only_pair $stack $other
+        test_stack_only_pair $other $stack
+    done
+}
+
 test_all() {
     local encryption_targets=(./target/tftp ./target/tftp-stack-encryption)
     local non_encryption_targets=(./target/tftp-alloc ./target/tftp-stack)
 
     test_lib
     test_bin
+    test_stack_bin
 
     build_release_targets
 
@@ -571,6 +616,8 @@ test_all() {
             test_standard_tftp $server $client
         done
     done
+
+    test_stack_only
 }
 
 $1 "${2:-""}" "${3:-""}" "${4:-""}"

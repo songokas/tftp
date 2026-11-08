@@ -23,8 +23,11 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            std-stack-binary/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'std-stack-binary/Cargo.lock') }}
       - name: Run tests
         run: |
           cargo test
           cargo test -p tftp-std-binary
+      - name: Run stack only binary tests
+        run: cargo test --manifest-path std-stack-binary/Cargo.toml

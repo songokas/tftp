@@ -7,7 +7,8 @@ edition = "2021"
 strip = true
 
 [workspace]
-members = ["std-binary"]
+members = ["std-binary", "binary-common"]
+exclude = ["std-stack-binary", "esp32-example", "esp32-idf-example"]
 
 [dependencies]
 ed25519-dalek = { version = "2", optional = true, default-features = false, features = [
@@ -51,5 +52,6 @@ alloc = [
 ]
 encryption = ["x25519-dalek", "chacha20poly1305", "base64", "ed25519-dalek"]
 seek = []
+# without alloc, buffers stay on the stack but std::thread::spawn still heap allocates per connection
 multi_thread = ["std"]
 metrics = ["dep:metrics", "std"]
