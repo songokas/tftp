@@ -1,6 +1,7 @@
 // Included by the integration tests of the binaries, which define `BIN`.
 // Packets and expected outcomes are in the `.packets` files next to this one.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -12,6 +13,7 @@ use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::Instant;
@@ -129,8 +131,17 @@ fn receive_datagram(socket: &UdpSocket, wait: Duration) -> Option<(Vec<u8>, Sock
     Some((buffer[..size].to_vec(), from))
 }
 
+/// Never repeats a port: the server ignores a request from an address whose
+/// connection it still tracks, taking it for a late copy of the first request.
 fn localhost_socket() -> UdpSocket {
-    UdpSocket::bind("127.0.0.1:0").unwrap()
+    static USED_PORTS: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
+    loop {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = socket.local_addr().unwrap().port();
+        if USED_PORTS.lock().unwrap().insert(port) {
+            return socket;
+        }
+    }
 }
 
 fn ack(block: u16) -> Vec<u8> {
