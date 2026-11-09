@@ -2,7 +2,8 @@ use log::trace;
 
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
-use crate::block_mapper::BlockMapper;
+use crate::block_mapper::block_index;
+use crate::block_mapper::block_number;
 use crate::error::StorageError;
 use crate::std_compat::io::Read;
 use crate::std_compat::io::Seek;
@@ -11,7 +12,6 @@ use crate::std_compat::io::SeekFrom;
 #[derive(Debug)]
 pub struct MultipleBlockSeekReader<R> {
     reader: R,
-    block_mapper: BlockMapper,
     block_read: u64,
     block_read_confirmed: u64,
     current_block: u64,
@@ -25,7 +25,6 @@ impl<R> MultipleBlockSeekReader<R> {
     pub fn new(reader: R, block_size: u16, max_blocks_to_read: u16) -> Self {
         Self {
             reader,
-            block_mapper: BlockMapper::new(),
             block_read: 0,
             block_read_confirmed: 0,
             current_block: 0,
@@ -69,7 +68,7 @@ where
             };
 
             return Ok(Block {
-                block: self.block_mapper.block(self.current_block),
+                block: block_number(self.current_block),
                 size: read,
                 index: self.current_block,
                 retry: true,
@@ -94,7 +93,7 @@ where
             self.current_block = index;
 
             return Ok(Block {
-                block: self.block_mapper.block(index),
+                block: block_number(index),
                 size: read,
                 index,
                 retry: true,
@@ -130,7 +129,7 @@ where
         self.last_offset += read as u64;
 
         Ok(Block {
-            block: self.block_mapper.block(self.block_read),
+            block: block_number(self.block_read),
             size: read,
             index: self.block_read,
             retry: false,
@@ -139,12 +138,10 @@ where
     }
 
     fn free_block(&mut self, block: u16) -> usize {
-        let mut index = self.block_mapper.index(block);
+        let index = block_index(block, self.block_read);
         let mut size: usize = 0;
-        if index > self.block_read_confirmed {
-            if index > self.block_read {
-                index = self.block_read;
-            }
+        // a block that was never read cannot have been received
+        if index > self.block_read_confirmed && index <= self.block_read {
             size = (index - self.block_read_confirmed) as usize * self.block_size as usize;
             if index == self.block_read {
                 if let Some(s) = self.finished_block_size {
@@ -305,11 +302,13 @@ mod tests {
         let mut buffer = [0_u8; 100];
         assert_eq!(0, reader.free_block(1));
         reader.next(&mut buffer, false).unwrap().unwrap();
-        assert_eq!(2, reader.free_block(2));
+        // never sent, so it cannot have been received
+        assert_eq!(0, reader.free_block(2));
+        assert_eq!(2, reader.free_block(1));
 
         reader.next(&mut buffer, false).unwrap().unwrap();
-        assert_eq!(2, reader.free_block(10));
         assert_eq!(0, reader.free_block(10));
+        assert_eq!(2, reader.free_block(2));
 
         reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(0, reader.free_block(2));
@@ -370,9 +369,6 @@ mod tests {
     #[ignore]
     #[test]
     fn size_of() {
-        #[cfg(feature = "alloc")]
-        let expected_size = 64;
-        #[cfg(not(feature = "alloc"))]
         let expected_size = 64;
         assert_eq!(
             expected_size,

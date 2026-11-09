@@ -108,7 +108,6 @@ impl<'a> InitialPacket<'a> {
         self,
         encryptor: &Encryptor<Rng>,
     ) -> Result<DataBuffer, EncryptedPacketError> {
-        // TODO allocation
         let mut buffer = DataBuffer::new();
         extend_from_slice(
             &mut buffer,
@@ -177,7 +176,137 @@ impl<'a> EncryptedPacket<'a> {
 
 #[cfg(test)]
 mod tests {
+    use chacha20poly1305::aead::KeyInit;
+    use chacha20poly1305::XChaCha20Poly1305;
+    use rand::rngs::OsRng;
+
     use super::*;
+    use crate::config::ConnectionOptions;
+    use crate::config::MAX_BUFFER_SIZE;
+    use crate::config::MAX_DATA_BLOCK_SIZE;
+    use crate::encryption::EncryptionLevel;
+    use crate::encryption::Role;
+    use crate::encryption::SessionContext;
+    use crate::packet::ByteConverter;
+    use crate::packet::ErrorCode;
+    use crate::packet::ErrorPacket;
+    use crate::packet::Packet;
+    use crate::string::format_str;
+
+    const CONTEXT: SessionContext = [7; 32];
+
+    fn encryptor(role: Role, context: SessionContext) -> Encryptor<OsRng> {
+        Encryptor {
+            cipher: XChaCha20Poly1305::new(&[5; 32].into()),
+            rng: OsRng,
+            role,
+            context,
+        }
+    }
+
+    fn buffer(bytes: &[u8]) -> DataBuffer {
+        let mut buffer = DataBuffer::new();
+        extend_from_slice(&mut buffer, bytes, ()).unwrap();
+        buffer
+    }
+
+    fn encrypted_data_packet() -> DataBuffer {
+        let mut packet = buffer(b"\0\x03\0\x05file contents");
+        EncryptedDataPacket::encrypt(&encryptor(Role::Client, CONTEXT), &mut packet).unwrap();
+        packet
+    }
+
+    #[test]
+    fn test_data_packet_round_trip_restores_the_block() {
+        let mut packet = encrypted_data_packet();
+
+        EncryptedDataPacket::decrypt(&encryptor(Role::Server, CONTEXT), &mut packet).unwrap();
+
+        assert_eq!(packet.as_slice(), b"\0\x03\0\x05file contents");
+    }
+
+    #[test]
+    fn test_data_packet_with_another_block_number_is_refused() {
+        let mut packet = encrypted_data_packet();
+        packet[3] = 6;
+
+        let result = EncryptedDataPacket::decrypt(&encryptor(Role::Server, CONTEXT), &mut packet);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_data_packet_cannot_be_reflected_to_its_sender() {
+        let mut packet = encrypted_data_packet();
+
+        let result = EncryptedDataPacket::decrypt(&encryptor(Role::Client, CONTEXT), &mut packet);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_data_packet_from_another_negotiation_is_refused() {
+        let mut packet = encrypted_data_packet();
+
+        let result = EncryptedDataPacket::decrypt(&encryptor(Role::Server, [8; 32]), &mut packet);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_data_packet_too_short_for_its_header_is_refused() {
+        // holds a nonce and a tag, which leave nothing for the 4 byte header
+        let mut bytes = [9; 40];
+        bytes[..2].copy_from_slice(&[0, 3]);
+        let mut packet = buffer(&bytes);
+
+        let result = EncryptedDataPacket::decrypt(&encryptor(Role::Server, CONTEXT), &mut packet);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_protocol_packet_cannot_be_reflected_to_its_sender() {
+        let mut packet = buffer(b"\0\x04\0\x05");
+        EncryptedPacket::encrypt(&encryptor(Role::Server, CONTEXT), &mut packet, 64).unwrap();
+
+        let mut reflected = packet.clone();
+        let result = EncryptedPacket::decrypt(&encryptor(Role::Server, CONTEXT), &mut reflected);
+        assert!(result.is_err());
+
+        EncryptedPacket::decrypt(&encryptor(Role::Client, CONTEXT), &mut packet).unwrap();
+        assert_eq!(packet.as_slice(), b"\0\x04\0\x05");
+    }
+
+    #[test]
+    fn test_error_message_of_the_longest_size_fits_an_encrypted_packet() {
+        let options = ConnectionOptions {
+            block_size: MAX_DATA_BLOCK_SIZE,
+            encryption_level: EncryptionLevel::Full,
+            ..Default::default()
+        };
+        let limit = options.max_error_message_size(true);
+        let long = "x".repeat(limit * 2 + 1);
+        let mut error =
+            ErrorPacket::new(ErrorCode::Undefined, format_str!(DefaultString, "{long}"));
+        error.limit_message(limit);
+        let message = error.message.clone();
+        let mut packet = Packet::Error(error).to_bytes();
+
+        EncryptedPacket::encrypt(
+            &encryptor(Role::Server, CONTEXT),
+            &mut packet,
+            options.block_size_with_encryption() + DATA_PACKET_HEADER_SIZE as u16,
+        )
+        .unwrap();
+
+        assert!(packet.len() < MAX_BUFFER_SIZE as usize);
+        EncryptedPacket::decrypt(&encryptor(Role::Client, CONTEXT), &mut packet).unwrap();
+        let Ok(Packet::Error(received)) = Packet::from_bytes(&packet) else {
+            panic!("expected an error packet");
+        };
+        assert_eq!(received.message, message);
+    }
 
     #[test]
     fn test_initial_from_bytes() {

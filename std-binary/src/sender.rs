@@ -1,29 +1,20 @@
-use core::time::Duration;
-use std::path::Path;
-
 use log::*;
 use rand::rngs::OsRng;
+#[cfg(feature = "encryption")]
+use tftp_binary_common::keys::create_encryption_reader;
+use tftp_binary_common::keys::handle_hosts_file;
+use tftp_binary_common::path::file_name;
 use tftp_dus::client::send_file;
-use tftp_dus::config::ConnectionOptions;
-use tftp_dus::config::MIN_DATA_BLOCK_SIZE;
-use tftp_dus::config::MIN_ENCRYPTION_SIZE;
-use tftp_dus::encryption::EncryptionLevel;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::std_compat::io::Read;
 use tftp_dus::std_compat::io::Seek;
 use tftp_dus::types::FilePath;
 
 use crate::cli::ClientCliConfig;
-use crate::encryption_io::handle_hosts_file;
 use crate::error::BinError;
 use crate::error::BinResult;
-use crate::io::instant_callback;
-use crate::macros::cfg_encryption;
 use crate::socket::*;
-
-cfg_encryption! {
-    use crate::encryption_io::create_encryption_reader;
-}
+use crate::time::instant_callback;
 
 pub fn start_send<CreateReader, R>(
     local_path: FilePath,
@@ -45,56 +36,30 @@ where
     let socket = create_socket(listen, 1, false, 1).map_err(|e| BinError::from(e.to_string()))?;
     // init_logger(socket.local_addr().expect("local address"));
     //
-    #[cfg(feature = "encryption")]
-    let encryption_level = config
-        .encryption_level
-        .parse()
-        .map_err(|_| BinError::from("Invalid encryption level specified"))?;
-    #[cfg(not(feature = "encryption"))]
-    let encryption_level = EncryptionLevel::None;
-    if encryption_level != EncryptionLevel::None {
-        if config.block_size < (MIN_DATA_BLOCK_SIZE as u64 + MIN_ENCRYPTION_SIZE as u64) {
-            return Err(BinError::from(format!(
-                "Block size with encryption must be at least {}",
-                MIN_DATA_BLOCK_SIZE + MIN_ENCRYPTION_SIZE as u16
-            )));
-        }
-    }
-    let options = ConnectionOptions {
-        block_size: config.block_size as u16,
-        retry_packet_after_timeout: Duration::from_millis(config.retry_timeout),
-        file_size: None,
-        encryption_level,
-        window_size: config.window_size as u16,
-    };
-    #[cfg(feature = "encryption")]
-    let known_hosts_file = config.known_hosts.clone();
-    #[cfg(not(feature = "encryption"))]
-    let known_hosts_file: Option<FilePath> = None;
+    let options = config.connection_options(None)?;
+    let known_hosts_file = config.encryption.values().known_hosts.cloned();
     let endpoint = config.endpoint.clone();
 
     let remote_path = match remote_path {
         Some(p) => p,
-        None => Path::new(local_path.as_str())
-            .file_name()
-            .ok_or("Invalid local filename")?
-            .to_string_lossy()
-            .parse()
-            .expect("Invalid local file name"),
+        None => file_name(&local_path)?,
     };
     let client_config = config.try_into(listen, prefer_seek)?;
     let result = match client_config.encryption_key {
         #[cfg(feature = "encryption")]
-        Some(key) => send_file(
-            client_config,
-            local_path,
-            remote_path,
-            options,
-            create_encryption_reader(key, OsRng, create_reader),
-            socket,
-            instant_callback,
-            OsRng,
-        ),
+        Some(key) => {
+            let block_size = options.block_size_with_encryption();
+            send_file(
+                client_config,
+                local_path,
+                remote_path,
+                options,
+                create_encryption_reader(key, OsRng, block_size, create_reader),
+                socket,
+                instant_callback,
+                OsRng,
+            )
+        }
         _ => send_file(
             client_config,
             local_path,

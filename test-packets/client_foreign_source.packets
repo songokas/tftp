@@ -1,0 +1,5 @@
+# sent from another port, so none of these may affect the transfer
+garbage                        ignored  ff*64
+error-from-stranger            ignored  00 05 00 00 "stop" 00
+data-next-block                ignored  00 03 00 02 "forged"
+ack-next-block                 ignored  00 04 00 01

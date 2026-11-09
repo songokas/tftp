@@ -1,41 +1,29 @@
+#![allow(clippy::result_large_err)]
+
 #[cfg(feature = "sync")]
 mod blocking_reader;
 mod cli;
-#[cfg(feature = "encryption")]
-mod encryption_io;
-
-#[cfg(not(feature = "encryption"))]
-mod encryption_io {
-    use tftp_dus::encryption::PublicKey;
-
-    pub fn handle_hosts_file(
-        _known_hosts_file: Option<&str>,
-        _remote_key: Option<PublicKey>,
-        _endpoint: &str,
-    ) {
-    }
-}
-
 mod config;
+mod encryption_args;
 mod error;
 mod io;
-mod macros;
 mod receiver;
 mod sender;
 mod socket;
 #[cfg(feature = "sync")]
 mod sync;
+mod time;
 
 use clap::Parser;
 use env_logger::Builder;
 use env_logger::Env;
-use io::instant_callback;
 use rand::rngs::OsRng;
 use receiver::start_receive;
 use sender::start_send;
 #[cfg(feature = "sync")]
 use sync::start_sync;
 use tftp_dus::server::server;
+use tftp_dus::server::ServerConfig;
 
 use crate::cli::Args;
 use crate::cli::Commands;
@@ -46,38 +34,8 @@ use crate::io::create_server_reader;
 use crate::io::create_server_writer;
 use crate::io::create_writer;
 use crate::socket::*;
+use crate::time::instant_callback;
 
-#[cfg(feature = "std")]
-pub mod std_compat {
-    pub mod fs {
-        pub use std::fs::File;
-    }
-    pub mod io {
-        pub use std::io::BufReader;
-        pub use std::io::Cursor;
-        pub use std::io::Error;
-
-        pub type BytesCursor = Cursor<Vec<u8>>;
-
-        pub trait AnyReader:
-            tftp_dus::std_compat::io::Read + tftp_dus::std_compat::io::Seek + Send + 'static
-        {
-        }
-
-        impl<T> AnyReader for T where
-            T: tftp_dus::std_compat::io::Read + tftp_dus::std_compat::io::Seek + Send + 'static
-        {
-        }
-
-        pub type BoxedReader = Box<dyn AnyReader>;
-
-        pub fn from_io_err(err: Error) -> Error {
-            err
-        }
-    }
-}
-
-#[cfg(not(feature = "std"))]
 pub mod std_compat;
 
 // tftp-dus send localhost:3000 /tmp/a --remote-path long/a
@@ -166,8 +124,10 @@ fn main() -> BinResult<()> {
             remote_path,
         } => start_receive(local_path, remote_path, config, create_writer).map(|_| ()),
         Commands::Server(config) => {
-            let config = config.try_into()?;
+            let config: ServerConfig = config.try_into()?;
             // init_logger(config.listen);
+            #[cfg(feature = "multi_thread")]
+            let spawner = tftp_dus::server::ThreadSpawner;
             server(
                 config,
                 create_server_reader,
@@ -176,6 +136,8 @@ fn main() -> BinResult<()> {
                 create_bound_socket,
                 instant_callback,
                 OsRng,
+                #[cfg(feature = "multi_thread")]
+                spawner,
             )
             .map_err(|e| BinError::from(e.to_string()))
         }
@@ -186,6 +148,8 @@ fn main() -> BinResult<()> {
 mod tests {
     use std::io::Cursor;
     use std::net::UdpSocket;
+    use std::sync::atomic::AtomicU16;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::thread::sleep;
@@ -206,6 +170,9 @@ mod tests {
 
     use super::*;
     use crate::cli::ClientCliConfig;
+    use crate::encryption_args::test_support::client_args;
+    use crate::encryption_args::test_support::encoded_private_key;
+    use crate::encryption_args::test_support::encoded_public_key;
 
     #[cfg(feature = "encryption")]
     #[test]
@@ -245,14 +212,14 @@ mod tests {
             let key: [u8; 32] = bytes.try_into().unwrap();
             let client_private_key: SigningKey = key.into();
 
-            let mut authorized_keys = AuthorizedKeys::new();
-            authorized_keys.push(VerifyingKey::from(&client_private_key));
+            let authorized_keys: AuthorizedKeys = [VerifyingKey::from(&client_private_key)]
+                .into_iter()
+                .collect();
 
             client_send(
                 EncryptionLevel::Protocol,
                 w,
                 Some(server_private_key.clone()),
-                #[cfg(feature = "encryption")]
                 Some(authorized_keys.clone()),
                 Some(client_private_key.clone()),
             );
@@ -260,7 +227,6 @@ mod tests {
                 EncryptionLevel::Protocol,
                 w,
                 Some(server_private_key),
-                #[cfg(feature = "encryption")]
                 Some(authorized_keys),
                 Some(client_private_key),
             );
@@ -285,8 +251,9 @@ mod tests {
             let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
             let key: [u8; 32] = bytes.try_into().unwrap();
             let client_private_key: SigningKey = key.into();
-            let mut authorized_keys = AuthorizedKeys::new();
-            authorized_keys.push(VerifyingKey::from(&client_private_key));
+            let authorized_keys: AuthorizedKeys = [VerifyingKey::from(&client_private_key)]
+                .into_iter()
+                .collect();
             client_send(
                 EncryptionLevel::Protocol,
                 w,
@@ -336,10 +303,7 @@ mod tests {
         let expected_size = bytes.len();
         let expected_data = Arc::new(Mutex::new(Cursor::new(Vec::new())));
         let server_port = get_port();
-        #[cfg(feature = "encryption")]
-        let server_public_key = server_private_key
-            .as_ref()
-            .map(|k| encode_verifying_key(&VerifyingKey::from(k)).unwrap());
+        let server_public_key = encoded_public_key(server_private_key.as_ref());
         let _server = {
             let d = expected_data.clone();
             spawn(move || {
@@ -352,10 +316,7 @@ mod tests {
                 )
             })
         };
-        #[cfg(feature = "encryption")]
-        let client_private_key = _client_private_key
-            .as_ref()
-            .map(|k| encode_signing_key(k).unwrap());
+        let client_private_key = encoded_private_key(_client_private_key.as_ref());
         let client = {
             let d = bytes.clone();
             spawn(move || {
@@ -365,9 +326,7 @@ mod tests {
                     encryption_level,
                     window_size,
                     d,
-                    #[cfg(feature = "encryption")]
                     server_public_key,
-                    #[cfg(feature = "encryption")]
                     client_private_key,
                 )
             })
@@ -389,10 +348,7 @@ mod tests {
         let expected_size = bytes.len();
         let expected_data = Arc::new(Mutex::new(Cursor::new(Vec::new())));
         let server_port = get_port();
-        #[cfg(feature = "encryption")]
-        let server_public_key = _server_private_key
-            .as_ref()
-            .map(|k| encode_verifying_key(&VerifyingKey::from(k)).unwrap());
+        let server_public_key = encoded_public_key(_server_private_key.as_ref());
         let _server = {
             let d = bytes.clone();
             spawn(move || {
@@ -406,10 +362,7 @@ mod tests {
             })
         };
 
-        #[cfg(feature = "encryption")]
-        let client_private_key = _client_private_key
-            .as_ref()
-            .map(|k| encode_signing_key(k).unwrap());
+        let client_private_key = encoded_private_key(_client_private_key.as_ref());
         let client = {
             let d = expected_data.clone();
             spawn(move || {
@@ -419,9 +372,7 @@ mod tests {
                     encryption_level,
                     window_size,
                     d,
-                    #[cfg(feature = "encryption")]
                     server_public_key,
-                    #[cfg(feature = "encryption")]
                     client_private_key,
                 )
             })
@@ -434,11 +385,11 @@ mod tests {
 
     fn start_send_file(
         server_port: u16,
-        _encryption_level: EncryptionLevel,
+        encryption_level: EncryptionLevel,
         window_size: u64,
         bytes: Vec<u8>,
-        #[cfg(feature = "encryption")] server_public_key: Option<ShortString>,
-        #[cfg(feature = "encryption")] private_key: Option<ShortString>,
+        server_public_key: Option<ShortString>,
+        private_key: Option<ShortString>,
     ) -> BinResult<usize> {
         let cli_config = ClientCliConfig {
             endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
@@ -447,21 +398,12 @@ mod tests {
             block_size: DEFAULT_DATA_BLOCK_SIZE as u64,
             retry_timeout: 1000,
             max_file_size: 2000,
-            #[cfg(feature = "encryption")]
-            private_key,
-            #[cfg(feature = "encryption")]
-            server_public_key,
-            #[cfg(feature = "encryption")]
-            encryption_level: _encryption_level.to_string().parse().unwrap(),
-            #[cfg(feature = "encryption")]
-            known_hosts: None,
+            encryption: client_args(encryption_level, server_public_key, private_key),
             window_size,
             #[cfg(target_family = "windows")]
             allow_server_port_change: true,
             #[cfg(not(target_family = "windows"))]
             allow_server_port_change: false,
-            #[cfg(feature = "encryption")]
-            encryption_key: None,
         };
 
         let local_file = "from".parse().unwrap();
@@ -474,11 +416,11 @@ mod tests {
 
     fn start_receive_file(
         server_port: u16,
-        _encryption_level: EncryptionLevel,
+        encryption_level: EncryptionLevel,
         window_size: u64,
         bytes: Arc<Mutex<Cursor<Vec<u8>>>>,
-        #[cfg(feature = "encryption")] server_public_key: Option<ShortString>,
-        #[cfg(feature = "encryption")] private_key: Option<ShortString>,
+        server_public_key: Option<ShortString>,
+        private_key: Option<ShortString>,
     ) -> BinResult<usize> {
         let cli_config = ClientCliConfig {
             endpoint: format!("127.0.0.1:{server_port}").parse().unwrap(),
@@ -487,21 +429,12 @@ mod tests {
             block_size: DEFAULT_DATA_BLOCK_SIZE as u64,
             retry_timeout: 1000,
             max_file_size: 2000,
-            #[cfg(feature = "encryption")]
-            private_key,
-            #[cfg(feature = "encryption")]
-            server_public_key,
-            #[cfg(feature = "encryption")]
-            encryption_level: _encryption_level.to_string().parse().unwrap(),
-            #[cfg(feature = "encryption")]
-            known_hosts: None,
+            encryption: client_args(encryption_level, server_public_key, private_key),
             window_size,
             #[cfg(target_family = "windows")]
             allow_server_port_change: true,
             #[cfg(not(target_family = "windows"))]
             allow_server_port_change: false,
-            #[cfg(feature = "encryption")]
-            encryption_key: None,
         };
 
         let local_file = "from".parse().ok();
@@ -558,6 +491,8 @@ mod tests {
             create_bound_socket,
             instant_callback,
             OsRng,
+            #[cfg(feature = "multi_thread")]
+            tftp_dus::server::ThreadSpawner,
         )
     }
 
@@ -606,52 +541,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_get_port_never_repeats_a_port() {
+        let mut ports = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let port = get_port();
+            assert!(ports.insert(port), "port {port} handed out twice");
+        }
+    }
+
+    /// Tests run in parallel and servers share ports with `SO_REUSEPORT`, so a
+    /// port asked from the OS and released could reach two servers. These come
+    /// from below the ephemeral range, and each is handed out once per process.
     fn get_port() -> u16 {
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
-        s.local_addr().unwrap().port()
-    }
-
-    #[cfg(feature = "std")]
-    type CursorReader = Cursor<Vec<u8>>;
-
-    #[cfg(not(feature = "std"))]
-    struct CursorReader {
-        cursor: Cursor<Vec<u8>>,
-    }
-
-    #[cfg(not(feature = "std"))]
-    impl CursorReader {
-        pub fn new(bytes: Vec<u8>) -> Self {
-            Self {
-                cursor: Cursor::new(bytes),
+        static NEXT_OFFSET: AtomicU16 = AtomicU16::new(0);
+        let base = 20_000 + (std::process::id() % 5_000) as u16;
+        loop {
+            let port = base + NEXT_OFFSET.fetch_add(1, Ordering::Relaxed);
+            if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+                return port;
             }
         }
     }
 
-    #[cfg(not(feature = "std"))]
-    impl io::Read for CursorReader {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            #[allow(unused_imports)]
-            use std::io::Read;
-            self.cursor
-                .read(buf)
-                .map_err(|_| io::Error::from(io::ErrorKind::Other))
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
-    impl io::Seek for CursorReader {
-        fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-            #[allow(unused_imports)]
-            use std::io::Seek;
-            let pos = match pos {
-                io::SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
-                io::SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
-                io::SeekFrom::End(p) => std::io::SeekFrom::End(p),
-            };
-            self.cursor.seek(pos).map_err(|_| {
-                tftp_dus::std_compat::io::Error::from(tftp_dus::std_compat::io::ErrorKind::Other)
-            })
-        }
-    }
+    type CursorReader = Cursor<Vec<u8>>;
 }

@@ -6,23 +6,23 @@ use log::*;
 use rand::CryptoRng;
 use rand::RngCore;
 
+use super::client_store::ClientStore;
 use super::config::ServerConfig;
 use super::helpers::read::send_data_block;
 use crate::buffer::create_max_buffer;
+use crate::buffer::create_receive_buffer;
 use crate::buffer::resize_buffer;
+use crate::config::MAX_CLIENTS;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
-use crate::macros::cfg_alloc;
-use crate::macros::cfg_encryption;
-use crate::macros::cfg_seek;
-use crate::macros::cfg_stack;
+use crate::features::FileReader;
+use crate::map::insert_vacant;
 use crate::map::Entry;
 use crate::map::Map;
 use crate::metrics::gauge;
-use crate::packet::ErrorCode;
-use crate::packet::ErrorPacket;
+use crate::packet::ByteConverter;
+use crate::packet::Packet;
 use crate::readers::block_reader::BlockReader;
-use crate::readers::Readers;
 use crate::server::connection::ClientType;
 use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
@@ -32,46 +32,22 @@ use crate::server::helpers::connection::handle_packet;
 use crate::server::helpers::connection::timeout_client;
 use crate::server::helpers::read::handle_read;
 use crate::server::helpers::write::handle_write;
-use crate::server::readers_available::ReadersAvailable;
+use crate::server::session_encryption;
 use crate::server::wait_control::WaitControl;
 use crate::socket::BoundSocket;
 use crate::socket::Socket;
 use crate::socket::ToSocketId;
 use crate::std_compat::io::ErrorKind;
-use crate::std_compat::io::Read;
 use crate::std_compat::io::Write;
-use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;
 use crate::types::FilePath;
-use crate::writers::Writers;
-
-cfg_encryption! {
-    use crate::encryption::encode_verifying_key;
-    use crate::encryption::VerifyingKey;
-}
-
-cfg_stack! {
-    use core::cell::RefCell;
-    use crate::writers::single_block_writer::SingleBlockWriter;
-    use crate::config::MAX_CLIENTS;
-    use crate::readers::pool_reader::*;
-}
-
-cfg_alloc! {
-    use crate::writers::block_writer::BlockWriter;
-}
-
-cfg_seek! {
-    use crate::std_compat::io::Seek;
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn server<
     CreateReader,
     CreateWriter,
-    #[cfg(not(feature = "seek"))] R: Read,
-    #[cfg(feature = "seek")] R: Read + Seek,
+    R: FileReader,
     W,
     Rng,
     CreateSocket,
@@ -99,16 +75,10 @@ where
 {
     info!("Starting server on a {}", config.listen);
 
-    let mut receive_buffer = create_max_buffer(config.max_block_size);
+    let mut receive_buffer = create_receive_buffer(config.max_block_size);
     let receive_max_buffer_size = receive_buffer.len();
 
-    #[cfg(feature = "encryption")]
-    if let Some(private_key) = config.private_key.as_ref() {
-        info!(
-            "Server public key {}",
-            encode_verifying_key(&VerifyingKey::from(private_key))?
-        );
-    }
+    session_encryption::log_server_public_key(&config)?;
 
     let mut client_socket_id = NonZeroU32::new(1).expect("Socket id must be more than zero");
     let mut socket = create_socket(config.listen, 0, true, config.max_connections as usize)?;
@@ -119,27 +89,11 @@ where
     let mut wait_control = WaitControl::new();
     let execute_timeout_client = Duration::from_secs(2);
 
-    #[cfg(not(feature = "alloc"))]
-    let single_block_readers = RefCell::new(SingleBlockReaders::new());
-    #[cfg(not(feature = "alloc"))]
-    let multi_block_readers = RefCell::new(MultiBlockReaders::new());
-    #[cfg(all(not(feature = "alloc"), feature = "seek"))]
-    let multi_block_seek_readers = RefCell::new(MultiBlockSeekReaders::new());
+    let client_store = ClientStore::new();
 
     let mut clients: Clients<_, _, _, _> = Clients::new();
 
-    #[cfg(not(feature = "alloc"))]
-    trace!(
-        "Size of all clients in memory: client={} single_block={} multi_block={} bytes",
-        core::mem::size_of_val(&clients),
-        core::mem::size_of_val(&single_block_readers),
-        core::mem::size_of_val(&multi_block_readers),
-    );
-    #[cfg(all(not(feature = "alloc"), feature = "seek"))]
-    trace!(
-        "Size of all multi_seek={} bytes",
-        core::mem::size_of_val(&multi_block_seek_readers)
-    );
+    client_store.trace_sizes(core::mem::size_of_val(&clients));
 
     let mut send_buffer = create_max_buffer(config.max_block_size);
 
@@ -207,7 +161,10 @@ where
                 match socket.recv_from(&mut receive_buffer, wait_control.wait_for(clients.len())) {
                     Ok((received, from_client)) => {
                         // ignore existing connection attempts on the main socket
-                        if clients.contains_key(&from_client) {
+                        if clients
+                            .get(&from_client)
+                            .is_some_and(|(c, _)| !c.can_be_replaced())
+                        {
                             next_client_to_receive = 0;
                             continue;
                         }
@@ -233,12 +190,24 @@ where
         wait_control.receiving();
         receive_buffer.truncate(received_length);
 
+        // a client can reuse its port while its finished connection is still kept
+        if clients
+            .get(&from_client)
+            .is_some_and(|(c, _)| c.can_be_replaced())
+            && is_new_request(&config, &receive_buffer, rng)
+        {
+            clients.remove(&from_client);
+        }
+
         let clients_len = clients.len();
         let processed_in = instant();
 
         match clients.entry(from_client) {
             Entry::Occupied(mut entry) => {
                 let (ref mut connection, ref mut client_type) = entry.get_mut();
+                if connection.invalid.is_some() {
+                    continue;
+                }
                 match client_type {
                     ClientType::Reader(r) => {
                         handle_read(connection, r, &mut receive_buffer, instant)
@@ -284,14 +253,7 @@ where
                     Ok(None) => continue,
                     Err(e) => {
                         debug!("Failed to handle packet {e}");
-                        builder.reply_with_error(
-                            &socket,
-                            from_client,
-                            ErrorPacket::new(
-                                ErrorCode::IllegalOperation,
-                                format_str!(DefaultString, "{e}"),
-                            ),
-                        );
+                        builder.reject_options(&socket, from_client, &e);
                         continue;
                     }
                 };
@@ -299,17 +261,7 @@ where
                 let Ok((mut connection, client_type, used_extensions, connection_keys)) =
                     (match connection_type {
                         ConnectionType::Read => {
-                            #[cfg(feature = "alloc")]
-                            let readers_available = ReadersAvailable::all();
-                            #[cfg(not(feature = "alloc"))]
-                            let readers_available = ReadersAvailable::from_used(
-                                single_block_readers.borrow().len(),
-                                multi_block_readers.borrow().len(),
-                                #[cfg(feature = "seek")]
-                                multi_block_seek_readers.borrow().len(),
-                                #[cfg(not(feature = "seek"))]
-                                0,
-                            );
+                            let readers_available = client_store.available();
                             builder
                                 .build_reader(
                                     &socket,
@@ -341,67 +293,17 @@ where
                     used_extensions,
                     &mut receive_buffer,
                     connection_keys,
-                    rng,
                 ) else {
                     continue;
                 };
 
                 client_socket_id = socket_id;
 
-                #[cfg(feature = "alloc")]
-                let client_type: ClientType<
-                    alloc::boxed::Box<dyn BlockReader>,
-                    alloc::boxed::Box<dyn BlockWriter>,
-                > = match client_type {
-                    ClientType::Reader(r) => match r {
-                        Readers::Single(r) => ClientType::Reader(alloc::boxed::Box::new(r)),
-                        Readers::Multiple(r) => ClientType::Reader(alloc::boxed::Box::new(r)),
-                        #[cfg(feature = "seek")]
-                        Readers::Seek(r) => ClientType::Reader(alloc::boxed::Box::new(r)),
-                    },
-                    ClientType::Writer(w) => match w {
-                        Writers::Single(w) => ClientType::Writer(alloc::boxed::Box::new(w)),
-                    },
-                };
-                #[cfg(not(feature = "alloc"))]
-                let client_type: ClientType<PoolReader<R>, SingleBlockWriter<W>> = match client_type
-                {
-                    ClientType::Reader(r) => match r {
-                        Readers::Single(r) => {
-                            let Some(reader) = PoolReader::from_single(r, &single_block_readers)
-                            else {
-                                error!("Exhausted single pool readers");
-                                continue;
-                            };
-                            ClientType::Reader(reader)
-                        }
-                        Readers::Multiple(r) => {
-                            let Some(reader) = PoolReader::from_multi(r, &multi_block_readers)
-                            else {
-                                error!("Exhausted multi pool readers");
-                                continue;
-                            };
-                            ClientType::Reader(reader)
-                        }
-                        #[cfg(feature = "seek")]
-                        Readers::Seek(r) => {
-                            let Some(reader) = PoolReader::from_seek(r, &multi_block_seek_readers)
-                            else {
-                                error!("Exhausted multi pool seek readers");
-                                continue;
-                            };
-                            ClientType::Reader(reader)
-                        }
-                    },
-                    ClientType::Writer(w) => match w {
-                        Writers::Single(w) => ClientType::Writer(w),
-                    },
+                let Some(client_type) = client_store.keep(client_type) else {
+                    continue;
                 };
 
-                #[cfg(feature = "alloc")]
-                entry.insert((connection, client_type));
-                #[cfg(not(feature = "alloc"))]
-                if entry.insert((connection, client_type)).is_err() {
+                if !insert_vacant(entry, (connection, client_type)) {
                     error!("Exhausted all connections");
                 }
             }
@@ -414,6 +316,17 @@ where
             processed_in.elapsed().as_secs_f32(),
         );
     }
+}
+
+fn is_new_request<Rng: CryptoRng + RngCore + Copy>(
+    config: &ServerConfig,
+    buffer: &DataBuffer,
+    rng: Rng,
+) -> bool {
+    matches!(
+        Packet::from_bytes(buffer),
+        Ok(Packet::Read(_) | Packet::Write(_))
+    ) || session_encryption::open_initial_packet(config, &mut buffer.clone(), rng).is_some()
 }
 
 fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
@@ -459,8 +372,134 @@ fn send_data_blocks<R: BlockReader, W, B: BoundSocket, Rng: CryptoRng + RngCore 
 
 type ClientConnection<R, W, B, Rng> = (Connection<B, Rng>, ClientType<R, W>);
 
-#[cfg(feature = "alloc")]
-type Clients<R, W, B, Rng> = Map<SocketAddr, ClientConnection<R, W, B, Rng>>;
-#[cfg(not(feature = "alloc"))]
 type Clients<R, W, B, Rng> =
     Map<SocketAddr, ClientConnection<R, W, B, Rng>, { MAX_CLIENTS as usize }>;
+
+#[cfg(test)]
+mod tests {
+    use core::cell::RefCell;
+    use core::time::Duration;
+    use std::collections::VecDeque;
+    use std::vec::Vec;
+
+    use rand::rngs::OsRng;
+
+    use super::*;
+    use crate::client::test_support::*;
+    use crate::string::format_str;
+    use crate::time::test_now as instant;
+    use crate::types::FilePath;
+
+    const WRITE_REQUEST: &[u8] = b"\0\x02file\0octet\0";
+    const LAST_BLOCK: &[u8] = b"\0\x03\0\x01data";
+    const LAST_ACK: &[u8] = b"\0\x04\0\x01";
+    /// Longer than the retry interval a finished connection is kept for.
+    const PAST_GRACE: Duration = Duration::from_millis(120);
+
+    fn test_config() -> ServerConfig {
+        ServerConfig {
+            listen: server_address(),
+            directory: format_str!(FilePath, "/tmp"),
+            allow_overwrite: true,
+            max_window_size: 1,
+            request_timeout: Duration::from_secs(60),
+            max_connections: 4,
+            max_file_size: 1024,
+            max_block_size: 512,
+            authorized_keys: None,
+            private_key: None,
+            require_full_encryption: false,
+            require_server_port_change: false,
+            prefer_seek: false,
+            directory_list: None,
+            max_directory_depth: 4,
+            error_to_authorized_only: false,
+        }
+    }
+
+    fn socket(datagrams: &[&[u8]], delay: Duration) -> ScriptedSocket {
+        let mut socket = ScriptedSocket::from_server(datagrams.iter().map(|d| d.to_vec()));
+        socket.delay = delay;
+        socket
+    }
+
+    /// The server goes back to its connections only after the main socket idles.
+    fn main_socket(datagrams: usize, delay: Duration) -> ScriptedSocket {
+        let mut incoming = Vec::new();
+        for _ in 0..datagrams {
+            incoming.push(Incoming::Datagram(WRITE_REQUEST.to_vec(), server_address()));
+            incoming.extend([Incoming::Idle, Incoming::Idle, Incoming::Idle]);
+        }
+        let mut socket = ScriptedSocket::new(incoming);
+        socket.delay = delay;
+        socket
+    }
+
+    /// Runs the server until `main` is out of datagrams. Returns how many times
+    /// a file was opened for writing.
+    fn serve(main: ScriptedSocket, connection: ScriptedSocket) -> usize {
+        let opened = RefCell::new(0);
+        let main = RefCell::new(Some(main));
+        let connections = RefCell::new(VecDeque::from([connection]));
+
+        let result = server(
+            test_config(),
+            |_: &FilePath, _: &ServerConfig| Ok((None, MemoryReader::new(&[]))),
+            |_: &FilePath, _: &ServerConfig| {
+                *opened.borrow_mut() += 1;
+                Ok(MemoryFile::default())
+            },
+            |_, _, _, _| Ok(main.borrow_mut().take().unwrap()),
+            |_, _, _| {
+                let next = connections.borrow_mut().pop_front();
+                Ok(next.unwrap_or_else(|| ScriptedSocket::from_server([])))
+            },
+            instant,
+            OsRng,
+        );
+
+        assert!(result.is_err(), "server only stops when the socket fails");
+        opened.into_inner()
+    }
+
+    fn acks(sent: &Shared<Vec<Vec<u8>>>) -> usize {
+        sent.borrow()
+            .iter()
+            .filter(|p| p.as_slice() == LAST_ACK)
+            .count()
+    }
+
+    #[test]
+    fn test_new_request_replaces_a_finished_connection() {
+        let main = main_socket(1, Duration::ZERO);
+        let connection = socket(&[LAST_BLOCK, WRITE_REQUEST], PAST_GRACE);
+
+        assert_eq!(serve(main, connection), 2);
+    }
+
+    #[test]
+    fn test_new_request_on_the_main_socket_replaces_a_finished_connection() {
+        let main = main_socket(2, PAST_GRACE);
+        let connection = socket(&[LAST_BLOCK], Duration::ZERO);
+
+        assert_eq!(serve(main, connection), 2);
+    }
+
+    #[test]
+    fn test_request_right_after_finishing_is_treated_as_a_duplicate() {
+        let main = main_socket(1, Duration::ZERO);
+        let connection = socket(&[LAST_BLOCK, WRITE_REQUEST], Duration::ZERO);
+
+        assert_eq!(serve(main, connection), 1);
+    }
+
+    #[test]
+    fn test_retransmitted_last_block_keeps_the_finished_connection() {
+        let main = main_socket(1, Duration::ZERO);
+        let connection = socket(&[LAST_BLOCK, LAST_BLOCK], PAST_GRACE);
+        let sent = connection.sent.clone();
+
+        assert_eq!(serve(main, connection), 1);
+        assert_eq!(acks(&sent), 2);
+    }
+}

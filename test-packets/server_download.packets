@@ -1,0 +1,19 @@
+empty                          ignored
+one-byte                       ignored  00
+garbage                        ignored  ff*64
+unknown-opcode                 ignored  00 09 00 01
+opcode-zero                    ignored  00 00 00 01
+rrq-during-download            ignored  00 01 "sample" 00 "octet" 00
+wrq-during-download            ignored  00 02 "other" 00 "octet" 00
+oack-during-download           ignored  00 06 "blksize" 00 "512" 00
+data-during-download           ignored  00 03 00 01 "x"
+ack-without-block-number       ignored  00 04 00
+ack-block-zero                 ignored  00 04 00 00
+ack-unsent-block               ignored  00 04 00 09
+ack-near-block-limit           ignored  00 04 d8 f0
+ack-last-block-number          ignored  00 04 ff ff
+error-without-code             ignored  00 05
+error-unterminated             ignored  00 05 00 00 "x"
+error-unknown-code             ignored  00 05 00 63 "x" 00
+error-invalid-utf8             ignored  00 05 00 00 ff fe 00
+error-from-client              abort    00 05 00 00 "stop" 00

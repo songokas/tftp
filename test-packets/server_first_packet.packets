@@ -1,0 +1,72 @@
+# not requests
+empty                          silent
+one-byte                       silent   00
+unknown-opcode                 silent   00 07 "sample" 00 "octet" 00
+opcode-zero                    silent   00 00
+garbage                        silent   ff*64
+oversized-garbage              silent   ff*4000
+data-on-listen-port            silent   00 03 00 01 "hello"
+ack-on-listen-port             silent   00 04 00 01
+error-on-listen-port           silent   00 05 00 00 "x" 00
+oack-on-listen-port            silent   00 06 "blksize" 00 "512" 00
+
+# malformed requests
+rrq-header-only                silent   00 01
+wrq-header-only                silent   00 02
+rrq-unterminated-name          silent   00 01 "sample"
+rrq-no-mode                    silent   00 01 "sample" 00
+rrq-unterminated-mode          silent   00 01 "sample" 00 "octet"
+rrq-empty-mode                 silent   00 01 "sample" 00 00
+rrq-unknown-mode               silent   00 01 "sample" 00 "mail" 00
+rrq-netascii-mode              silent   00 01 "sample" 00 "netascii" 00
+rrq-invalid-utf8-name          silent   00 01 ff fe 00 "octet" 00
+rrq-invalid-utf8-mode          silent   00 01 "sample" 00 ff fe 00
+wrq-unterminated-name          silent   00 02 "new"
+
+# malformed options
+rrq-option-without-value       silent   00 01 "sample" 00 "octet" 00 "blksize" 00
+rrq-option-unterminated-name   silent   00 01 "sample" 00 "octet" 00 "blksize"
+rrq-option-unterminated-value  silent   00 01 "sample" 00 "octet" 00 "blksize" 00 "512"
+rrq-option-invalid-utf8        silent   00 01 "sample" 00 "octet" 00 ff fe 00 "512" 00
+
+# names the server has to refuse
+rrq-empty-name                 error:2  00 01 00 "octet" 00
+rrq-only-slash                 error:2  00 01 "/" 00 "octet" 00
+rrq-only-parent-directories    error:2  00 01 "../.." 00 "octet" 00
+rrq-missing-file               error:1  00 01 "absent" 00 "octet" 00
+rrq-traversal-stays-in-root    error:1  00 01 "../../../etc/passwd" 00 "octet" 00
+wrq-empty-name                 error:2  00 02 00 "octet" 00
+wrq-existing-file              error:6  00 02 "sample" 00 "octet" 00
+
+# longer than a file name can be in a build without alloc
+rrq-long-name                  any      00 01 78*200 00 "octet" 00
+
+# an error that reports the file name is cut to 140 bytes, here in the middle
+# of a two byte character
+rrq-multibyte-name-at-limit    any      00 01 "a" c3a9*60 00 "octet" 00
+
+# the longest name a build without alloc accepts does not fit that error
+rrq-longest-name-invalid       error:2  00 01 2f*150 00 "octet" 00
+wrq-longest-name-invalid       error:2  00 02 2f*150 00 "octet" 00
+rrq-longest-name-missing       error:1  00 01 78*150 00 "octet" 00
+wrq-longest-name-unwritable    error:6  00 02 "sample/" 78*143 00 "octet" 00
+
+# option values outside what is allowed are skipped, or lowered to the maximum
+rrq-unknown-option             accepted 00 01 "sample" 00 "octet" 00 "nonsense" 00 "1" 00
+rrq-blksize-zero               accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "0" 00
+rrq-blksize-below-minimum      accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "7" 00
+rrq-blksize-not-a-number       accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "abc" 00
+rrq-blksize-overflows-u16      accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "70000" 00
+rrq-blksize-above-maximum      accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "2000" 00
+rrq-windowsize-zero            accepted 00 01 "sample" 00 "octet" 00 "windowsize" 00 "0" 00
+rrq-windowsize-above-maximum   accepted 00 01 "sample" 00 "octet" 00 "windowsize" 00 "99" 00
+rrq-timeout-zero               accepted 00 01 "sample" 00 "octet" 00 "timeout" 00 "0" 00
+rrq-timeout-overflows-u8       accepted 00 01 "sample" 00 "octet" 00 "timeout" 00 "300" 00
+rrq-tsize-not-a-number         accepted 00 01 "sample" 00 "octet" 00 "tsize" 00 "abc" 00
+rrq-tsize-negative             accepted 00 01 "sample" 00 "octet" 00 "tsize" 00 "-1" 00
+rrq-duplicate-option           accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "512" 00 "blksize" 00 "600" 00
+rrq-more-options-than-known    accepted 00 01 "sample" 00 "octet" 00 "a" 00 "1" 00 "b" 00 "2" 00 "c" 00 "3" 00 "d" 00 "4" 00 "e" 00 "5" 00 "f" 00 "6" 00 "g" 00 "7" 00 "h" 00 "8" 00 "i" 00 "9" 00
+
+# larger than --max-file-size
+rrq-tsize-above-maximum        error:3  00 01 "sample" 00 "octet" 00 "tsize" 00 "4097" 00
+wrq-tsize-above-maximum        error:3  00 02 "new-large" 00 "octet" 00 "tsize" 00 "4097" 00

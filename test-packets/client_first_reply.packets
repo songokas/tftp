@@ -1,0 +1,26 @@
+# the client asks for block size 400 and window size 4
+empty                          fail
+one-byte                       fail     00
+garbage                        fail     ff*64
+oversized-garbage              fail     ff*4000
+unknown-opcode                 fail     00 09 00 01
+request-echoed                 fail     00 01 "remote" 00 "octet" 00
+
+error-from-server              fail     00 05 00 01 "not found" 00
+error-without-code             fail     00 05
+error-unterminated             fail     00 05 00 00 "x"
+error-unknown-code             fail     00 05 00 63 "x" 00
+error-invalid-utf8             fail     00 05 00 00 ff fe 00
+
+oack-without-options           fail     00 06
+oack-option-without-value      fail     00 06 "blksize" 00
+oack-unterminated-value        fail     00 06 "blksize" 00 "512"
+oack-invalid-utf8              fail     00 06 ff fe 00 "512" 00
+oack-blksize-zero              fail     00 06 "blksize" 00 "0" 00
+oack-blksize-below-minimum     fail     00 06 "blksize" 00 "7" 00
+oack-blksize-above-requested   fail     00 06 "blksize" 00 "600" 00
+oack-blksize-not-a-number      fail     00 06 "blksize" 00 "abc" 00
+oack-windowsize-zero           fail     00 06 "blksize" 00 "400" 00 "windowsize" 00 "0" 00
+oack-windowsize-above-requested fail    00 06 "blksize" 00 "400" 00 "windowsize" 00 "8" 00
+oack-not-requested-option      fail:8   00 06 "timeout" 00 "5" 00
+oack-not-requested-encryption  fail:8   00 06 "enclevel" 00 "data" 00

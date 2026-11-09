@@ -1,0 +1,10 @@
+# the server has no private key, so these all arrive in plaintext
+unknown-level                  error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "secret" 00
+full-level-in-plaintext        error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "full" 00 "spubk" 00 "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY=" 00
+level-without-session-key      error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "data" 00
+session-key-not-base64         error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "data" 00 "spubk" 00 "not base64!" 00
+session-key-too-short          error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "data" 00 "spubk" 00 "AAAA" 00
+session-key-low-order          error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "data" 00 "spubk" 00 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" 00
+auth-key-without-signature     error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "data" 00 "spubk" 00 "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY=" 00 "apubk" 00 "Ww+C2l/aCJPoNvnB8YKNibUCaGITFRp/lnowz8Rpai0=" 00
+signature-not-matching         error:8  00 01 "sample" 00 "octet" 00 "enclevel" 00 "data" 00 "spubk" 00 "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY=" 00 "apubk" 00 "Ww+C2l/aCJPoNvnB8YKNibUCaGITFRp/lnowz8Rpai0=" 00 "sig" 00 "ekX+yBeNuIzuUrnu32rpGw7LPfU6SqCVYQnvkNS5K/0C5rBRPXAo3hcbe17DWNy1xfZimwlG17/n2FCph1SHDQ==" 00
+block-too-small-for-encryption accepted 00 01 "sample" 00 "octet" 00 "blksize" 00 "8" 00 "enclevel" 00 "protocol" 00 "spubk" 00 "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY=" 00

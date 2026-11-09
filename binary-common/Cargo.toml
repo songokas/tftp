@@ -1,0 +1,24 @@
+[package]
+name = "tftp-binary-common"
+version = "0.8.0"
+edition = "2021"
+
+authors = ["Tomas Jakstas <tom.jakstas@gmail.com>"]
+description = "code shared by the tftp-dus binaries"
+homepage = "https://github.com/songokas/tftp"
+repository = "https://github.com/songokas/tftp"
+license = "../LICENSE"
+
+[dependencies]
+tftp-dus = { path = "..", default-features = false }
+log = "0.4"
+rand = { version = "0.8", default-features = false }
+libc = { version = "0.2", optional = true }
+
+[features]
+# keep in sync with tftp-dus: these select which io and collection types it exposes
+std = ["tftp-dus/std"]
+# only std-binary uses alloc here, and it always has std
+alloc = ["std", "tftp-dus/alloc"]
+encryption = ["tftp-dus/encryption"]
+multi_thread = ["tftp-dus/multi_thread", "dep:libc"]

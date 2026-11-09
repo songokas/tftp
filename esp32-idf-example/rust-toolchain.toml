@@ -1,0 +1,4 @@
+[toolchain]
+# std for ESP-IDF is tier 3 and later nightlies have failed to compile it
+channel = "nightly-2026-04-01"
+components = ["rust-src"]

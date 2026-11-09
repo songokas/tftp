@@ -4,10 +4,7 @@ use crate::error::BoxedResult;
 use crate::std_compat::io::BufRead;
 use crate::std_compat::io::Write;
 
-#[cfg(all(feature = "alloc", feature = "encryption"))]
-pub type AuthorizedKeys = alloc::vec::Vec<VerifyingKey>;
-#[cfg(all(not(feature = "alloc"), feature = "encryption"))]
-pub type AuthorizedKeys = heapless::Vec<VerifyingKey, { crate::config::MAX_CLIENTS as usize }>;
+pub type AuthorizedKeys = crate::types::List<VerifyingKey, { crate::config::MAX_CLIENTS as usize }>;
 
 #[allow(unused_must_use)]
 pub fn read_authorized_keys(reader: impl BufRead) -> BoxedResult<AuthorizedKeys> {
@@ -125,7 +122,7 @@ mod tests {
 
     pub fn create_buff_reader<T: std::io::Read>(reader: T) -> StdBufReader<T> {
         let file = std::io::BufReader::new(reader);
-        #[cfg(all(not(feature = "std"), feature = "encryption"))]
+        #[cfg(not(feature = "std"))]
         let file = StdBufReader(file);
         file
     }
@@ -157,11 +154,11 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "std", feature = "encryption"))]
+    #[cfg(feature = "std")]
     pub type StdBufReader<T> = std::io::BufReader<T>;
-    #[cfg(all(not(feature = "std"), feature = "encryption"))]
+    #[cfg(not(feature = "std"))]
     pub struct StdBufReader<T: std::io::Read>(std::io::BufReader<T>);
-    #[cfg(all(not(feature = "std"), feature = "encryption"))]
+    #[cfg(not(feature = "std"))]
     impl<T: std::io::Read> crate::std_compat::io::BufRead for StdBufReader<T> {
         fn read_line(
             &mut self,
@@ -172,9 +169,10 @@ mod tests {
             let result = self.0.read_line(&mut s).map_err(|_| {
                 crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::InvalidData)
             });
-            let _result = buf.push_str(s.as_str());
+            #[cfg(feature = "alloc")]
+            buf.push_str(s.as_str());
             #[cfg(not(feature = "alloc"))]
-            _result.map_err(|_| {
+            buf.push_str(s.as_str()).map_err(|_| {
                 crate::std_compat::io::Error::from(crate::std_compat::io::ErrorKind::InvalidData)
             })?;
             result

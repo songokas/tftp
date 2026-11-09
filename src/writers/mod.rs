@@ -13,6 +13,10 @@ pub enum Writers<W> {
 impl<T: self::block_writer::BlockWriter + ?Sized> self::block_writer::BlockWriter
     for alloc::boxed::Box<T>
 {
+    fn is_next_block(&mut self, block: u16) -> bool {
+        self.as_mut().is_next_block(block)
+    }
+
     fn write_block(
         &mut self,
         block: u16,

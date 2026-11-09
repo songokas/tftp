@@ -4,31 +4,23 @@ use std::fs::read_dir;
 use std::fs::File as StdFile;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
-use std::path::Component;
 use std::path::Path;
-use std::path::PathBuf;
 
 use env_logger::Builder;
 use env_logger::Env;
 use log::error;
+use tftp_binary_common::path::validate_path;
 use tftp_dus::error::BoxedResult;
 use tftp_dus::error::FileError;
+use tftp_dus::extend_from_slice;
 use tftp_dus::server::ServerConfig;
-use tftp_dus::std_compat::io;
-use tftp_dus::std_compat::time::Instant;
+use tftp_dus::types::DataBuffer;
 use tftp_dus::types::FilePath;
 
-use crate::macros::cfg_no_std;
 use crate::std_compat::fs::File;
 use crate::std_compat::io::from_io_err;
-use crate::std_compat::io::BoxedReader;
-use crate::std_compat::io::BufReader;
 use crate::std_compat::io::BytesCursor;
-
-cfg_no_std! {
-    use std::time::UNIX_EPOCH;
-    use std::time::SystemTime;
-}
+use crate::std_compat::io::ServerReader;
 
 pub fn create_writer(path: &FilePath) -> BoxedResult<File> {
     let file = match StdFile::create(path.as_str()).map_err(from_io_err) {
@@ -38,7 +30,7 @@ pub fn create_writer(path: &FilePath) -> BoxedResult<File> {
             return Err(Into::into(e));
         }
     };
-    Ok(file.into())
+    Ok(file)
 }
 
 pub fn create_reader(path: &FilePath) -> BoxedResult<(Option<u64>, File)> {
@@ -50,19 +42,19 @@ pub fn create_reader(path: &FilePath) -> BoxedResult<(Option<u64>, File)> {
         }
     };
     let file_size = file.metadata().ok().map(|m| m.len());
-    Ok((file_size, file.into()))
+    Ok((file_size, file))
 }
 
 pub fn create_server_reader(
     requested_path: &FilePath,
     config: &ServerConfig,
-) -> BoxedResult<(Option<u64>, BoxedReader)> {
+) -> BoxedResult<(Option<u64>, ServerReader)> {
     validate_path(requested_path, config.max_directory_depth as usize)?;
 
-    let dir: PathBuf = config.directory.as_str().parse()?;
+    let dir = Path::new(config.directory.as_str());
 
     let path = dir.join(requested_path.as_str());
-    let real_dir = canonicalize(dir);
+    let real_dir = canonicalize(dir).map_err(from_io_err)?;
 
     let (real_path, list_dir) = match &config.directory_list {
         Some(d) if path.ends_with(d.as_str()) => (
@@ -71,30 +63,32 @@ pub fn create_server_reader(
         ),
         _ => (canonicalize(path), false),
     };
+    let real_path = real_path.map_err(from_io_err)?;
 
-    if let (Ok(d), Ok(p)) = (real_dir, real_path) {
-        if p.starts_with(&d) {
-            return if list_dir {
-                list_directory(&d, &p).map(|(s, l)| (s, ReaderCreator::from_list(l)))
-            } else {
-                let file_path = p
-                    .to_str()
-                    .and_then(|s| s.parse().ok())
-                    .ok_or(FileError::InvalidFileName)?;
-                create_reader(&file_path).map(|(s, f)| (s, ReaderCreator::from_file(f)))
-            };
-        }
+    if real_path.starts_with(&real_dir) {
+        return if list_dir {
+            list_directory(&real_dir, &real_path).map(|(s, l)| (s, ServerReader::List(l)))
+        } else {
+            let file_path = real_path
+                .to_str()
+                .and_then(|s| s.parse().ok())
+                .ok_or(FileError::InvalidFileName)?;
+            create_reader(&file_path).map(|(s, f)| (s, ServerReader::File(f)))
+        };
     }
     Err(FileError::InvalidFileName.into())
 }
 
 pub fn create_server_writer(requested_path: &FilePath, config: &ServerConfig) -> BoxedResult<File> {
     validate_path(requested_path, config.max_directory_depth as usize)?;
-    // TODO alloc in stack PathBuf
-    let dir: PathBuf = config.directory.as_str().parse()?;
-    let path: PathBuf = dir.join(requested_path.as_str());
+    let dir = Path::new(config.directory.as_str());
+    // canonicalize below returns a PathBuf, so a stack buffer here would not make this heap free
+    let path = dir.join(requested_path.as_str());
 
-    if !path.starts_with(&dir) {
+    if !path.starts_with(dir) {
+        return Err(FileError::InvalidFileName.into());
+    }
+    if !stays_within_directory(dir, &path) {
         return Err(FileError::InvalidFileName.into());
     }
     if let Some(dir) = path.parent() {
@@ -123,28 +117,29 @@ pub fn create_server_writer(requested_path: &FilePath, config: &ServerConfig) ->
                 let mut options = OpenOptions::new();
                 options.write(true).create(true).truncate(true);
                 let file = options.open(&p).map_err(from_io_err)?;
-                return Ok(file.into());
+                return Ok(file);
             }
-            return Ok(file.into());
+            return Ok(file);
         }
     }
     Err(FileError::InvalidFileName.into())
 }
 
-#[allow(dead_code)]
-pub fn create_buff_reader(path: &str) -> io::Result<BufReader<StdFile>> {
-    let file = match StdFile::options()
-        .read(true)
-        .open(path)
-        .map_err(from_io_err)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            return Err(e);
-        }
+/// Resolves the part of `path` that already exists, so that nothing is created
+/// through a symlink leading outside `directory`.
+fn stays_within_directory(directory: &Path, path: &Path) -> bool {
+    // symlink_metadata also finds a dangling symlink, which canonicalize refuses
+    let Some(existing) = path.ancestors().find(|a| a.symlink_metadata().is_ok()) else {
+        return true;
     };
-    let file = BufReader::new(file);
-    Ok(file)
+    let Ok(real_existing) = canonicalize(existing) else {
+        return false;
+    };
+    match canonicalize(directory) {
+        Ok(real_directory) => real_existing.starts_with(real_directory),
+        // the served directory is yet to be created, so nothing below it exists
+        Err(_) => true,
+    }
 }
 
 #[allow(dead_code)]
@@ -166,40 +161,13 @@ pub fn init_logger(local_addr: SocketAddr) {
         .unwrap_or_default();
 }
 
-pub fn instant_callback() -> Instant {
-    #[cfg(feature = "std")]
-    return Instant::now();
-    #[cfg(not(feature = "std"))]
-    Instant::from_time(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_micros() as u64
-    })
-}
-
-struct ReaderCreator {}
-
-impl ReaderCreator {
-    fn from_file(file: File) -> BoxedReader {
-        #[cfg(feature = "std")]
-        return Box::new(file);
-        #[cfg(not(feature = "std"))]
-        BoxedReader::File(file)
-    }
-
-    fn from_list(file: BytesCursor) -> BoxedReader {
-        #[cfg(feature = "std")]
-        return Box::new(file);
-        #[cfg(not(feature = "std"))]
-        BoxedReader::List(file)
-    }
-}
-
-// TODO alloc in stack Vec
+/// Without `alloc` the list has to fit in one `DataBuffer`, so that a reader
+/// costs at most one more block. A longer list is refused, not cut short.
+///
+/// `read_dir` and `DirEntry::path` allocate inside the standard library.
 fn list_directory(server_dir: &Path, dir: &Path) -> BoxedResult<(Option<u64>, BytesCursor)> {
     let paths = read_dir(dir).map_err(|_| FileError::InvalidFileName)?;
-    let mut bytes = Vec::new();
+    let mut bytes = DataBuffer::new();
     for path in paths {
         let entry = path.map_err(|_| FileError::InvalidFileName)?;
         let sep = entry
@@ -210,48 +178,140 @@ fn list_directory(server_dir: &Path, dir: &Path) -> BoxedResult<(Option<u64>, By
         let full_path = entry.path();
         let name = full_path
             .strip_prefix(server_dir)
-            .map_err(|_| FileError::InvalidFileName)?;
-        bytes.extend(format!("{}{sep}\n", name.to_string_lossy()).into_bytes());
+            .map_err(|_| FileError::InvalidFileName)?
+            .to_string_lossy();
+        for part in [name.as_bytes(), sep.as_bytes(), b"\n".as_slice()] {
+            extend_from_slice(&mut bytes, part, FileError::InvalidFileName).inspect_err(|_| {
+                error!("Directory list of {} does not fit", dir.display());
+            })?;
+        }
     }
     let size = bytes.len() as u64;
     Ok((size.into(), BytesCursor::new(bytes)))
 }
 
-fn validate_path(requested_path: &FilePath, max_depth: usize) -> Result<(), FileError> {
-    let component_count = Path::new(requested_path.as_str())
-        .components()
-        .filter(|c| {
-            matches!(
-                c,
-                Component::Normal(_) | Component::ParentDir | Component::CurDir
-            )
-        })
-        .count();
-    if component_count.saturating_sub(1) <= max_depth {
-        return Ok(());
-    }
-    Err(FileError::InvalidFileName)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs::create_dir_all;
+    use std::fs::remove_dir_all;
+    use std::fs::write;
+    use std::path::PathBuf;
+
     use super::*;
 
-    #[test]
-    fn test_validate_path() {
-        let data = [
-            ("filename", 0, true),
-            ("filename", 1, true),
-            ("dir/file", 0, false),
-            ("dir/file", 1, true),
-            ("/file", 1, true),
-            ("", 1, true),
-            ("../../a", 1, false),
-            ("../../a", 3, true),
-        ];
-        for (p, count, result) in data {
-            let p: FilePath = p.parse().unwrap();
-            assert_eq!(validate_path(&p, count).is_ok(), result, "{p} {count}");
+    fn sample_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tftp-list-{}-{name}", std::process::id()));
+        create_dir_all(dir.join("samples")).unwrap();
+        canonicalize(dir).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn writer_config(directory: &Path, allow_overwrite: bool) -> ServerConfig {
+        ServerConfig {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            directory: directory.to_str().unwrap().parse().unwrap(),
+            allow_overwrite,
+            max_window_size: 1,
+            request_timeout: core::time::Duration::from_secs(1),
+            max_connections: 1,
+            max_file_size: 1,
+            max_block_size: 512,
+            authorized_keys: None,
+            private_key: None,
+            require_full_encryption: false,
+            require_server_port_change: false,
+            prefer_seek: false,
+            directory_list: None,
+            max_directory_depth: 8,
+            error_to_authorized_only: false,
         }
+    }
+
+    /// A served directory holding `link`, a symlink to a directory outside it.
+    #[cfg(unix)]
+    fn root_with_link_outside(name: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("tftp-writer-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        (root, outside)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_writer_through_symlink_creates_nothing_outside_root() {
+        let (root, outside) = root_with_link_outside("escape");
+        for allow_overwrite in [false, true] {
+            let config = writer_config(&root, allow_overwrite);
+
+            let new_file = create_server_writer(&"link/new".parse().unwrap(), &config);
+            let new_dir = create_server_writer(&"link/sub/new".parse().unwrap(), &config);
+
+            assert!(new_file.is_err());
+            assert!(new_dir.is_err());
+            assert!(!outside.join("new").exists());
+            assert!(!outside.join("sub").exists());
+        }
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_writer_through_dangling_symlink_creates_nothing_outside_root() {
+        let (root, outside) = root_with_link_outside("dangling");
+        std::os::unix::fs::symlink(outside.join("target"), root.join("dangling")).unwrap();
+
+        let result =
+            create_server_writer(&"dangling".parse().unwrap(), &writer_config(&root, true));
+
+        assert!(result.is_err());
+        assert!(!outside.join("target").exists());
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_writer_inside_root_creates_directories_and_file() {
+        let (root, _) = root_with_link_outside("inside");
+
+        let result =
+            create_server_writer(&"a/b/new".parse().unwrap(), &writer_config(&root, false));
+
+        assert!(result.is_ok());
+        assert!(root.join("a/b/new").is_file());
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_list_directory_marks_directories() {
+        let dir = sample_dir("marks");
+        write(dir.join("a"), "").unwrap();
+
+        let (size, cursor) = list_directory(&dir, &dir).unwrap();
+
+        remove_dir_all(&dir).unwrap();
+        let contents = core::str::from_utf8(cursor.get_ref()).unwrap();
+        let mut lines: Vec<_> = contents.lines().collect();
+        lines.sort();
+        assert_eq!(lines, ["a", "samples/"]);
+        assert_eq!(size, Some(contents.len() as u64));
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    #[test]
+    fn test_list_directory_that_does_not_fit_is_refused() {
+        let dir = sample_dir("long");
+        let entries = tftp_dus::config::MAX_BUFFER_SIZE as usize / 40 + 1;
+        for index in 0..entries {
+            write(dir.join(format!("{index:040}")), "").unwrap();
+        }
+
+        let result = list_directory(&dir, &dir);
+
+        remove_dir_all(&dir).unwrap();
+        assert!(result.is_err());
     }
 }

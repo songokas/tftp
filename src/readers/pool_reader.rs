@@ -1,12 +1,11 @@
 use core::cell::RefCell;
 
+use crate::features::FileReader;
+use crate::features::SEEK_ENABLED;
 use crate::map::Map;
 use crate::readers::block_reader::BlockReader;
 use crate::readers::multiple_block_reader::MultipleBlockReader;
 use crate::readers::single_block_reader::SingleBlockReader;
-use crate::std_compat::io::Read;
-#[cfg(feature = "seek")]
-use crate::std_compat::io::Seek;
 
 pub type SingleBlockReaders<R> = Map<
     u16,
@@ -19,17 +18,22 @@ pub type MultiBlockReaders<R> = Map<
     { crate::config::MAX_MULTI_READERS as usize },
 >;
 
-#[cfg(feature = "seek")]
+// the map still exists without seek, so keep it as small as a map can be
+const SEEK_POOL_SIZE: usize = if SEEK_ENABLED {
+    crate::config::MAX_MULTI_SEEK_READERS as usize
+} else {
+    2
+};
+
 pub type MultiBlockSeekReaders<R> = Map<
     u16,
     crate::readers::multiple_block_seek_reader::MultipleBlockSeekReader<R>,
-    { crate::config::MAX_MULTI_SEEK_READERS as usize },
+    SEEK_POOL_SIZE,
 >;
 
 pub enum PoolReader<'a, R> {
     Single(u16, &'a RefCell<SingleBlockReaders<R>>),
     Multi(u16, &'a RefCell<MultiBlockReaders<R>>),
-    #[cfg(feature = "seek")]
     Seek(u16, &'a RefCell<MultiBlockSeekReaders<R>>),
 }
 
@@ -62,7 +66,6 @@ impl<'a, R> PoolReader<'a, R> {
         Self::Multi(index, pool).into()
     }
 
-    #[cfg(feature = "seek")]
     pub fn from_seek(
         reader: crate::readers::multiple_block_seek_reader::MultipleBlockSeekReader<R>,
         pool: &'a RefCell<MultiBlockSeekReaders<R>>,
@@ -78,9 +81,7 @@ impl<'a, R> PoolReader<'a, R> {
     }
 }
 
-impl<'a, #[cfg(feature = "seek")] R: Read + Seek, #[cfg(not(feature = "seek"))] R: Read> BlockReader
-    for PoolReader<'a, R>
-{
+impl<'a, R: FileReader> BlockReader for PoolReader<'a, R> {
     fn next(
         &mut self,
         buffer: &mut [u8],
@@ -97,7 +98,6 @@ impl<'a, #[cfg(feature = "seek")] R: Read + Seek, #[cfg(not(feature = "seek"))] 
                 .get_mut(i)
                 .expect("reader does not exist")
                 .next(buffer, retry),
-            #[cfg(feature = "seek")]
             Self::Seek(i, s) => s
                 .borrow_mut()
                 .get_mut(i)
@@ -118,7 +118,6 @@ impl<'a, #[cfg(feature = "seek")] R: Read + Seek, #[cfg(not(feature = "seek"))] 
                 .get_mut(i)
                 .expect("reader does not exist")
                 .free_block(block),
-            #[cfg(feature = "seek")]
             Self::Seek(i, s) => s
                 .borrow_mut()
                 .get_mut(i)
@@ -139,7 +138,6 @@ impl<'a, #[cfg(feature = "seek")] R: Read + Seek, #[cfg(not(feature = "seek"))] 
                 .get(i)
                 .expect("reader does not exist")
                 .is_finished(),
-            #[cfg(feature = "seek")]
             Self::Seek(i, s) => s
                 .borrow()
                 .get(i)
@@ -158,7 +156,6 @@ impl<'a, R> Drop for PoolReader<'a, R> {
             Self::Multi(i, s) => {
                 s.borrow_mut().remove(i);
             }
-            #[cfg(feature = "seek")]
             Self::Seek(i, s) => {
                 s.borrow_mut().remove(i);
             }

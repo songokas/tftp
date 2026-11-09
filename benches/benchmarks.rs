@@ -20,13 +20,9 @@ fn test_create_bytes_with_iter(b: &mut Bencher) {
         let data_packet: Vec<u8> = 1_u16
             .to_be_bytes()
             .into_iter()
-            .chain(random_bytes.into_iter())
+            .chain(random_bytes)
             .collect();
-        let _packet: Vec<u8> = 5_u16
-            .to_be_bytes()
-            .into_iter()
-            .chain(data_packet.into_iter())
-            .collect();
+        let _packet: Vec<u8> = 5_u16.to_be_bytes().into_iter().chain(data_packet).collect();
     });
 }
 
@@ -97,8 +93,7 @@ fn test_packet_to_bytes_with_buffer(b: &mut Bencher) {
 
 #[bench]
 fn test_vector_resizing(b: &mut Bencher) {
-    let mut vec: Vec<u8> = Vec::new();
-    vec.resize(MAX_BUFFER_SIZE as usize, 0);
+    let mut vec: Vec<u8> = vec![0; MAX_BUFFER_SIZE as usize];
     b.iter(|| {
         vec.resize(MAX_BUFFER_SIZE as usize, 0);
         vec.truncate(rand::random::<u8>() as usize);
@@ -125,6 +120,23 @@ fn test_heapless_vector_set_len(b: &mut Bencher) {
     });
 }
 
+// Same steps as ByteVec::set_size in src/buffer.rs, which is private
+#[bench]
+fn test_heapless_vector_write_bytes(b: &mut Bencher) {
+    let size = MAX_BUFFER_SIZE as usize;
+    let mut vec: heapless::Vec<u8, { MAX_BUFFER_SIZE as usize }> = heapless::Vec::new();
+    vec.resize(size, 0).unwrap();
+    b.iter(|| {
+        let len = vec.len();
+        unsafe {
+            vec.as_mut_ptr().add(len).write_bytes(0, size - len);
+            vec.set_len(size);
+        }
+        std::hint::black_box(&mut vec);
+        vec.truncate(rand::random::<u8>() as usize);
+    });
+}
+
 #[bench]
 fn test_array_vector_resizing(b: &mut Bencher) {
     let mut vec: arrayvec::ArrayVec<u8, { MAX_BUFFER_SIZE as usize }> = arrayvec::ArrayVec::new();
@@ -139,14 +151,8 @@ fn test_array_vector_resizing(b: &mut Bencher) {
 #[bench]
 fn test_btree_retrieve_256(b: &mut Bencher) {
     let mut map = BTreeMap::new();
-    let mut i = 0;
-    while i <= u8::MAX {
+    for i in 0..=u8::MAX {
         map.insert(i, true);
-
-        if i == u8::MAX {
-            break;
-        }
-        i += 1;
     }
 
     b.iter(|| {
@@ -157,14 +163,8 @@ fn test_btree_retrieve_256(b: &mut Bencher) {
 #[bench]
 fn test_heapless_map_retrieve_256(b: &mut Bencher) {
     let mut map = heapless::FnvIndexMap::<u8, bool, { u8::MAX as usize + 1 }>::new();
-    let mut i = 0;
-    while i <= u8::MAX {
+    for i in 0..=u8::MAX {
         map.insert(i, true).unwrap();
-
-        if i == u8::MAX {
-            break;
-        }
-        i += 1;
     }
 
     b.iter(|| {
@@ -175,13 +175,8 @@ fn test_heapless_map_retrieve_256(b: &mut Bencher) {
 #[bench]
 fn test_arrayvec_retrieve_256(b: &mut Bencher) {
     let mut map = arrayvec::ArrayVec::<u8, { u8::MAX as usize + 1 }>::new();
-    let mut i = 0;
-    while i <= u8::MAX {
+    for i in 0..=u8::MAX {
         map.push(i);
-        if i == u8::MAX {
-            break;
-        }
-        i += 1;
     }
 
     b.iter(|| {
@@ -250,9 +245,11 @@ fn test_arrayvec_retrieve_20(b: &mut Bencher) {
 #[cfg(feature = "encryption")]
 #[bench]
 fn test_encrypt_decrypt(b: &mut Bencher) {
+    use tftp_dus::encryption::Role;
     use tftp_dus::types::DataBuffer;
 
-    let encryptor = create_encryptor();
+    let encryptor = create_encryptor(Role::Client);
+    let decryptor = create_encryptor(Role::Server);
     let mut rng = rand::thread_rng();
     let mut blocks = Vec::new();
     for _ in 0..1000 {
@@ -264,12 +261,14 @@ fn test_encrypt_decrypt(b: &mut Bencher) {
     b.iter(|| {
         let random_index = rng.gen_range(0..blocks.len() - 1);
         encryptor.encrypt(&mut blocks[random_index], 0).unwrap();
-        encryptor.decrypt(&mut blocks[random_index], 0).unwrap();
+        decryptor.decrypt(&mut blocks[random_index], 0).unwrap();
     });
 }
 
 #[cfg(feature = "encryption")]
-fn create_encryptor() -> tftp_dus::encryption::Encryptor<rand::rngs::ThreadRng> {
+fn create_encryptor(
+    role: tftp_dus::encryption::Role,
+) -> tftp_dus::encryption::Encryptor<rand::rngs::ThreadRng> {
     use chacha20poly1305::KeyInit;
     use chacha20poly1305::XChaCha20Poly1305;
     use rand::thread_rng;
@@ -282,5 +281,7 @@ fn create_encryptor() -> tftp_dus::encryption::Encryptor<rand::rngs::ThreadRng> 
             .into(),
         ),
         rng: thread_rng(),
+        role,
+        context: [7; 32],
     }
 }

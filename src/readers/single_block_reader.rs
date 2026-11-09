@@ -2,7 +2,8 @@ use log::trace;
 
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
-use crate::block_mapper::BlockMapper;
+use crate::block_mapper::block_index;
+use crate::block_mapper::block_number;
 use crate::buffer::new_data_block;
 use crate::buffer::SliceMutExt;
 use crate::error::StorageError;
@@ -12,7 +13,6 @@ use crate::types::DataBlock;
 #[derive(Debug)]
 pub struct SingleBlockReader<R> {
     reader: R,
-    block_mapper: BlockMapper,
     block_read: u64,
     block_size: u16,
     last_block_size: Option<u16>,
@@ -24,7 +24,6 @@ impl<R> SingleBlockReader<R> {
     pub fn new(reader: R, block_size: u16) -> Self {
         Self {
             reader,
-            block_mapper: BlockMapper::new(),
             block_read: 0,
             block_size,
             last_block_size: None,
@@ -52,7 +51,7 @@ where
                     }
                 })?;
                 Block {
-                    block: self.block_mapper.block(self.block_read),
+                    block: block_number(self.block_read),
                     index: self.block_read,
                     size: self.buffer.len(),
                     retry: true,
@@ -82,7 +81,7 @@ where
             self.finished = true;
         }
         Ok(Block {
-            block: self.block_mapper.block(self.block_read),
+            block: block_number(self.block_read),
             index: self.block_read,
             size: self.buffer.len(),
             retry: false,
@@ -91,7 +90,7 @@ where
     }
 
     fn free_block(&mut self, block: u16) -> usize {
-        if self.block_read != self.block_mapper.index(block) {
+        if self.block_read != block_index(block, self.block_read) {
             return 0;
         }
         self.last_block_size.take().unwrap_or(0) as usize

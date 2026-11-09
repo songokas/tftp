@@ -59,6 +59,86 @@ receive_flamegraph() {
     kill "${server_pids[@]}"
 }
 
+# valgrind writes the profile when the process exits, open it with dh_view.html
+dhat_options() {
+    local name="$1"
+    echo "--tool=dhat --dhat-out-file=$OUTPUT_DIR/dhat_$name.json --log-file=$OUTPUT_DIR/dhat_$name.log"
+}
+
+dhat_summarize() {
+    local name="$1"
+    sed -nE "s/^==[0-9]+== (Total|At t-gmax|At t-end): +/$name \1: /p" $OUTPUT_DIR/dhat_$name.log | tee -a $OUTPUT_DIR/dhat_summary
+}
+
+server_dhat() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/send_file
+    valgrind $(dhat_options server$suffix) $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    sleep 5
+    $client send 127.0.0.1:9000 target/send_file --remote-path server_file
+    $client receive 127.0.0.1:9000 server_file --local-path target/receive_file
+    kill "${server_pids[@]}"
+    wait "${server_pids[@]}" || true
+    dhat_summarize server$suffix
+}
+
+send_dhat() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/send_file
+    $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    valgrind $(dhat_options send$suffix) $client send 127.0.0.1:9000 target/send_file --remote-path server_file
+    kill "${server_pids[@]}"
+    dhat_summarize send$suffix
+}
+
+receive_dhat() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    local server_pids=()
+    rm -f target/server_file
+    head -c 10M /dev/urandom > target/server_file
+    $server server 127.0.0.1:9000 ./target/ & server_pids+=($!)
+    valgrind $(dhat_options receive$suffix) $client receive 127.0.0.1:9000 server_file --local-path target/receive_file
+    kill "${server_pids[@]}"
+    dhat_summarize receive$suffix
+}
+
+all_dhat() {
+    local server="$1"
+    local client="$2"
+    local suffix="${3:-""}"
+    server_dhat $server $client $suffix
+    send_dhat $server $client $suffix
+    receive_dhat $server $client $suffix
+}
+
+# results in target/info/dhat_summary, debug builds keep the symbols used in the profiles
+dhat_info() {
+    local debug_bin="./target/debug/tftp-dus"
+    local stack_only_manifest="std-stack-binary/Cargo.toml"
+    local stack_only_bin="./std-stack-binary/target/debug/tftp-dus-stack-only"
+
+    > $OUTPUT_DIR/dhat_summary
+
+    cargo build -p tftp-std-binary
+    all_dhat $debug_bin $debug_bin "_std_binary"
+
+    cargo build -p tftp-std-binary --no-default-features --features encryption,seek
+    all_dhat $debug_bin $debug_bin "_std_binary_no_alloc"
+
+    cargo build --manifest-path $stack_only_manifest
+    all_dhat $stack_only_bin $stack_only_bin "_std_stack_binary"
+}
+
 send_dump() {
     local server="$1"
     local client="$2"

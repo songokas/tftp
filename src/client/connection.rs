@@ -5,16 +5,19 @@ use core::time::Duration;
 use log::debug;
 use log::error;
 
+use super::extensions::ensure_block_size_fits;
 use super::extensions::parse_extensions;
 use super::extensions::validate_extensions;
 use super::ClientConfig;
 use crate::buffer::resize_buffer;
 use crate::config::ConnectionOptions;
 use crate::config::DEFAULT_DATA_BLOCK_SIZE;
+use crate::config::EXTENSION_WINDOW_SIZE_MIN;
 use crate::encryption::EncryptionLevel;
 use crate::encryption::PublicKeyPair;
 use crate::error::BoxedResult;
 use crate::error::DefaultBoxedResult;
+use crate::error::ExtensionError;
 use crate::error::PacketError;
 use crate::packet::ByteConverter;
 use crate::packet::ErrorCode;
@@ -29,7 +32,6 @@ use crate::std_compat::io::ErrorKind;
 use crate::string::format_str;
 use crate::time::InstantCallback;
 use crate::types::DataBuffer;
-use crate::types::DefaultString;
 use crate::types::FilePath;
 
 pub struct QueryResult {
@@ -41,7 +43,7 @@ pub struct QueryResult {
 }
 
 pub struct QueryOptions<'a> {
-    pub file_path: FilePath,
+    pub file_path: &'a FilePath,
     pub options: ConnectionOptions,
     pub config: &'a ClientConfig,
     pub extensions: PacketExtensions,
@@ -100,7 +102,7 @@ pub fn query_server<'a>(
             (_, Ok(Packet::OptionalAck(p))) => {
                 if let Err(e) = validate_extensions(&p.extensions, &used_extensions) {
                     let message = e.message.clone();
-                    socket.send_to(&mut e.to_bytes(), endpoint)?;
+                    reply_with_error(&*socket, endpoint, &options, e)?;
                     return Err(PacketError::RemoteError(message).into());
                 }
                 let (conn, remote_session_public_keys) = parse_extensions(p.extensions, options)?;
@@ -132,7 +134,7 @@ pub fn query_server<'a>(
                 return Ok(QueryResult {
                     received_length: None,
                     acknowledge: false,
-                    options: options.with_block_size(DEFAULT_DATA_BLOCK_SIZE),
+                    options: options_for_plain_reply(options)?,
                     endpoint,
                     remote_session_public_keys: None,
                 });
@@ -142,7 +144,7 @@ pub fn query_server<'a>(
                 return Ok(QueryResult {
                     received_length: Some(length),
                     acknowledge: false,
-                    options: options.with_block_size(DEFAULT_DATA_BLOCK_SIZE),
+                    options: options_for_plain_reply(options)?,
                     endpoint,
                     remote_session_public_keys: None,
                 });
@@ -173,15 +175,37 @@ pub fn query_server<'a>(
     }
 }
 
-pub fn send_error(
+/// Options for a server that answered without acknowledging any extension,
+/// which also means it did not agree to encrypt anything.
+fn options_for_plain_reply(
+    options: ConnectionOptions,
+) -> Result<ConnectionOptions, ExtensionError> {
+    if matches!(
+        options.encryption_level,
+        EncryptionLevel::Data | EncryptionLevel::Protocol | EncryptionLevel::Full
+    ) {
+        return Err(ExtensionError::ClientRequiredEncryption(
+            options.encryption_level,
+        ));
+    }
+    ensure_block_size_fits(DEFAULT_DATA_BLOCK_SIZE)?;
+    Ok(ConnectionOptions {
+        window_size: EXTENSION_WINDOW_SIZE_MIN,
+        ..options.with_block_size(DEFAULT_DATA_BLOCK_SIZE)
+    })
+}
+
+/// Sends an error to the server. Every error of the client goes through here,
+/// so that its message fits what the server can receive.
+pub fn reply_with_error(
     socket: &impl Socket,
     endpoint: SocketAddr,
-    code: ErrorCode,
-    message: DefaultString,
+    options: &ConnectionOptions,
+    mut packet: ErrorPacket,
 ) -> DefaultBoxedResult {
-    error!("{}", message);
-    let packet = Packet::Error(ErrorPacket { code, message });
-    socket.send_to(&mut packet.to_bytes(), endpoint)?;
+    error!("{}", packet.message);
+    packet.limit_message(options.max_error_message_size(options.encrypts_protocol_packets()));
+    socket.send_to(&mut Packet::Error(packet).to_bytes(), endpoint)?;
     Ok(())
 }
 
@@ -195,8 +219,16 @@ fn wait_for_initial_packet(
     mut retry_timeout: Duration,
 ) -> BoxedResult<(usize, SocketAddr)> {
     let timeout = instant();
+    let buffer_size = buffer.len();
+    let mut last_sent = instant();
+    let mut send_request = true;
     loop {
-        socket.send_to(&mut packet.clone().to_bytes(), endpoint)?;
+        // a socket can leave the buffer at the size of the last datagram
+        resize_buffer(buffer, buffer_size);
+        if send_request {
+            socket.send_to(&mut packet.clone().to_bytes(), endpoint)?;
+            last_sent = instant();
+        }
         debug!(
             "Initial packet elapsed {} wait {}",
             timeout.elapsed().as_secs_f32(),
@@ -208,6 +240,11 @@ fn wait_for_initial_packet(
                 if s.ip() == endpoint.ip() {
                     return Ok((n, s));
                 }
+                let elapsed = timeout.elapsed();
+                if elapsed > request_timeout {
+                    return Err(PacketError::Timeout(elapsed).into());
+                }
+                send_request = last_sent.elapsed() >= retry_timeout;
                 continue;
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -219,11 +256,65 @@ fn wait_for_initial_packet(
                     request_timeout.saturating_sub(elapsed),
                     retry_timeout.saturating_mul(2),
                 );
+                send_request = true;
                 continue;
             }
             Err(e) => {
                 return Err(e.into());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::*;
+
+    fn reply(options: ConnectionOptions, message_size: usize) -> std::vec::Vec<u8> {
+        let socket = ScriptedSocket::from_server([]);
+        let sent = socket.sent.clone();
+        let long = "x".repeat(message_size);
+        let packet = ErrorPacket::new(ErrorCode::Undefined, format_str!(DefaultString, "{long}"));
+
+        reply_with_error(&socket, server_address(), &options, packet).unwrap();
+
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 1);
+        sent[0].clone()
+    }
+
+    #[test]
+    fn test_plain_error_message_is_cut_to_the_block_size() {
+        let sent = reply(ConnectionOptions::default().with_block_size(16), 40);
+
+        assert_eq!(&sent[4..sent.len() - 1], "x".repeat(15).as_bytes());
+        assert_eq!(sent[sent.len() - 1], 0);
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_encrypted_error_message_leaves_room_for_encryption() {
+        let options = ConnectionOptions {
+            encryption_level: EncryptionLevel::Full,
+            ..ConnectionOptions::default().with_block_size(64)
+        };
+
+        let sent = reply(options, 40);
+
+        assert_eq!(&sent[4..sent.len() - 1], "x".repeat(22).as_bytes());
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_error_message_is_not_shortened_for_encryption_it_does_not_get() {
+        let options = ConnectionOptions {
+            encryption_level: EncryptionLevel::Data,
+            ..ConnectionOptions::default().with_block_size(64)
+        };
+
+        let sent = reply(options, 40);
+
+        assert_eq!(&sent[4..sent.len() - 1], "x".repeat(40).as_bytes());
     }
 }

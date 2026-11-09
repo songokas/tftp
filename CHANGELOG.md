@@ -2,6 +2,35 @@
 
 All visible changes will be documented here. This project adheres to Semantic Versioning.
 
+## [0.8.0] - 2026-11-09
+
+### Changed
+
+- encrypted transfers are not compatible with earlier versions, the wire format changed (breaking change)
+- library: multi_thread no longer requires std, server takes a spawner
+- cipher key is derived with HKDF-SHA256
+- low-order x25519 public keys are refused
+- client signature covers the request type, file name and encryption level
+- encrypted packets authenticate the session, direction and header
+
+### Added
+
+- stack only binary tftp-dus-stack-only for Linux and macOS, no heap allocations
+- ESP32 examples, no_std and ESP-IDF
+
+### Fixed
+
+- certain malformed packets no longer panic or stall client and server
+- failed transfers keep the existing file
+- client enforces request timeouts regardless of incoming datagrams
+- client uses a window of 1 for a server without extensions
+- server answers a retransmitted final block in the multi-threaded writer
+- server lets a new request replace a finished single-threaded connection
+- server stops accepting connections at the capacity of the build
+- server sends the option negotiation error code in both server loops
+- open connections metric is updated when connections finish
+- client refuses plaintext replies given encryption is required
+
 ## [0.7.3] - 2026-06-09
 
 ### Changed
@@ -11,7 +40,7 @@ All visible changes will be documented here. This project adheres to Semantic Ve
 
 ### Added
 
-* option negotation error code (error code 8)
+- option negotation error code (error code 8)
 
 ## [0.7.2] - 2025-09-19
 

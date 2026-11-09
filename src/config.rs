@@ -3,6 +3,7 @@ use core::time::Duration;
 use log::debug;
 
 use crate::encryption::EncryptionLevel;
+use crate::features::ENCRYPTION_ENABLED;
 use crate::macros::cfg_alloc;
 use crate::macros::cfg_stack;
 
@@ -10,26 +11,21 @@ pub const DEFAULT_DATA_BLOCK_SIZE: u16 = 512;
 // PacketType + block(u16)
 pub const DATA_PACKET_HEADER_SIZE: u8 = 4;
 
-#[cfg(feature = "encryption")]
-pub const ENCRYPTION_TAG_SIZE: u8 = 16;
-#[cfg(not(feature = "encryption"))]
-pub const ENCRYPTION_TAG_SIZE: u8 = 0;
+pub const ENCRYPTION_TAG_SIZE: u8 = if ENCRYPTION_ENABLED { 16 } else { 0 };
 
-#[cfg(feature = "encryption")]
-pub const ENCRYPTION_PADDING_SIZE: u8 = 1;
-#[cfg(not(feature = "encryption"))]
-pub const ENCRYPTION_PADDING_SIZE: u8 = 0;
+pub const ENCRYPTION_PADDING_SIZE: u8 = if ENCRYPTION_ENABLED { 1 } else { 0 };
 
-#[cfg(feature = "encryption")]
-pub const ENCRYPTION_NONCE_SIZE: u8 = 24;
-#[cfg(not(feature = "encryption"))]
-pub const ENCRYPTION_NONCE_SIZE: u8 = 0;
+pub const ENCRYPTION_NONCE_SIZE: u8 = if ENCRYPTION_ENABLED { 24 } else { 0 };
 
 pub const MIN_ENCRYPTION_SIZE: u8 =
     ENCRYPTION_TAG_SIZE + ENCRYPTION_NONCE_SIZE + ENCRYPTION_PADDING_SIZE;
 
 pub const MIN_DATA_BLOCK_SIZE: u16 = 8;
-pub const PREFERRED_DATA_BLOCK_SIZE: u16 = 1425;
+pub const PREFERRED_DATA_BLOCK_SIZE: u16 = if MAX_DATA_BLOCK_SIZE < 1425 {
+    MAX_DATA_BLOCK_SIZE
+} else {
+    1425
+};
 
 cfg_alloc!(
     /// how many clients server can manage at once
@@ -41,21 +37,107 @@ cfg_alloc!(
 );
 
 cfg_stack!(
+    /// Parses a limit given through a `TFTP_*` environment variable at build time.
+    const fn build_limit(value: Option<&str>, default: u16) -> u16 {
+        let Some(value) = value else {
+            return default;
+        };
+        let digits = value.as_bytes();
+        assert!(!digits.is_empty(), "TFTP_* build limits must be numbers");
+        let mut limit: u32 = 0;
+        let mut index = 0;
+        while index < digits.len() {
+            assert!(
+                digits[index].is_ascii_digit(),
+                "TFTP_* build limits must be numbers"
+            );
+            limit = limit * 10 + (digits[index] - b'0') as u32;
+            assert!(
+                limit <= u16::MAX as u32,
+                "TFTP_* build limits must fit in 16 bits"
+            );
+            index += 1;
+        }
+        limit as u16
+    }
+
+    const fn default_pool_size(size: u16) -> u16 {
+        if size < 2 {
+            2
+        } else {
+            size
+        }
+    }
+
     // heapless FvIndexMap requires map size to be power of 2
-    pub const MAX_CLIENTS: u16 = 128;
-    pub const MAX_BLOCKS_FOR_MULTI_READER: u16 = 16;
+    pub const MAX_CLIENTS: u16 = build_limit(option_env!("TFTP_MAX_CLIENTS"), 128);
+    const _: () = assert!(
+        MAX_CLIENTS > 1 && MAX_CLIENTS.is_power_of_two(),
+        "TFTP_MAX_CLIENTS must be a power of two greater than 1"
+    );
+
+    pub const MAX_BLOCKS_FOR_MULTI_READER: u16 =
+        build_limit(option_env!("TFTP_MAX_WINDOW_SIZE"), 16);
+    const _: () = assert!(
+        MAX_BLOCKS_FOR_MULTI_READER >= 1,
+        "TFTP_MAX_WINDOW_SIZE must be at least 1"
+    );
+
     /// how many single readers available window size = 1
-    pub const MAX_SINGLE_READERS: u16 = 64;
+    pub const MAX_SINGLE_READERS: u16 = build_limit(
+        option_env!("TFTP_MAX_SINGLE_READERS"),
+        default_pool_size(MAX_CLIENTS / 2),
+    );
+    const _: () = assert!(
+        MAX_SINGLE_READERS > 1 && MAX_SINGLE_READERS.is_power_of_two(),
+        "TFTP_MAX_SINGLE_READERS must be a power of two greater than 1"
+    );
+
     /// how many multi readers available window size > 1
-    pub const MAX_MULTI_READERS: u16 = 8;
+    pub const MAX_MULTI_READERS: u16 = build_limit(
+        option_env!("TFTP_MAX_MULTI_READERS"),
+        default_pool_size(MAX_CLIENTS / 16),
+    );
+    const _: () = assert!(
+        MAX_MULTI_READERS > 1 && MAX_MULTI_READERS.is_power_of_two(),
+        "TFTP_MAX_MULTI_READERS must be a power of two greater than 1"
+    );
+
     /// how many seek readers available window size > 1
-    pub const MAX_MULTI_SEEK_READERS: u16 = 64;
-    pub const DEFAULT_WINDOW_SIZE: u8 = 4;
-    pub const MAX_DATA_BLOCK_SIZE: u16 = 1425;
+    pub const MAX_MULTI_SEEK_READERS: u16 = build_limit(
+        option_env!("TFTP_MAX_SEEK_READERS"),
+        default_pool_size(MAX_CLIENTS / 2),
+    );
+    const _: () = assert!(
+        MAX_MULTI_SEEK_READERS > 1 && MAX_MULTI_SEEK_READERS.is_power_of_two(),
+        "TFTP_MAX_SEEK_READERS must be a power of two greater than 1"
+    );
+
+    const DEFAULT_WINDOW_SIZE_LIMIT: u16 = build_limit(
+        option_env!("TFTP_DEFAULT_WINDOW_SIZE"),
+        if MAX_BLOCKS_FOR_MULTI_READER < 4 {
+            MAX_BLOCKS_FOR_MULTI_READER
+        } else {
+            4
+        },
+    );
+    const _: () = assert!(
+        DEFAULT_WINDOW_SIZE_LIMIT >= 1
+            && DEFAULT_WINDOW_SIZE_LIMIT <= MAX_BLOCKS_FOR_MULTI_READER
+            && DEFAULT_WINDOW_SIZE_LIMIT <= u8::MAX as u16,
+        "TFTP_DEFAULT_WINDOW_SIZE must be between 1 and min(TFTP_MAX_WINDOW_SIZE, 255)"
+    );
+    pub const DEFAULT_WINDOW_SIZE: u8 = DEFAULT_WINDOW_SIZE_LIMIT as u8;
+
+    pub const MAX_DATA_BLOCK_SIZE: u16 = build_limit(option_env!("TFTP_MAX_BLOCK_SIZE"), 1425);
+    const _: () = assert!(
+        MAX_DATA_BLOCK_SIZE >= MIN_DATA_BLOCK_SIZE && MAX_DATA_BLOCK_SIZE <= 65464,
+        "TFTP_MAX_BLOCK_SIZE must be between 8 and 65464"
+    );
 );
 
-/// maximum size of the packet buffer
-pub const MAX_BUFFER_SIZE: u16 = MAX_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
+/// maximum size of the packet buffer, with room to notice an oversized packet
+pub const MAX_BUFFER_SIZE: u16 = MAX_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16 + 1;
 pub const MIN_BUFFER_SIZE: u16 = MIN_DATA_BLOCK_SIZE + DATA_PACKET_HEADER_SIZE as u16;
 
 pub const MAX_EXTENSION_VALUE_SIZE: u8 = 88; // current max ENCODED_SIGNATURE_LENGTH;
@@ -102,21 +184,37 @@ impl ConnectionOptions {
         self
     }
 
-    pub fn block_size_with_encryption(&self) -> u16 {
+    pub fn encryption_overhead(&self) -> u16 {
         match self.encryption_level {
-            EncryptionLevel::Data => {
-                self.block_size - ENCRYPTION_TAG_SIZE as u16 - ENCRYPTION_NONCE_SIZE as u16
-            }
-            EncryptionLevel::Full | EncryptionLevel::Protocol => {
-                self.block_size
-                    - ENCRYPTION_TAG_SIZE as u16
-                    - ENCRYPTION_PADDING_SIZE as u16
-                    - ENCRYPTION_NONCE_SIZE as u16
-            }
-            EncryptionLevel::OptionalData
-            | EncryptionLevel::OptionalProtocol
-            | EncryptionLevel::None => self.block_size,
+            EncryptionLevel::Data => ENCRYPTION_TAG_SIZE as u16 + ENCRYPTION_NONCE_SIZE as u16,
+            EncryptionLevel::Full | EncryptionLevel::Protocol => MIN_ENCRYPTION_SIZE as u16,
+            _ => 0,
         }
+    }
+
+    pub fn block_size_with_encryption(&self) -> u16 {
+        self.block_size - self.encryption_overhead()
+    }
+
+    /// Longest error message that keeps its packet within the negotiated block
+    /// size. Only pass `encrypted` if the error packet itself will be encrypted.
+    ///
+    /// `block_size` can exceed the build limit before negotiation, and a message
+    /// can echo what a remote peer sent, so both limits apply as well.
+    pub fn max_error_message_size(&self, encrypted: bool) -> usize {
+        let encryption = if encrypted { MIN_ENCRYPTION_SIZE } else { 0 };
+        self.block_size
+            .min(MAX_DATA_BLOCK_SIZE)
+            .saturating_sub(encryption as u16 + 1)
+            .min(MAX_DEFAULT_STRING_SIZE as u16) as usize
+    }
+
+    /// True if packets other than data are encrypted, which includes errors.
+    pub fn encrypts_protocol_packets(&self) -> bool {
+        matches!(
+            self.encryption_level,
+            EncryptionLevel::Protocol | EncryptionLevel::Full
+        )
     }
 
     pub fn is_encrypting(&self) -> bool {
@@ -136,4 +234,32 @@ pub fn print_options(context: &str, options: &ConnectionOptions) {
         options.is_encrypting(),
 
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_message_limit_leaves_room_for_the_terminator() {
+        let options = ConnectionOptions::default().with_block_size(16);
+
+        assert_eq!(options.max_error_message_size(false), 15);
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_error_message_limit_leaves_room_for_encryption() {
+        let options = ConnectionOptions::default().with_block_size(64);
+
+        assert_eq!(options.max_error_message_size(true), 22);
+    }
+
+    #[test]
+    fn test_error_message_limit_stays_within_the_build_limits() {
+        let options = ConnectionOptions::default().with_block_size(u16::MAX);
+
+        let expected = (MAX_DATA_BLOCK_SIZE - 1).min(MAX_DEFAULT_STRING_SIZE as u16) as usize;
+        assert_eq!(options.max_error_message_size(false), expected);
+    }
 }

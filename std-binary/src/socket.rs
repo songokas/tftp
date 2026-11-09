@@ -4,7 +4,6 @@ use core::net::Ipv6Addr;
 use core::net::SocketAddr;
 use core::num::NonZeroUsize;
 use core::time::Duration;
-use std::collections::HashSet;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 #[cfg(not(target_family = "windows"))]
@@ -22,7 +21,9 @@ use socket2::Domain;
 use socket2::Protocol;
 use socket2::Socket as Socket2;
 use socket2::Type;
+use tftp_dus::config::MAX_CLIENTS;
 use tftp_dus::error::BoxedResult;
+use tftp_dus::map::Map;
 use tftp_dus::socket::*;
 use tftp_dus::std_compat::io;
 use tftp_dus::types::DataBuffer;
@@ -89,14 +90,13 @@ pub fn create_socket(
     }
 
     let events = Events::with_capacity(NonZeroUsize::new(capacity).expect("not empty capacity"));
-    let notified = HashSet::with_capacity(capacity);
 
     let socket = UdpUnboundSocket {
         socket,
         poller,
         socket_id,
         events,
-        notified,
+        notified: Map::new(),
     };
     Ok(socket)
 }
@@ -133,20 +133,28 @@ pub fn create_bound_socket(
         socket: socket.into(),
         poller,
         socket_id,
-        // TODO alloc in stack
+        // polling allocates the event list once, when the socket is created
         events: Events::with_capacity(NonZeroUsize::new(1).unwrap()),
     };
     Ok(socket)
+}
+
+/// Each client uses a socket and the descriptors of its own poller.
+const MAX_NOTIFIED_SOCKETS: usize = MAX_CLIENTS as usize * 8;
+
+/// Notified sockets are tracked by descriptor, not socket id: ids grow forever,
+/// while the entry of a closed descriptor is replaced when the descriptor is reused.
+fn poller_key(raw_fd: SocketRawFd) -> usize {
+    raw_fd as usize
 }
 
 pub struct UdpUnboundSocket {
     socket: UdpSocket,
     poller: Poller,
     socket_id: usize,
-    // TODO alloc in stack
+    // polling allocates the event list once, when the socket is created
     events: Events,
-    notified: HashSet<usize>,
-    //
+    notified: Map<usize, (), MAX_NOTIFIED_SOCKETS>,
 }
 
 impl Socket for UdpUnboundSocket {
@@ -160,12 +168,11 @@ impl Socket for UdpUnboundSocket {
         self.poller
             .wait(&mut self.events, wait_for.or_else(|| Duration::ZERO.into()))
             .map_err(from_io_err)?;
-        self.notified.extend(self.events.iter().map(|e| e.key));
+        for event in self.events.iter() {
+            let _ = self.notified.insert(event.key, ());
+        }
 
-        #[cfg(feature = "std")]
         let result = self.socket.recv_from(buff);
-        #[cfg(not(feature = "std"))]
-        let result = self.socket.recv_from(buff).map_err(from_io_err);
         if let Ok((size, client)) = result.as_ref() {
             trace!("Received from {client} {size} {:x?}", buff);
         }
@@ -173,37 +180,37 @@ impl Socket for UdpUnboundSocket {
     }
 
     fn send_to(&self, buff: &mut DataBuffer, client: SocketAddr) -> io::Result<usize> {
-        #[cfg(feature = "std")]
         let result = self.socket.send_to(buff, client);
-        #[cfg(not(feature = "std"))]
-        let result = self.socket.send_to(&buff, client).map_err(from_io_err);
         trace!("Send to {client} {} {:x?}", buff.len(), buff);
         result
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        #[cfg(feature = "std")]
-        return self.socket.local_addr();
-        #[cfg(not(feature = "std"))]
-        self.socket.local_addr().map_err(from_io_err)
+        self.socket.local_addr()
     }
 
     #[cfg(not(feature = "multi_thread"))]
     fn notified(&self, socket: &impl ToSocketId) -> bool {
-        self.notified.contains(&socket.socket_id())
+        // polling a socket that has no data is harmless, missing one that has is not
+        self.notified.len() >= MAX_NOTIFIED_SOCKETS
+            || self.notified.contains_key(&poller_key(socket.as_raw_fd()))
     }
 
     #[cfg(not(feature = "multi_thread"))]
     fn add_interest(&self, socket: &impl ToSocketId) -> io::Result<()> {
         unsafe {
             self.poller
-                .add(socket.as_raw_fd(), Event::readable(socket.socket_id()))
+                .add(
+                    socket.as_raw_fd(),
+                    Event::readable(poller_key(socket.as_raw_fd())),
+                )
                 .map_err(from_io_err)
         }
     }
 
-    fn modify_interest(&mut self, socket_id: usize, raw_fd: SocketRawFd) -> io::Result<()> {
-        self.notified.remove(&socket_id);
+    fn modify_interest(&mut self, _socket_id: usize, raw_fd: SocketRawFd) -> io::Result<()> {
+        let key = poller_key(raw_fd);
+        self.notified.remove(&key);
         self.poller
             .modify(
                 #[cfg(target_family = "windows")]
@@ -214,7 +221,7 @@ impl Socket for UdpUnboundSocket {
                 unsafe {
                     std::os::fd::BorrowedFd::borrow_raw(raw_fd.as_raw_fd())
                 },
-                Event::readable(socket_id),
+                Event::readable(key),
             )
             .map_err(from_io_err)
     }
@@ -259,10 +266,7 @@ impl BoundSocket for UdpBoundSocket {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        #[cfg(feature = "std")]
-        return self.socket.local_addr();
-        #[cfg(not(feature = "std"))]
-        self.socket.local_addr().map_err(from_io_err)
+        self.socket.local_addr()
     }
 }
 
@@ -284,6 +288,37 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[cfg(not(feature = "multi_thread"))]
+    #[test]
+    fn test_client_socket_is_notified_until_interest_is_modified() {
+        let mut server = create_socket("127.0.0.1:0".parse().unwrap(), 0, false, 4).unwrap();
+        let client = create_bound_socket(
+            "127.0.0.1:0".parse().unwrap(),
+            1,
+            server.local_addr().unwrap(),
+        )
+        .unwrap();
+        server.add_interest(&client).unwrap();
+        assert!(!server.notified(&client));
+
+        let mut buf = DataBuffer::new();
+        #[allow(unused_must_use)]
+        {
+            buf.resize(100, 0);
+        }
+        // a connected socket only accepts packets from the address it is connected to
+        server
+            .send_to(&mut buf, client.local_addr().unwrap())
+            .unwrap();
+        let _ = server.recv_from(&mut buf, Duration::from_millis(100).into());
+
+        assert!(server.notified(&client));
+        server
+            .modify_interest(client.socket_id(), client.as_raw_fd())
+            .unwrap();
+        assert!(!server.notified(&client));
+    }
 
     #[test]
     fn test_receive_wait_for() {

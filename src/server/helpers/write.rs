@@ -58,6 +58,20 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
                 p.block, data_length, connection.transfer, connection.endpoint
             );
 
+            if data_length > connection.options.block_size_with_encryption() as usize {
+                debug!("Ignoring data larger than the block size");
+                return None;
+            }
+
+            if block_writer.is_next_block(p.block) {
+                let new_size = (connection.transfer + data_length) as u64;
+                if let Err(e) = handle_file_size(new_size, max_file_size) {
+                    connection.reply_with_error(e, send_buffer);
+                    connection.invalid = instant().into();
+                    return None;
+                }
+            }
+
             write_block(block_writer, p.block, p.data)
         }
         Ok(Packet::Ack(_)) => {
@@ -79,14 +93,6 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
 
     match result {
         Ok((written, index, block)) => {
-            if let Some(w) = written {
-                if let Err(e) = handle_file_size((connection.transfer + w) as u64, max_file_size) {
-                    connection.send_packet(Packet::Error(e), send_buffer);
-                    connection.invalid = instant().into();
-                    return None;
-                }
-            }
-
             trace!(
                 "Block {} written in {}us",
                 block,
@@ -117,7 +123,7 @@ pub fn handle_write<W: BlockWriter, B: BoundSocket, Rng: CryptoRng + RngCore + C
             }
         }
         Err(e) => {
-            connection.send_packet(Packet::Error(e), send_buffer);
+            connection.reply_with_error(e, send_buffer);
             connection.invalid = instant().into();
             return None;
         }

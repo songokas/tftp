@@ -1,7 +1,8 @@
 use log::trace;
 
 use super::block_writer::BlockWriter;
-use crate::block_mapper::BlockMapper;
+use crate::block_mapper::block_index;
+use crate::block_mapper::block_number;
 use crate::error::ExistingBlock;
 use crate::error::StorageError;
 use crate::std_compat::io::Write;
@@ -9,7 +10,6 @@ use crate::std_compat::io::Write;
 #[derive(Debug)]
 pub struct SingleBlockWriter<W> {
     writer: W,
-    block_mapper: BlockMapper,
     block_written: u64,
 }
 
@@ -17,7 +17,6 @@ impl<W> SingleBlockWriter<W> {
     pub fn new(writer: W) -> Self {
         Self {
             writer,
-            block_mapper: BlockMapper::new(),
             block_written: 0,
         }
     }
@@ -27,20 +26,24 @@ impl<W> BlockWriter for SingleBlockWriter<W>
 where
     W: Write,
 {
+    fn is_next_block(&mut self, block: u16) -> bool {
+        block_index(block, self.block_written) == self.block_written + 1
+    }
+
     fn write_block(&mut self, block: u16, data: &[u8]) -> Result<(usize, u64), StorageError> {
-        let provided_index = self.block_mapper.index(block);
+        let provided_index = block_index(block, self.block_written);
         // writing blocks start at position 1
         let expected_index = self.block_written + 1;
 
         if provided_index < expected_index {
             return Err(StorageError::AlreadyWritten(ExistingBlock {
-                current: self.block_mapper.block(self.block_written),
+                current: block_number(self.block_written),
                 current_index: self.block_written,
             }));
         }
         if provided_index > expected_index {
             return Err(StorageError::ExpectedBlock(ExistingBlock {
-                current: self.block_mapper.block(self.block_written),
+                current: block_number(self.block_written),
                 current_index: self.block_written,
             }));
         }

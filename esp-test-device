@@ -1,0 +1,108 @@
+#!/bin/bash
+# Builds an ESP32 example, flashes it to a connected board, checks that files can
+# be downloaded and uploaded over Wi-Fi, then exits. Run through the test-device
+# script of an example.
+#
+# usage: ../esp-test-device <firmware elf> [espflash flash options]
+# environment:
+#   WIFI_SSID, WIFI_PASSWORD  network the device joins, required
+#   ESPFLASH_PORT             serial port, required if more than one is connected
+#   BOOT_TIMEOUT              seconds to wait for the device to get an address, default 60
+
+set -euo pipefail
+
+: "${WIFI_SSID:?WIFI_SSID must be set}"
+: "${WIFI_PASSWORD:?WIFI_PASSWORD must be set}"
+
+firmware="$1"
+shift
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+boot_timeout="${BOOT_TIMEOUT:-60}"
+work="$(mktemp -d)"
+reader=""
+
+fail() {
+    echo "FAILED: $1" >&2
+    if [[ -s "$work/serial.log" ]]; then
+        echo "--- last lines from the device ---" >&2
+        tail -n 20 "$work/serial.log" >&2
+    fi
+    exit 1
+}
+
+cleanup() {
+    if [[ -n "$reader" ]]; then
+        pkill -P "$reader" 2>/dev/null || true
+        kill "$reader" 2>/dev/null || true
+        wait "$reader" 2>/dev/null || true
+    fi
+    rm -rf "$work"
+}
+trap cleanup EXIT
+
+find_port() {
+    if [[ -n "${ESPFLASH_PORT:-}" ]]; then
+        echo "$ESPFLASH_PORT"
+        return
+    fi
+    local ports=()
+    for port in /dev/ttyACM* /dev/ttyUSB*; do
+        [[ -e "$port" ]] && ports+=("$port")
+    done
+    [[ ${#ports[@]} -eq 1 ]] || fail "found ${#ports[@]} serial ports, set ESPFLASH_PORT"
+    echo "${ports[0]}"
+}
+
+command -v espflash >/dev/null || fail "espflash is not installed: cargo install espflash"
+rustup toolchain list | grep -q '^esp' || fail "esp toolchain is not installed: cargo install espup && espup install"
+# espup writes the Xtensa linker and libclang paths here
+if [[ -f "$HOME/export-esp.sh" ]]; then
+    . "$HOME/export-esp.sh"
+fi
+port="$(find_port)"
+
+echo "==> Building firmware"
+cargo +esp build-device
+
+echo "==> Building tftp-dus client"
+(cd "$root" && cargo build --release -p tftp-std-binary)
+client="$root/target/release/tftp-dus"
+
+echo "==> Flashing $port"
+espflash flash --port "$port" "$@" "$firmware"
+
+# the port of a USB serial JTAG board disappears for a moment when it resets
+while true; do
+    stty -F "$port" 115200 raw -echo 2>/dev/null && cat "$port" 2>/dev/null
+    sleep 0.2
+done >>"$work/serial.log" &
+reader=$!
+
+echo "==> Waiting up to ${boot_timeout}s for the device to join $WIFI_SSID"
+server=""
+for ((i = 0; i < boot_timeout * 2; i++)); do
+    server="$(grep -aoE 'TFTP server on [0-9.]+:[0-9]+' "$work/serial.log" 2>/dev/null | tail -n 1 | awk '{print $4}')" || true
+    [[ -n "$server" ]] && break
+    sleep 0.5
+done
+[[ -n "$server" ]] || fail "device did not report an address"
+echo "==> Device is at $server"
+
+echo "==> Downloading hello.txt"
+"$client" receive "$server" hello.txt --local-path "$work/hello.txt" --allow-server-port-change ||
+    fail "download of hello.txt failed"
+[[ -s "$work/hello.txt" ]] || fail "hello.txt is empty"
+
+# larger than one block, and random so an earlier run can not pass the comparison
+head -c 4096 /dev/urandom >"$work/upload"
+
+echo "==> Uploading a file"
+"$client" send "$server" "$work/upload" --remote-path test-device.bin --allow-server-port-change ||
+    fail "upload failed"
+
+echo "==> Downloading it again"
+"$client" receive "$server" test-device.bin --local-path "$work/download" --allow-server-port-change ||
+    fail "download of the uploaded file failed"
+cmp "$work/upload" "$work/download" || fail "downloaded file differs from the uploaded one"
+
+echo "PASSED: send and receive work on the device at $server"

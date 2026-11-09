@@ -1,11 +1,15 @@
+use core::cmp::min;
+use core::fmt::Display;
 use core::net::SocketAddr;
 use core::time::Duration;
 
+use log::debug;
 use log::error;
 use rand::CryptoRng;
 use rand::RngCore;
 
 use crate::config::DATA_PACKET_HEADER_SIZE;
+use crate::config::DEFAULT_DATA_BLOCK_SIZE;
 use crate::encrypted_packet::EncryptedDataPacket;
 use crate::encrypted_packet::EncryptedPacket;
 use crate::encrypted_packet::InitialPacket;
@@ -57,6 +61,13 @@ impl<S, Rng> EncryptionBoundSocket<S, Rng> {
     }
 }
 
+/// Anyone can send a datagram to the client's port, so one that fails to decrypt
+/// must not end the transfer: callers treat it as if nothing arrived.
+fn ignore_datagram(error: impl Display, from: SocketAddr) -> Error {
+    debug!("Ignoring datagram from {from} that failed to decrypt {error}");
+    ErrorKind::WouldBlock.into()
+}
+
 impl<S, Rng> Socket for EncryptionBoundSocket<S, Rng>
 where
     S: Socket,
@@ -72,18 +83,12 @@ where
 
         match (self.encryption_level, &self.connection_encryptor) {
             (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) => {
-                EncryptedPacket::decrypt(encryptor, buff).map_err(|e| {
-                    error!("Failed to decrypt data {e}");
-                    Error::from(ErrorKind::InvalidData)
-                })?;
+                EncryptedPacket::decrypt(encryptor, buff).map_err(|e| ignore_datagram(e, s))?;
             }
             (EncryptionLevel::Data, Some(encryptor))
                 if matches!(PacketType::from_bytes(buff), Ok(PacketType::Data)) =>
             {
-                EncryptedDataPacket::decrypt(encryptor, buff).map_err(|e| {
-                    error!("Failed to decrypt data {e}");
-                    Error::from(ErrorKind::InvalidData)
-                })?;
+                EncryptedDataPacket::decrypt(encryptor, buff).map_err(|e| ignore_datagram(e, s))?;
             }
             _ => (),
         }
@@ -96,10 +101,12 @@ where
             (EncryptionLevel::Protocol | EncryptionLevel::Full, Some(encryptor)) => {
                 // encrypt initial packet
                 if let Ok(PacketType::Read | PacketType::Write) = packet_type {
+                    // the server has not agreed to any block size yet
                     InitialPacket::encrypt(
                         encryptor,
                         buff,
-                        self.block_size + DATA_PACKET_HEADER_SIZE as u16,
+                        min(self.block_size, DEFAULT_DATA_BLOCK_SIZE)
+                            + DATA_PACKET_HEADER_SIZE as u16,
                         &self
                             .public_key
                             .expect("Public key must be set for initial packet"),
@@ -152,7 +159,6 @@ where
     }
 }
 
-#[cfg(feature = "encryption")]
 impl<S, R> ToSocketId for EncryptionBoundSocket<S, R>
 where
     S: ToSocketId,
@@ -163,5 +169,81 @@ where
 
     fn socket_id(&self) -> usize {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::vec::Vec;
+
+    use rand::rngs::OsRng;
+
+    use super::*;
+    use crate::client::test_support::*;
+    use crate::encryption::create_encryptor_with_auth_keys;
+    use crate::encryption::SigningKey;
+    use crate::encryption::VerifyingKey;
+
+    fn encrypted_socket(
+        level: EncryptionLevel,
+        datagrams: [Vec<u8>; 1],
+    ) -> EncryptionBoundSocket<ScriptedSocket, OsRng> {
+        let server_key = VerifyingKey::from(&SigningKey::from([3; 32]));
+        let (encryptor, public_key) = create_encryptor_with_auth_keys(OsRng, &server_key).unwrap();
+        EncryptionBoundSocket::new(
+            ScriptedSocket::from_server(datagrams),
+            Some(encryptor),
+            public_key,
+            level,
+            512,
+        )
+    }
+
+    fn encrypted_request_size(block_size: u16) -> usize {
+        let server_key = VerifyingKey::from(&SigningKey::from([3; 32]));
+        let (encryptor, public_key) = create_encryptor_with_auth_keys(OsRng, &server_key).unwrap();
+        let socket = ScriptedSocket::from_server([]);
+        let sent = socket.sent.clone();
+        let socket = EncryptionBoundSocket::new(
+            socket,
+            Some(encryptor),
+            public_key,
+            EncryptionLevel::Full,
+            block_size,
+        );
+        let mut request = DataBuffer::new();
+        let _ = crate::buffer::extend_from_slice(&mut request, b"\0\x01file\0octet\0", ());
+
+        socket.send_to(&mut request, server_address()).unwrap();
+
+        let size = sent.borrow()[0].len();
+        size
+    }
+
+    #[test]
+    fn test_initial_request_fits_a_server_with_default_block_size() {
+        assert_eq!(encrypted_request_size(1400), 516);
+    }
+
+    #[test]
+    fn test_initial_request_is_not_padded_past_a_small_block_size() {
+        assert_eq!(encrypted_request_size(256), 260);
+    }
+
+    #[test]
+    fn test_undecryptable_datagram_is_reported_as_nothing_received() {
+        let junk = data_packet(1, &[7; 80]);
+        for level in [
+            EncryptionLevel::Data,
+            EncryptionLevel::Protocol,
+            EncryptionLevel::Full,
+        ] {
+            let mut socket = encrypted_socket(level, [junk.clone()]);
+            let mut buffer = crate::buffer::create_max_buffer(512);
+
+            let error = socket.recv_from(&mut buffer, None).unwrap_err();
+
+            assert_eq!(error.kind(), ErrorKind::WouldBlock, "{level}");
+        }
     }
 }

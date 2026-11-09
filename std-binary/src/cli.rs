@@ -16,6 +16,9 @@ use tftp_dus::types::DefaultString;
 use tftp_dus::types::FilePath;
 use tftp_dus::types::ShortString;
 
+use crate::encryption_args::ClientEncryptionArgs;
+use crate::encryption_args::ServerEncryptionArgs;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -57,46 +60,11 @@ pub struct ClientCliConfig {
     #[arg(long, default_value_t = 10485760, help = "Max file size to receive")]
     pub max_file_size: u64,
 
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        default_value = "optional-protocol",
-        help = "Available values protocol, data, optional-data, optional-protocol, none",
-        value_parser = try_from_str::<ShortString>,
-    )]
-    pub encryption_level: ShortString,
-
-    #[cfg(feature = "encryption")]
-    #[arg(long, help = "Base64 encoded private key to use: value or FILE", value_parser = try_from_str::<ShortString>)]
-    pub private_key: Option<ShortString>,
-
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        help = "Base64 encoded remote server public key to use for encryption",
-        value_parser = try_from_str::<ShortString>,
-    )]
-    pub server_public_key: Option<ShortString>,
-
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        help = "Path to a known hosts file where server public key will be retrieved. Format: endpoint base64(public key) per line",
-        value_hint = ValueHint::FilePath,
-        value_parser = try_from_str::<FilePath>,
-    )]
-    pub known_hosts: Option<FilePath>,
+    #[command(flatten)]
+    pub encryption: ClientEncryptionArgs,
 
     #[arg(long)]
     pub allow_server_port_change: bool,
-
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        help = "Encrypt/decrypt file when sending/receiving. Key should be 32 chars long",
-        value_parser = try_from_str::<ShortString>,
-    )]
-    pub encryption_key: Option<ShortString>,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -133,27 +101,8 @@ pub struct ServerCliConfig {
     #[arg(long, default_value_t = PREFERRED_DATA_BLOCK_SIZE as u64, value_parser = clap::value_parser!(u64).range((EXTENSION_BLOCK_SIZE_MIN as u64)..=(EXTENSION_BLOCK_SIZE_MAX as u64)))]
     pub max_block_size: u64,
 
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        help = "Path to a file with authorized public keys. Each line contains base64(public key)",
-        value_parser = try_from_str::<FilePath>,
-        value_hint = ValueHint::FilePath,
-    )]
-    pub authorized_keys: Option<FilePath>,
-
-    #[cfg(feature = "encryption")]
-    #[arg(long, help = "Base64 encoded private key to use: value or FILE", value_parser = try_from_str::<ShortString>)]
-    pub private_key: Option<ShortString>,
-
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        help = "Require that connections be fully encrypted. This is enabled if authorized keys are provided",
-        num_args = 0..=1,
-        default_missing_value = "true"
-    )]
-    pub require_full_encryption: Option<bool>,
+    #[command(flatten)]
+    pub encryption: ServerEncryptionArgs,
 
     #[arg(
         long,
@@ -172,15 +121,6 @@ pub struct ServerCliConfig {
 
     #[arg(long, default_value_t = 10, help = "Maximum directory depth")]
     pub max_directory_depth: u16,
-
-    #[cfg(feature = "encryption")]
-    #[arg(
-        long,
-        help = "Provide connection errors to authorized clients only. Enabled by default when require-full-encryption=true",
-        num_args = 0..=1,
-        default_missing_value = "true"
-    )]
-    pub error_to_authorized_only: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -237,4 +177,30 @@ pub enum Commands {
 
 fn try_from_str<T: FromStr>(arg: &str) -> Result<T, &'static str> {
     T::from_str(arg).map_err(|_| "Failed to parse")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_max_connections(extra: &[&str]) -> Result<u64, clap::Error> {
+        let arguments = ["tftp-dus", "server", "127.0.0.1:69", "/tmp"];
+        let args = Args::try_parse_from(arguments.iter().chain(extra))?;
+        match args.command {
+            Commands::Server(config) => Ok(config.max_connections),
+            _ => panic!("expected the server command"),
+        }
+    }
+
+    #[test]
+    fn test_default_max_connections() {
+        assert_eq!(parse_max_connections(&[]).unwrap(), MAX_CLIENTS as u64);
+    }
+
+    #[test]
+    fn test_max_connections_can_be_raised_to_the_limit() {
+        let limit = MAX_CLIENTS.to_string();
+        let parsed = parse_max_connections(&["--max-connections", &limit]);
+        assert_eq!(parsed.unwrap(), MAX_CLIENTS as u64);
+    }
 }

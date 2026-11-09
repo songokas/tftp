@@ -18,22 +18,30 @@ use ed25519_dalek::Signature;
 use ed25519_dalek::SigningKey as ExternalSigningKey;
 use ed25519_dalek::VerifyingKey as ExternalVerifyingKey;
 use ed25519_dalek::SIGNATURE_LENGTH;
+use hkdf::Hkdf;
 use rand::CryptoRng;
 use rand::RngCore;
+use sha2::Digest;
+use sha2::Sha256;
 use x25519_dalek::EphemeralSecret;
 use x25519_dalek::PublicKey as ExternalPublicKey;
 use x25519_dalek::StaticSecret;
 
 use crate::buffer::extend_from_slice;
 use crate::buffer::SliceExt;
+use crate::buffer::SliceMutExt;
+use crate::config::DATA_PACKET_HEADER_SIZE;
 use crate::config::ENCRYPTION_NONCE_SIZE;
 use crate::config::ENCRYPTION_PADDING_SIZE;
 use crate::config::ENCRYPTION_TAG_SIZE;
 use crate::config::MAX_EXTENSION_VALUE_SIZE;
+use crate::config::MAX_FILE_PATH_SIZE;
 use crate::error::EncodingErrorType;
 use crate::error::EncryptionError;
 use crate::error::PaddingError;
+use crate::packet::SignedRequest;
 use crate::types::DataBuffer;
+use crate::types::List;
 use crate::types::ShortString;
 
 pub type EncryptionKey = [u8; ENCRYPTION_KEY_SIZE as usize];
@@ -83,12 +91,11 @@ pub struct PublicKeyPair {
 pub fn create_encryptor_with_auth_keys<R: CryptoRng + RngCore + Clone>(
     rng: R,
     remote_public_key: &VerifyingKey,
-) -> (Encryptor<R>, PublicKey) {
+) -> Result<(Encryptor<R>, PublicKey), EncryptionError> {
     let session_keys = create_session_keys(rng.clone());
-    session_keys.finalize(
-        &PublicKey::from(remote_public_key.to_montgomery().to_bytes()),
-        rng,
-    )
+    let server_key = PublicKey::from(remote_public_key.to_montgomery().to_bytes());
+    let context = handshake_context(&session_keys.public_key, &server_key);
+    session_keys.finalize(&server_key, rng, Role::Client, context)
 }
 
 pub fn create_session_keys<R: CryptoRng + RngCore>(mut rng: R) -> InitialSessionKeyPair {
@@ -118,39 +125,166 @@ pub fn create_initial_keys<R: CryptoRng + RngCore>(
 }
 
 impl InitialSessionKeyPair {
-    pub fn finalize<R>(self, remote_public_key: &PublicKey, rng: R) -> (Encryptor<R>, PublicKey) {
+    pub fn finalize<R>(
+        self,
+        remote_public_key: &PublicKey,
+        rng: R,
+        role: Role,
+        context: SessionContext,
+    ) -> Result<(Encryptor<R>, PublicKey), EncryptionError> {
         let master_key = self.private_key.diffie_hellman(remote_public_key);
-        let key: Key = master_key.to_bytes().into();
+        if !master_key.was_contributory() {
+            return Err(EncryptionError::LowOrderKey);
+        }
+        let key = derive_cipher_key(master_key.as_bytes(), &context);
 
-        (
+        Ok((
             Encryptor {
                 cipher: XChaCha20Poly1305::new(&key),
                 rng,
+                role,
+                context,
             },
             self.public_key,
-        )
+        ))
     }
 }
 
 impl AuthKeyPair {
-    pub fn finalize<R>(self, remote_public_key: &PublicKey, rng: R) -> (Encryptor<R>, PublicKey) {
+    pub fn finalize<R>(
+        self,
+        remote_public_key: &PublicKey,
+        rng: R,
+        role: Role,
+        context: SessionContext,
+    ) -> Result<(Encryptor<R>, PublicKey), EncryptionError> {
         let master_key = StaticSecret::from(self.private_key.to_scalar_bytes())
             .diffie_hellman(remote_public_key);
-        let key: Key = master_key.to_bytes().into();
+        if !master_key.was_contributory() {
+            return Err(EncryptionError::LowOrderKey);
+        }
+        let key = derive_cipher_key(master_key.as_bytes(), &context);
 
-        (
+        Ok((
             Encryptor {
                 cipher: XChaCha20Poly1305::new(&key),
                 rng,
+                role,
+                context,
             },
             PublicKey::from(self.public_key.to_montgomery().to_bytes()),
-        )
+        ))
     }
 }
 
 pub struct FinalSessionKeyPair<Rng> {
     pub encryptor: Encryptor<Rng>,
     pub public_key: PublicKey,
+}
+
+const SIGNED_REQUEST_CONTEXT: &[u8] = b"tftp-dus signed request\0";
+const SIGNED_REQUEST_CAPACITY: usize = SIGNED_REQUEST_CONTEXT.len()
+    + 1
+    + PUBLIC_KEY_SIZE as usize
+    + MAX_EXTENSION_VALUE_SIZE as usize
+    + 1
+    + MAX_FILE_PATH_SIZE as usize;
+
+/// What a client signs to authorize a request. Binding the request type, file
+/// name and encryption level stops a captured signature from authorizing a
+/// different request.
+#[allow(unused_must_use)] // fits by construction, and only heapless returns a result
+pub fn signed_request_message(
+    session_public_key: &PublicKey,
+    encryption_level: &str,
+    request: SignedRequest,
+) -> List<u8, SIGNED_REQUEST_CAPACITY> {
+    let mut message = List::new();
+    message.extend_from_slice(SIGNED_REQUEST_CONTEXT);
+    message.extend_from_slice(&[request.packet_type as u8]);
+    message.extend_from_slice(session_public_key.as_bytes());
+    message.extend_from_slice(encryption_level.as_bytes());
+    message.extend_from_slice(&[0]);
+    message.extend_from_slice(request.file_name.as_bytes());
+    message
+}
+
+/// Which end of a connection an `Encryptor` belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Client,
+    Server,
+}
+
+impl Role {
+    fn peer(self) -> Self {
+        match self {
+            Role::Client => Role::Server,
+            Role::Server => Role::Client,
+        }
+    }
+}
+
+/// Digest of what both peers agreed on, authenticated with every packet.
+pub type SessionContext = [u8; 32];
+
+const ASSOCIATED_DATA_SIZE: usize =
+    size_of::<SessionContext>() + 1 + DATA_PACKET_HEADER_SIZE as usize;
+
+const CIPHER_KEY_LABEL: &[u8] = b"tftp-dus key v1\0";
+
+/// The output of a key exchange is not uniformly random, so it must go through
+/// a KDF before it can key a cipher.
+fn derive_cipher_key(shared_secret: &[u8; 32], context: &SessionContext) -> Key {
+    let mut key = Key::default();
+    Hkdf::<Sha256>::new(None, shared_secret)
+        .expand_multi_info(&[CIPHER_KEY_LABEL, context], &mut key)
+        .expect("a cipher key is shorter than the HKDF output limit");
+    key
+}
+
+const HANDSHAKE_CONTEXT_LABEL: &[u8] = b"tftp-dus handshake v1\0";
+const SESSION_CONTEXT_LABEL: &[u8] = b"tftp-dus session v1\0";
+
+/// Context of the packets exchanged under the server's long-term key, before
+/// the session keys are in use.
+pub fn handshake_context(
+    client_session_key: &PublicKey,
+    server_auth_key: &PublicKey,
+) -> SessionContext {
+    let mut hasher = Sha256::new();
+    hasher.update(HANDSHAKE_CONTEXT_LABEL);
+    hasher.update(client_session_key.as_bytes());
+    hasher.update(server_auth_key.as_bytes());
+    hasher.finalize().into()
+}
+
+/// What a session was negotiated with. The request and reply can travel in
+/// plaintext, so binding them to every packet makes a transfer fail if either
+/// was altered on the way.
+pub struct SessionParameters<'a> {
+    pub request: SignedRequest<'a>,
+    pub encryption_level: EncryptionLevel,
+    pub block_size: u16,
+    pub window_size: u16,
+    pub client_session_key: &'a PublicKey,
+    pub server_session_key: &'a PublicKey,
+}
+
+impl SessionParameters<'_> {
+    pub fn context(&self) -> SessionContext {
+        let level = self.encryption_level.as_str().as_bytes();
+        let mut hasher = Sha256::new();
+        hasher.update(SESSION_CONTEXT_LABEL);
+        hasher.update(self.client_session_key.as_bytes());
+        hasher.update(self.server_session_key.as_bytes());
+        hasher.update([self.request.packet_type as u8, level.len() as u8]);
+        hasher.update(level);
+        hasher.update(self.block_size.to_be_bytes());
+        hasher.update(self.window_size.to_be_bytes());
+        hasher.update(self.request.file_name.as_bytes());
+        hasher.finalize().into()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,16 +313,22 @@ impl FromStr for EncryptionLevel {
     }
 }
 
+impl EncryptionLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EncryptionLevel::Data => "data",
+            EncryptionLevel::Protocol => "protocol",
+            EncryptionLevel::Full => "full",
+            EncryptionLevel::OptionalData => "optional-data",
+            EncryptionLevel::OptionalProtocol => "optional-protocol",
+            EncryptionLevel::None => "none",
+        }
+    }
+}
+
 impl Display for EncryptionLevel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            EncryptionLevel::Data => write!(f, "data"),
-            EncryptionLevel::Protocol => write!(f, "protocol"),
-            EncryptionLevel::Full => write!(f, "full"),
-            EncryptionLevel::OptionalData => write!(f, "optional-data"),
-            EncryptionLevel::OptionalProtocol => write!(f, "optional-protocol"),
-            EncryptionLevel::None => write!(f, "none"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
@@ -267,6 +407,35 @@ impl StreamDecryptor {
 pub struct Encryptor<R> {
     pub cipher: XChaCha20Poly1305,
     pub rng: R,
+    pub role: Role,
+    pub context: SessionContext,
+}
+
+impl<R> Encryptor<R> {
+    /// Authenticates what is not encrypted but must not change: the negotiated
+    /// session, which side sent the packet, and the packet's plaintext header.
+    ///
+    /// ```text
+    /// offset  size  field
+    ///      0    32  session context
+    ///     32     1  sender: 0 client, 1 server
+    ///     33     4  plaintext header, zeros if the packet has none
+    /// ```
+    ///
+    /// Only a data packet at `EncryptionLevel::Data` has a plaintext header: its
+    /// opcode and block number. Any other packet is encrypted from its first byte.
+    fn associated_data(&self, sender: Role, header: &[u8]) -> Option<[u8; ASSOCIATED_DATA_SIZE]> {
+        let mut associated_data = [0; ASSOCIATED_DATA_SIZE];
+        let buffer = associated_data.as_mut_slice();
+        let sender = match sender {
+            Role::Client => 0_u8,
+            Role::Server => 1,
+        };
+        let size = buffer.write_bytes(self.context, 0_usize)?;
+        let size = buffer.write_bytes([sender], size)?;
+        buffer.write_bytes(header, size)?;
+        Some(associated_data)
+    }
 }
 
 impl<R: CryptoRng + RngCore + Clone> Encryptor<R> {
@@ -276,11 +445,16 @@ impl<R: CryptoRng + RngCore + Clone> Encryptor<R> {
         from_position: usize,
     ) -> Result<(), EncryptionError> {
         let nonce = XChaCha20Poly1305::generate_nonce(self.rng.clone());
-        let (_, data) = buffer.split_at_mut(from_position);
+        let (header, data) = buffer
+            .split_at_mut_checked(from_position)
+            .ok_or(EncryptionError::Encrypt)?;
+        let associated_data = self
+            .associated_data(self.role, header)
+            .ok_or(EncryptionError::Encrypt)?;
 
         let tag = self
             .cipher
-            .encrypt_in_place_detached(&nonce, &[], data)
+            .encrypt_in_place_detached(&nonce, &associated_data, data)
             .map_err(|_| EncryptionError::Encrypt)?;
         extend_from_slice(buffer, &tag, EncryptionError::Tag)?;
         extend_from_slice(buffer, &nonce, EncryptionError::Nonce)?;
@@ -303,9 +477,14 @@ impl<R: CryptoRng + RngCore + Clone> Encryptor<R> {
             .ok_or(EncryptionError::Decrypt)?
             .into();
         buffer.truncate(buffer.len() - nonce.len() - tag.len());
-        let (_, data) = buffer.split_at_mut(from_position);
+        let (header, data) = buffer
+            .split_at_mut_checked(from_position)
+            .ok_or(EncryptionError::Decrypt)?;
+        let associated_data = self
+            .associated_data(self.role.peer(), header)
+            .ok_or(EncryptionError::Decrypt)?;
         self.cipher
-            .decrypt_in_place_detached(&nonce, &[], data, &tag)
+            .decrypt_in_place_detached(&nonce, &associated_data, data, &tag)
             .map_err(|_| EncryptionError::Decrypt)
     }
 }
@@ -419,7 +598,7 @@ pub fn apply_bit_padding(buf: &mut DataBuffer, expected_size: usize) -> Result<(
     Ok(())
 }
 
-// last byte must me a padding byte
+// last byte must be a padding byte
 pub fn remove_bit_padding(buf: &mut DataBuffer) -> Result<(), PaddingError> {
     let Some(last_byte) = buf.last() else {
         return Err(PaddingError::EmptyBuffer);
@@ -465,6 +644,7 @@ mod tests {
 
     use super::*;
     use crate::config::ENCRYPTION_TAG_SIZE;
+    use crate::packet::PacketType;
 
     #[test]
     fn test_apply_bit_padding() {
@@ -522,7 +702,8 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt() {
-        let encryptor = create_encryptor();
+        let encryptor = create_encryptor(Role::Client);
+        let decryptor = create_encryptor(Role::Server);
         #[cfg(feature = "alloc")]
         let mut data = [2, 32, 32, 2, 1].to_vec();
         #[cfg(not(feature = "alloc"))]
@@ -534,8 +715,134 @@ mod tests {
             data.len(),
             expected.len() + ENCRYPTION_TAG_SIZE as usize + ENCRYPTION_NONCE_SIZE as usize
         );
-        encryptor.decrypt(&mut data, 0).unwrap();
+        decryptor.decrypt(&mut data, 0).unwrap();
         assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn test_cipher_key_matches_hkdf_sha256_vector() {
+        // HKDF-SHA256, no salt, computed independently of this crate
+        let cases: [(SessionContext, [u8; 32]); 2] = [
+            (
+                [7; 32],
+                [
+                    239, 75, 207, 137, 211, 230, 49, 142, 180, 223, 91, 168, 37, 7, 8, 154, 164,
+                    157, 176, 159, 1, 58, 233, 81, 168, 43, 156, 107, 60, 51, 11, 220,
+                ],
+            ),
+            (
+                [8; 32],
+                [
+                    182, 31, 177, 47, 96, 160, 80, 2, 97, 114, 176, 73, 199, 121, 143, 131, 144,
+                    133, 93, 49, 115, 211, 253, 96, 50, 168, 254, 100, 129, 80, 49, 74,
+                ],
+            ),
+        ];
+        for (context, expected) in cases {
+            let key = derive_cipher_key(&[1; 32], &context);
+            assert_eq!(key.as_slice(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn test_low_order_public_key_is_refused() {
+        let low_order: PublicKey = [0; 32].into();
+
+        let session = create_session_keys(rand::thread_rng()).finalize(
+            &low_order,
+            rand::thread_rng(),
+            Role::Client,
+            [7; 32],
+        );
+        let auth = create_auth_keys(SigningKey::from([3; 32])).finalize(
+            &low_order,
+            rand::thread_rng(),
+            Role::Server,
+            [7; 32],
+        );
+
+        assert!(session.is_err());
+        assert!(auth.is_err());
+    }
+
+    #[test]
+    fn test_key_exchange_gives_both_ends_a_working_cipher() {
+        let client = create_session_keys(rand::thread_rng());
+        let server = create_session_keys(rand::thread_rng());
+        let client_public = client.public_key;
+        let server_public = server.public_key;
+        let (sender, _) = client
+            .finalize(&server_public, rand::thread_rng(), Role::Client, [7; 32])
+            .unwrap();
+        let (receiver, _) = server
+            .finalize(&client_public, rand::thread_rng(), Role::Server, [7; 32])
+            .unwrap();
+        let mut data: DataBuffer = [1, 2, 3].into_iter().collect();
+
+        sender.encrypt(&mut data, 0).unwrap();
+        receiver.decrypt(&mut data, 0).unwrap();
+
+        assert_eq!(data.as_slice(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn test_session_context_covers_every_negotiated_parameter() {
+        let client: PublicKey = [1; 32].into();
+        let server: PublicKey = [2; 32].into();
+        let other: PublicKey = [3; 32].into();
+        let parameters = || SessionParameters {
+            request: SignedRequest {
+                packet_type: PacketType::Read,
+                file_name: "file",
+            },
+            encryption_level: EncryptionLevel::Protocol,
+            block_size: 512,
+            window_size: 4,
+            client_session_key: &client,
+            server_session_key: &server,
+        };
+        let base = parameters().context();
+        assert_eq!(base, parameters().context());
+
+        let changed = [
+            SessionParameters {
+                request: SignedRequest {
+                    packet_type: PacketType::Write,
+                    file_name: "file",
+                },
+                ..parameters()
+            },
+            SessionParameters {
+                request: SignedRequest {
+                    packet_type: PacketType::Read,
+                    file_name: "other",
+                },
+                ..parameters()
+            },
+            SessionParameters {
+                encryption_level: EncryptionLevel::Data,
+                ..parameters()
+            },
+            SessionParameters {
+                block_size: 1024,
+                ..parameters()
+            },
+            SessionParameters {
+                window_size: 1,
+                ..parameters()
+            },
+            SessionParameters {
+                client_session_key: &other,
+                ..parameters()
+            },
+            SessionParameters {
+                server_session_key: &other,
+                ..parameters()
+            },
+        ];
+        for (index, parameters) in changed.iter().enumerate() {
+            assert_ne!(base, parameters.context(), "{index}");
+        }
     }
 
     #[test]
@@ -599,7 +906,7 @@ mod tests {
             #[cfg(feature = "alloc")]
             let mut data = bytes.to_vec();
             #[cfg(not(feature = "alloc"))]
-            let mut data: crate::types::DataBlock07 = bytes.into_iter().collect();
+            let mut data: crate::types::StreamBlock = bytes.into_iter().collect();
             // data.truncate(2);
             let expected = data.clone();
             encryptor.encrypt(&mut data, 2).unwrap();
@@ -623,7 +930,7 @@ mod tests {
         );
     }
 
-    fn create_encryptor() -> Encryptor<ThreadRng> {
+    fn create_encryptor(role: Role) -> Encryptor<ThreadRng> {
         Encryptor {
             cipher: XChaCha20Poly1305::new(
                 &[
@@ -633,6 +940,8 @@ mod tests {
                 .into(),
             ),
             rng: rand::thread_rng(),
+            role,
+            context: [7; 32],
         }
     }
 
@@ -641,9 +950,8 @@ mod tests {
             &[
                 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233,
                 200, 17, 22, 29, 93, 32, 1,
-            ]
-            .into(),
-            &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3].into(),
+            ],
+            &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3],
         )
     }
 
@@ -652,9 +960,8 @@ mod tests {
             &[
                 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233,
                 200, 17, 22, 29, 93, 32, 1,
-            ]
-            .into(),
-            &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3].into(),
+            ],
+            &[1, 3, 4, 5, 7, 3, 3, 3, 3, 2, 99, 233, 200, 1, 3, 4, 5, 7, 3],
         )
     }
 }

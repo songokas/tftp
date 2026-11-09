@@ -10,6 +10,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+            std-stack-binary/target/
+            esp32-example/target/
+            esp32-idf-example/target/
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install nightly toolchain
+        run: |
+          nightly=$(grep -oP '^LINT_NIGHTLY="\K[^"]+' test)
+          rustup toolchain install "$nightly" --profile minimal --component rustfmt,clippy,rust-src
+      - name: Check formatting
+        run: ./test check_fmt
+      - name: Run clippy
+        run: ./test check_clippy
+
   test:
     runs-on: ubuntu-latest
 
@@ -25,7 +51,4 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
       - name: Run tests
-        run: |
-          cargo fmt --check
-          cargo clippy
-          ./test test_all
+        run: ./test test_all

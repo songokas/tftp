@@ -1,5 +1,4 @@
 use self::multiple_block_reader::MultipleBlockReader;
-#[cfg(feature = "seek")]
 use self::multiple_block_seek_reader::MultipleBlockSeekReader;
 use self::single_block_reader::SingleBlockReader;
 
@@ -9,6 +8,10 @@ pub mod encrypted_stream_reader;
 pub mod multiple_block_reader;
 #[cfg(feature = "seek")]
 pub mod multiple_block_seek_reader;
+#[cfg(not(feature = "seek"))]
+pub mod multiple_block_seek_reader {
+    pub use crate::features::MultipleBlockSeekReader;
+}
 #[cfg(not(feature = "alloc"))]
 pub mod pool_reader;
 pub mod single_block_reader;
@@ -18,7 +21,6 @@ pub mod single_block_reader;
 pub enum Readers<R> {
     Single(SingleBlockReader<R>),
     Multiple(MultipleBlockReader<R>),
-    #[cfg(feature = "seek")]
     Seek(MultipleBlockSeekReader<R>),
 }
 

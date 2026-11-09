@@ -232,30 +232,27 @@ mod tests {
         assert_eq!(initial_rate(512, 9), 9 * 512 * 5);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_configure_window_size_1_uses_packet_based_initial_rate() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         assert_eq!(rate.cwnd_rate, INITIAL_CWND_PACKETS * 512);
         assert_eq!(rate.ssthresh, u32::MAX);
         assert_eq!(rate.phase, Phase::SlowStart);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_configure_large_window_size_scales_initial_rate() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 16);
         // 16 * 512 * 5 = 40960 > 20 * 512 = 10240
         assert_eq!(rate.cwnd_rate, 16 * 512 * 5);
         assert_eq!(rate.phase, Phase::SlowStart);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_slow_start_doubles_cwnd_per_rtt() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         let initial = rate.cwnd_rate;
         assert!(initial > 0);
@@ -269,10 +266,9 @@ mod tests {
         assert_eq!(rate.phase, Phase::SlowStart);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_slow_start_transitions_to_congestion_avoidance() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.ssthresh = rate.cwnd_rate.saturating_mul(3);
 
@@ -287,10 +283,9 @@ mod tests {
         assert_eq!(rate.phase, Phase::CongestionAvoidance);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_congestion_avoidance_linear_growth() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.ssthresh = rate.cwnd_rate;
         rate.phase = Phase::CongestionAvoidance;
@@ -304,10 +299,9 @@ mod tests {
         assert_eq!(rate.phase, Phase::CongestionAvoidance);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_on_loss_resets_cwnd_and_sets_ssthresh() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.cwnd_rate = 100_000;
         rate.phase = Phase::CongestionAvoidance;
@@ -322,10 +316,9 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_on_loss_ssthresh_minimum() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.cwnd_rate = 100;
 
@@ -335,10 +328,9 @@ mod tests {
         assert_eq!(rate.cwnd_rate, 2 * 512);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_fast_recovery_exit_on_full_ack() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.phase = Phase::FastRecovery { recovery_block: 10 };
         rate.cwnd_rate = 50_000;
@@ -352,10 +344,9 @@ mod tests {
         assert_eq!(rate.phase, Phase::CongestionAvoidance);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_fast_recovery_stay_on_partial_ack() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.phase = Phase::FastRecovery { recovery_block: 10 };
         rate.cwnd_rate = 50_000;
@@ -372,11 +363,10 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_fast_recovery_block_wraparound() {
         // recovery_block = 65535, ACK arrives at block 1 (wrapped) — must exit recovery
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.phase = Phase::FastRecovery {
             recovery_block: 65535,
@@ -392,10 +382,9 @@ mod tests {
         assert_eq!(rate.cwnd_rate, 50_000);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_fast_recovery_entry() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.cwnd_rate = 100_000;
         rate.phase = Phase::CongestionAvoidance;
@@ -410,10 +399,9 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_fast_recovery_rto() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 1);
         rate.phase = Phase::FastRecovery { recovery_block: 5 };
         rate.cwnd_rate = 50_000;
@@ -426,11 +414,10 @@ mod tests {
         assert_eq!(rate.phase, Phase::SlowStart);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_fast_recovery_rto_window_size_affects_reset_rate() {
         // RTO during fast recovery resets cwnd to initial_rate(block, window) — window matters
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 16);
         rate.phase = Phase::FastRecovery { recovery_block: 5 };
         rate.cwnd_rate = 50_000;
@@ -442,12 +429,11 @@ mod tests {
         assert_eq!(rate.phase, Phase::SlowStart);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_rtt_measurement() {
         use std::thread::sleep;
 
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.start_rtt(1);
         assert_eq!(rate.rtt_estimate, 0.0);
         assert!(rate.end_rtt(1).is_some());
@@ -468,12 +454,11 @@ mod tests {
         assert_ne!(rate.rtt_estimate, current);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_timeout_interval_uses_rtt() {
         use std::thread::sleep;
 
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         assert_eq!(
             rate.timeout_interval(Duration::from_millis(80), 512)
                 .as_millis(),
@@ -488,10 +473,9 @@ mod tests {
         assert!(timeout.as_millis() >= 80);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_dup_ack_first_two_calls_do_not_trigger() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 4);
         rate.cwnd_rate = 100_000;
         rate.phase = Phase::CongestionAvoidance;
@@ -501,10 +485,9 @@ mod tests {
         assert_eq!(rate.phase, Phase::CongestionAvoidance);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_dup_ack_third_call_triggers_fast_recovery() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 4);
         rate.cwnd_rate = 100_000;
         rate.phase = Phase::CongestionAvoidance;
@@ -520,10 +503,9 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_dup_ack_new_block_resets_counter_and_does_not_trigger() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 4);
         rate.cwnd_rate = 100_000;
         rate.phase = Phase::CongestionAvoidance;
@@ -535,10 +517,9 @@ mod tests {
         assert_eq!(rate.phase, Phase::CongestionAvoidance);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_dup_ack_counter_resets_allows_retriggering() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 4);
         rate.cwnd_rate = 100_000;
         rate.phase = Phase::CongestionAvoidance;
@@ -554,10 +535,9 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_dup_ack_no_trigger_during_fast_recovery() {
-        let mut rate = RateControl::new(std::time::Instant::now);
+        let mut rate = RateControl::new(crate::time::test_now);
         rate.configure(512, 4);
         rate.cwnd_rate = 50_000;
         rate.ssthresh = 50_000;

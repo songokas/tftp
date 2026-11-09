@@ -1,8 +1,8 @@
 use log::error;
 use log::trace;
 
-use crate::buffer::new_data_block_07;
-use crate::buffer::resize_data_block_07;
+use crate::buffer::new_stream_block;
+use crate::buffer::resize_stream_block;
 use crate::buffer::SliceExt;
 use crate::buffer::SliceMutExt;
 use crate::config::ENCRYPTION_TAG_SIZE;
@@ -14,14 +14,14 @@ use crate::error::EncryptionError;
 use crate::std_compat::io::ErrorKind;
 use crate::std_compat::io::Result;
 use crate::std_compat::io::Write;
-use crate::types::DataBlock07;
+use crate::types::StreamBlock;
 
 pub struct StreamWriter<W> {
     stream_decryptor: Option<StreamDecryptor>,
     writer: W,
     key: Option<EncryptionKey>,
     block_size: Option<u16>,
-    buffer: Option<DataBlock07>,
+    buffer: Option<StreamBlock>,
 }
 
 impl<W> StreamWriter<W> {
@@ -56,7 +56,7 @@ impl<W: Write> Write for StreamWriter<W> {
 
             self.stream_decryptor = StreamDecryptor::new(key, &nonce).into();
             self.block_size = block_size.into();
-            self.buffer = new_data_block_07(block_size).into();
+            self.buffer = new_stream_block(block_size).into();
 
             nonce.len() + block_size_bytes.len()
         } else {
@@ -65,7 +65,7 @@ impl<W: Write> Write for StreamWriter<W> {
 
         let provided_block_size = self.block_size.ok_or(ErrorKind::Unsupported)?;
         let buffer = self.buffer.as_mut().ok_or(ErrorKind::Unsupported)?;
-        resize_data_block_07(buffer, provided_block_size);
+        resize_stream_block(buffer, provided_block_size);
 
         let size = buffer
             .write_bytes(data.get(from..).ok_or(ErrorKind::InvalidData)?, 0_usize)

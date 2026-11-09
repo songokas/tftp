@@ -1,108 +1,73 @@
-#[derive(Debug, Clone, Copy)]
-pub struct BlockMapper {
-    current_block_set: u64,
-    next_block_set: u64,
+/// Turns a 16 bit block number from a packet into a full block index. Block
+/// numbers wrap at 65536, so this picks the index with that number closest to
+/// `position`, the current place in the transfer.
+pub fn block_index(block: u16, position: u64) -> u64 {
+    // Read as signed, the wrapped difference is the shortest step from the
+    // position to the block, forwards or backwards: 65535 becomes -1.
+    let distance = block.wrapping_sub(position as u16) as i16;
+    position
+        .checked_add_signed(distance as i64)
+        // There is nothing before index 0, so the block must be ahead instead.
+        .unwrap_or(block as u64)
 }
 
-impl BlockMapper {
-    pub fn new() -> Self {
-        Self {
-            current_block_set: 1,
-            next_block_set: 1,
-        }
-    }
-
-    pub fn index(&mut self, block: u16) -> u64 {
-        if self.current_block_set == self.next_block_set && block > u16::MAX - 10000 {
-            self.next_block_set += 1;
-        }
-        if self.current_block_set != self.next_block_set {
-            if block < 10000 {
-                let next_block = self.next_block_set - 1;
-                return (next_block * u16::MAX as u64) + block as u64 + next_block;
-            } else if (10000..20000).contains(&block) {
-                self.current_block_set += 1;
-            }
-        }
-        let current_block = self.current_block_set - 1;
-        let mut index = (current_block * u16::MAX as u64) + block as u64;
-        if current_block > 0 {
-            index += current_block;
-        }
-        index
-    }
-
-    // block index
-    // 0 0
-    // 1 1
-    // 2 2
-    // 3 3
-    // 4 4
-    // 5 5
-    // 0 6
-    // 1 7
-    // 2 8
-    // 3 9
-    // 4 10
-    // 5 11
-    // 0 12
-    // 1 13
-    // 2 14
-    // 3 15
-    // 4 16
-    // 5 17
-    // 0 18
-    // 1 19
-    // 2 20
-    // 3 21
-    pub fn block(&self, index: u64) -> u16 {
-        if index > u16::MAX as u64 {
-            let part = index / (u16::MAX as u64 + 1);
-            return (index - (part * (u16::MAX as u64 + 1))) as u16;
-        }
-        index as u16
-    }
+// cast keeps the low 16 bits = index % 65536
+// 65535 = 1111111111111111
+// 65535 = 1111111111111111
+// 65536 = 10000000000000000
+// 65536 = 0
+// 65537 = 10000000000000001
+// 65537 = 1
+pub fn block_number(index: u64) -> u16 {
+    index as u16
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const WRAP: u64 = u16::MAX as u64 + 1;
+
     #[test]
-    fn test_block_mapper() {
-        let mut mapper = BlockMapper::new();
-        assert_eq!(0, mapper.block(0));
-        assert_eq!(10000, mapper.block(10000));
-        assert_eq!(0, mapper.index(0));
-        assert_eq!(10000, mapper.index(10000));
-        // rollover to next part start
-        assert_eq!(u16::MAX as u64, mapper.index(u16::MAX));
-        assert_eq!((u16::MAX - 2) as u64, mapper.index(u16::MAX - 2));
-        assert_eq!(u16::MAX as u64 + 1, mapper.index(0));
-        assert_eq!(u16::MAX as u64 + 3, mapper.index(2));
+    fn test_block_number_wraps_around() {
+        // println!("{} = {:b}", WRAP - 1, WRAP - 1);
+        // println!("{} = {:b}", WRAP - 1, block_number(WRAP - 1));
+        // println!("{} = {:b}", WRAP, WRAP);
+        // println!("{} = {:b}", WRAP, block_number(WRAP));
+        // println!("{} = {:b}", WRAP + 1, WRAP + 1);
+        // println!("{} = {:b}", WRAP + 1, block_number(WRAP + 1));
+        assert_eq!(block_number(0), 0);
+        assert_eq!(block_number(10000), 10000);
+        assert_eq!(block_number(WRAP - 1), u16::MAX);
+        assert_eq!(block_number(WRAP), 0);
+        assert_eq!(block_number(WRAP + 2), 2);
+        assert_eq!(block_number(2 * WRAP + 1998), 1998);
+    }
 
-        assert_eq!(2, mapper.block(2));
-        assert_eq!(u16::MAX, mapper.block(u16::MAX as u64));
-        assert_eq!(0, mapper.block(u16::MAX as u64 + 1));
+    #[test]
+    fn test_block_index_follows_the_transfer() {
+        let cases = [
+            (1, 0, 1),
+            (2, 1, 2),
+            (1, 1, 1),
+            (0, 1, 0),
+            (0, WRAP - 1, WRAP),
+            (1, WRAP - 1, WRAP + 1),
+            (u16::MAX, WRAP, WRAP - 1),
+            (u16::MAX, WRAP + 3, WRAP - 1),
+            (5, 3 * WRAP + 4, 3 * WRAP + 5),
+            (u16::MAX, 3 * WRAP, 3 * WRAP - 1),
+        ];
+        for (block, position, expected) in cases {
+            assert_eq!(block_index(block, position), expected, "{block} {position}");
+        }
+    }
 
-        // rollover finished
-        assert_eq!(u16::MAX as u64 + 10001, mapper.index(10000));
-        assert_eq!(u16::MAX as u64 + 10002, mapper.index(10001));
-        assert_eq!(9999, mapper.block(u16::MAX as u64 + 10000));
-
-        // rollover to next part start
-        assert_eq!(
-            u16::MAX as u64 + u16::MAX as u64 - 9998,
-            mapper.index(u16::MAX - 9999)
-        );
-
-        assert_eq!(2 * (u16::MAX as u64) + 2, mapper.index(0));
-        assert_eq!(2 * (u16::MAX as u64) + 3, mapper.index(1));
-
-        assert_eq!(65534, mapper.block(2 * (u16::MAX as u64)));
-        assert_eq!(65535, mapper.block(2 * (u16::MAX as u64) + 1));
-        assert_eq!(0, mapper.block(2 * (u16::MAX as u64) + 2));
-        assert_eq!(1998, mapper.block(2 * (u16::MAX as u64) + 2000));
-        assert_eq!(9997, mapper.block(2 * (u16::MAX as u64) + 9999));
+    #[test]
+    fn test_number_near_the_limit_early_in_a_transfer_is_not_the_previous_block() {
+        assert_eq!(block_index(u16::MAX, WRAP), u16::MAX as u64);
+        assert_eq!(block_index(0, WRAP + 1), WRAP);
+        assert_eq!(block_index(u16::MAX, 1), u16::MAX as u64);
+        assert_eq!(block_index(55536, 1), 55536);
     }
 }

@@ -16,18 +16,19 @@ use crate::packet::ErrorPacket;
 use crate::packet::OptionalAck;
 use crate::packet::Packet;
 use crate::packet::PacketExtensions;
+use crate::packet::PacketType;
 use crate::server::config::ServerConfig;
 use crate::server::connection::Connection;
 use crate::server::connection::ConnectionType;
 use crate::server::connection_builder::ConnectionBuilder;
+use crate::server::session_encryption;
 use crate::socket::BoundSocket;
 use crate::string::format_str;
 use crate::types::DataBuffer;
 
 #[allow(dead_code)]
-pub struct SessionKeys {
-    pub server_keys: InitialKeys,
-    pub remote_session_public_key: PublicKey,
+pub struct SessionKeys<Rng> {
+    pub encryptor: Encryptor<Rng>,
 }
 
 pub fn handle_packet<'a, Rng>(
@@ -47,7 +48,7 @@ where
                 p.file_name, config.directory
             );
 
-            builder.with_request(p, config.max_window_size, rng)?;
+            builder.with_request(PacketType::Write, p, config.max_window_size, rng)?;
             Some(ConnectionType::Write)
         }
         Ok(Packet::Read(p)) => {
@@ -55,7 +56,7 @@ where
                 "New client {from_client} reading file {} in directory {}",
                 p.file_name, config.directory
             );
-            builder.with_request(p, config.max_window_size, rng)?;
+            builder.with_request(PacketType::Read, p, config.max_window_size, rng)?;
             Some(ConnectionType::Read)
         }
         _ => {
@@ -70,8 +71,7 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
     connection_type: ConnectionType,
     used_extensions: PacketExtensions,
     buffer: &mut DataBuffer,
-    _session_keys: Option<SessionKeys>,
-    _rng: Rng,
+    session_keys: Option<SessionKeys<Rng>>,
 ) -> Option<()> {
     debug!("Server extensions {:?}", used_extensions);
 
@@ -90,14 +90,7 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
                 return None;
             }
             // new encryption starts only here
-            #[cfg(feature = "encryption")]
-            if let Some(keys) = _session_keys {
-                let (encryptor, _) = keys
-                    .server_keys
-                    .session
-                    .finalize(&keys.remote_session_public_key, _rng);
-                connection.encryptor = encryptor.into();
-            }
+            session_encryption::start_session(connection, session_keys);
 
             print_options("Server writing using", &connection.options);
 
@@ -116,14 +109,7 @@ pub fn accept_connection<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
             }
 
             // new encryption starts only here
-            #[cfg(feature = "encryption")]
-            if let Some(keys) = _session_keys {
-                let (encryptor, _) = keys
-                    .server_keys
-                    .session
-                    .finalize(&keys.remote_session_public_key, _rng);
-                connection.encryptor = encryptor.into();
-            }
+            session_encryption::start_session(connection, session_keys);
 
             print_options("Server reading using", &connection.options);
 
@@ -156,9 +142,6 @@ pub fn timeout_client<B: BoundSocket, Rng: CryptoRng + RngCore + Copy>(
         "Client timeout {}",
         connection.last_updated.elapsed().as_secs_f32()
     );
-    connection.send_packet(
-        Packet::Error(ErrorPacket::new(ErrorCode::Undefined, message)),
-        buffer,
-    );
+    connection.reply_with_error(ErrorPacket::new(ErrorCode::Undefined, message), buffer);
     true
 }

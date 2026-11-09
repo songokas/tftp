@@ -2,29 +2,24 @@ use core::time::Duration;
 
 use log::debug;
 
+use crate::client::session_encryption;
 use crate::config::ConnectionOptions;
 use crate::config::DEFAULT_DATA_BLOCK_SIZE;
 use crate::config::DEFAULT_RETRY_PACKET_TIMEOUT;
+use crate::config::EXTENSION_BLOCK_SIZE_MAX;
 use crate::config::EXTENSION_BLOCK_SIZE_MIN;
 use crate::config::EXTENSION_TIMEOUT_SIZE_MAX;
 use crate::config::EXTENSION_TIMEOUT_SIZE_MIN;
 use crate::config::EXTENSION_WINDOW_SIZE_MIN;
 use crate::encryption::*;
 use crate::error::ExtensionError;
-use crate::macros::cfg_encryption;
 use crate::packet::ErrorCode;
 use crate::packet::ErrorPacket;
 use crate::packet::Extension;
 use crate::packet::PacketExtensions;
+use crate::packet::SignedRequest;
 use crate::string::format_str;
 use crate::types::DefaultString;
-
-cfg_encryption!(
-    use ed25519_dalek::ed25519::signature::SignerMut;
-    use ed25519_dalek::Signature;
-    use ed25519_dalek::SigningKey;
-    use ed25519_dalek::Verifier;
-);
 
 pub fn validate_extensions(
     new_extensions: &PacketExtensions,
@@ -51,9 +46,19 @@ pub fn validate_extensions(
     Ok(())
 }
 
+/// Refuses a block size this build has no buffer for: without `alloc`,
+/// `TFTP_MAX_BLOCK_SIZE` can be below the 512 bytes of a plain TFTP transfer.
+pub fn ensure_block_size_fits(block_size: u16) -> Result<(), ExtensionError> {
+    if block_size > EXTENSION_BLOCK_SIZE_MAX {
+        return Err(ExtensionError::InvalidExtension(Extension::BlockSize));
+    }
+    Ok(())
+}
+
 pub fn create_extensions(
     options: &ConnectionOptions,
-    _initial_keys: Option<&InitialKeys>,
+    initial_keys: Option<&InitialKeys>,
+    request: SignedRequest,
 ) -> PacketExtensions {
     let mut used_extensions = PacketExtensions::new();
     if options.block_size != DEFAULT_DATA_BLOCK_SIZE {
@@ -90,25 +95,7 @@ pub fn create_extensions(
         );
     }
 
-    #[cfg(feature = "encryption")]
-    if options.encryption_level != EncryptionLevel::None {
-        let keys = _initial_keys.expect("initial keys must be provided");
-        let value = encode_public_key(&keys.session.public_key).expect("invalid key");
-        let _ = used_extensions.insert(Extension::SessionPublicKey, value);
-        let _ = used_extensions.insert(
-            Extension::EncryptionLevel,
-            format_str!(ExtensionValue, "{}", options.encryption_level),
-        );
-        if let Some(auth) = &keys.auth {
-            let value = encode_verifying_key(&auth.public_key).expect("invalid key");
-            let _ = used_extensions.insert(Extension::AuthPublicKey, value);
-            let mut signing_key = SigningKey::from_bytes(auth.private_key.as_bytes());
-            let signature: Signature = signing_key.sign(keys.session.public_key.as_bytes());
-
-            let value = encode_signature(&signature).expect("invalid signature");
-            let _ = used_extensions.insert(Extension::Signature, value);
-        }
-    }
+    session_encryption::add_extensions(options, initial_keys, request, &mut used_extensions);
 
     debug!("Client extensions {:?}", used_extensions);
     used_extensions
@@ -126,6 +113,7 @@ pub fn parse_extensions(
             return Err(ExtensionError::InvalidExtension(Extension::BlockSize));
         }
     } else {
+        ensure_block_size_fits(DEFAULT_DATA_BLOCK_SIZE)?;
         options.block_size = DEFAULT_DATA_BLOCK_SIZE;
     }
 
@@ -148,7 +136,9 @@ pub fn parse_extensions(
         } else {
             return Err(ExtensionError::InvalidExtension(Extension::Timeout));
         }
-    } else {
+    } else if options.retry_packet_after_timeout.as_secs() >= EXTENSION_TIMEOUT_SIZE_MIN as u64 {
+        // the server refused the requested timeout; one below a second was never
+        // sent, so it still applies
         options.retry_packet_after_timeout = DEFAULT_RETRY_PACKET_TIMEOUT;
     }
 
@@ -161,86 +151,7 @@ pub fn parse_extensions(
         }
     }
 
-    #[cfg(feature = "encryption")]
-    if options.encryption_level != EncryptionLevel::None {
-        let expected_encryption_level = options.encryption_level;
-
-        let encryption_level = server_extensions
-            .get(&Extension::EncryptionLevel)
-            .map(|s| s.parse())
-            .transpose()?;
-        let server_encryption_level = encryption_level.unwrap_or(EncryptionLevel::None);
-
-        if server_encryption_level == EncryptionLevel::None
-            && matches!(
-                expected_encryption_level,
-                EncryptionLevel::OptionalData | EncryptionLevel::OptionalProtocol
-            )
-        {
-            options.encryption_level = EncryptionLevel::None;
-            return Ok((options, None));
-        }
-
-        if matches!(
-            expected_encryption_level,
-            EncryptionLevel::Data | EncryptionLevel::Protocol
-        ) && !matches!(
-            encryption_level,
-            Some(EncryptionLevel::Data | EncryptionLevel::Protocol)
-        ) {
-            return Err(ExtensionError::ClientRequiredEncryption(
-                options.encryption_level,
-            ));
-        }
-
-        options.encryption_level =
-            encryption_level.ok_or(ExtensionError::InvalidExtension(Extension::EncryptionLevel))?;
-
-        let remote_session_public_key = server_extensions
-            .get(&Extension::SessionPublicKey)
-            .map(|s| decode_public_key(s.as_bytes()))
-            .transpose()?
-            .ok_or(ExtensionError::InvalidExtension(
-                Extension::SessionPublicKey,
-            ))?;
-
-        let remote_auth_public_key = server_extensions
-            .get(&Extension::AuthPublicKey)
-            .map(|s| decode_verifying_key(s.as_bytes()))
-            .transpose()?;
-
-        if let Some(auth_public_key) = remote_auth_public_key {
-            let Some(signature) = server_extensions
-                .get(&Extension::Signature)
-                .map(|p| decode_signature(p.as_bytes()))
-                .transpose()?
-            else {
-                debug!("Invalid signature received",);
-                return Err(ExtensionError::InvalidSignature);
-            };
-            let verifying_key = match VerifyingKey::from_bytes(auth_public_key.as_bytes()) {
-                Ok(k) => k,
-                Err(e) => {
-                    debug!("Invalid authorization key provided {e}");
-                    return Err(ExtensionError::InvalidSignature);
-                }
-            };
-            if let Err(e) = verifying_key.verify(remote_session_public_key.as_bytes(), &signature) {
-                debug!("Unable to verify error={e}",);
-                return Err(ExtensionError::InvalidSignature);
-            }
-        }
-
-        return Ok((
-            options,
-            PublicKeyPair {
-                auth: remote_auth_public_key,
-                session: remote_session_public_key,
-            }
-            .into(),
-        ));
-    }
-    Ok((options, None))
+    session_encryption::parse_reply(&server_extensions, options)
 }
 
 #[cfg(test)]
@@ -249,6 +160,14 @@ mod tests {
     use super::*;
     #[allow(unused_imports)]
     use crate::encryption::*;
+    use crate::packet::PacketType;
+
+    fn test_request() -> SignedRequest<'static> {
+        SignedRequest {
+            packet_type: PacketType::Read,
+            file_name: "file",
+        }
+    }
 
     #[test]
     fn test_validate_extensions() {
@@ -259,7 +178,7 @@ mod tests {
             encryption_level: EncryptionLevel::None,
             window_size: 8,
         };
-        let client_extensions = create_extensions(&options, None);
+        let client_extensions = create_extensions(&options, None, test_request());
         assert_eq!(client_extensions.len(), 4);
 
         let mut server_extensions = PacketExtensions::new();
@@ -295,7 +214,7 @@ mod tests {
             encryption_level: EncryptionLevel::None,
             window_size: 8,
         };
-        let extensions = create_extensions(&options, None);
+        let extensions = create_extensions(&options, None, test_request());
         assert_eq!(extensions.len(), 4);
 
         assert_eq!(
@@ -326,7 +245,7 @@ mod tests {
     //         encryption_level: EncryptionLevel::OptionalProtocol,
     //         window_size: 8,
     //     };
-    //     let extensions = create_extensions(&options, None);
+    //     let extensions = create_extensions(&options, None, test_request());
     //     assert_eq!(extensions.len(), 4);
     // }
 
@@ -348,7 +267,7 @@ mod tests {
         let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
         let private_key: [u8; 32] = bytes.try_into().unwrap();
         let initial_keys = create_initial_keys(Some(&SigningKey::from(private_key)), OsRng);
-        let extensions = create_extensions(&options, Some(&initial_keys));
+        let extensions = create_extensions(&options, Some(&initial_keys), test_request());
         assert_eq!(extensions.len(), 8);
 
         assert_eq!(
@@ -358,6 +277,102 @@ mod tests {
         assert!(extensions.contains_key(&Extension::SessionPublicKey));
         assert!(extensions.contains_key(&Extension::AuthPublicKey));
         assert!(extensions.contains_key(&Extension::Signature));
+    }
+
+    #[test]
+    fn test_reply_without_timeout_keeps_a_retry_that_was_never_requested() {
+        let options = ConnectionOptions {
+            retry_packet_after_timeout: Duration::from_millis(200),
+            ..Default::default()
+        };
+
+        let (result, _) = parse_extensions(PacketExtensions::new(), options).unwrap();
+
+        assert_eq!(
+            result.retry_packet_after_timeout,
+            Duration::from_millis(200)
+        );
+    }
+
+    #[test]
+    fn test_reply_without_timeout_drops_a_refused_retry() {
+        let options = ConnectionOptions {
+            retry_packet_after_timeout: Duration::from_secs(7),
+            ..Default::default()
+        };
+
+        let (result, _) = parse_extensions(PacketExtensions::new(), options).unwrap();
+
+        assert_eq!(
+            result.retry_packet_after_timeout,
+            DEFAULT_RETRY_PACKET_TIMEOUT
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_block_size_without_room_for_encryption_is_refused() {
+        // data level adds 40 bytes, protocol level 41, and at least one byte of
+        // payload must remain
+        for (level, reply, block_size) in [
+            (EncryptionLevel::Data, "data", "40"),
+            (EncryptionLevel::Protocol, "protocol", "8"),
+            (EncryptionLevel::Protocol, "protocol", "41"),
+        ] {
+            let options = ConnectionOptions {
+                encryption_level: level,
+                block_size: 512,
+                ..Default::default()
+            };
+            let mut extensions = PacketExtensions::new();
+            let _ = extensions.insert(Extension::BlockSize, block_size.parse().unwrap());
+            let _ = extensions.insert(Extension::EncryptionLevel, reply.parse().unwrap());
+            let _ = extensions.insert(
+                Extension::SessionPublicKey,
+                "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY="
+                    .parse()
+                    .unwrap(),
+            );
+
+            let result = parse_extensions(extensions, options);
+
+            assert!(
+                matches!(
+                    result,
+                    Err(ExtensionError::InvalidExtension(Extension::BlockSize))
+                ),
+                "{level} {block_size}"
+            );
+        }
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_reply_with_another_required_level_is_refused() {
+        for (requested, reply) in [
+            (EncryptionLevel::Protocol, "data"),
+            (EncryptionLevel::Data, "protocol"),
+        ] {
+            let options = ConnectionOptions {
+                encryption_level: requested,
+                ..Default::default()
+            };
+            let mut extensions = PacketExtensions::new();
+            let _ = extensions.insert(Extension::EncryptionLevel, reply.parse().unwrap());
+            let _ = extensions.insert(
+                Extension::SessionPublicKey,
+                "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY="
+                    .parse()
+                    .unwrap(),
+            );
+
+            let result = parse_extensions(extensions, options);
+
+            assert!(
+                matches!(result, Err(ExtensionError::ClientRequiredEncryption(_))),
+                "{requested}"
+            );
+        }
     }
 
     #[test]
@@ -415,8 +430,10 @@ mod tests {
 
     #[test]
     fn test_parse_extensions_disallowed_transfer_size() {
-        let mut options = ConnectionOptions::default();
-        options.file_size = 6.into();
+        let options = ConnectionOptions {
+            file_size: 6.into(),
+            ..Default::default()
+        };
         let mut extensions = PacketExtensions::new();
         let _ = extensions.insert(Extension::TransferSize, "2".parse().unwrap());
 
@@ -430,8 +447,10 @@ mod tests {
 
     #[test]
     fn test_parse_extensions_disallowed_retry_timeout() {
-        let mut options = ConnectionOptions::default();
-        options.retry_packet_after_timeout = Duration::from_secs(1);
+        let options = ConnectionOptions {
+            retry_packet_after_timeout: Duration::from_secs(1),
+            ..Default::default()
+        };
         let mut extensions = PacketExtensions::new();
         let _ = extensions.insert(Extension::Timeout, "0".parse().unwrap());
 

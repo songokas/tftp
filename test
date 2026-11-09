@@ -7,6 +7,8 @@ trap '[[ $? != 0 ]] && jobs -p | xargs -r kill' EXIT
 
 TARGETS=(x86_64-unknown-linux-gnu)
 RELEASE="release"
+# same nightly as esp32-idf-example/rust-toolchain.toml, so new nightlies do not fail the checks
+LINT_NIGHTLY="nightly-2026-04-01"
 
 TEST_DIR="./target/tftp-232342"
 
@@ -447,15 +449,29 @@ test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection() {
 
 test_bin() {
     cargo test -p tftp-std-binary
-    cargo test -p tftp-std-binary --no-default-features --features std
     cargo test -p tftp-std-binary --no-default-features --features alloc
     cargo test -p tftp-std-binary --no-default-features --features encryption
-    cargo test -p tftp-std-binary --no-default-features --features std,alloc
     cargo test -p tftp-std-binary --no-default-features --features alloc,encryption
-    cargo test -p tftp-std-binary --no-default-features --features std,encryption
     cargo test -p tftp-std-binary --no-default-features
+    cargo test -p tftp-std-binary --no-default-features --features multi_thread
+    cargo test -p tftp-std-binary --no-default-features --features alloc,multi_thread
+    cargo test -p tftp-std-binary --no-default-features --features encryption,seek,multi_thread
+    cargo test -p tftp-binary-common --features multi_thread
+    cargo test -p tftp-binary-common --features std,encryption
 }
 
+test_stack_bin() {
+    local manifest="std-stack-binary/Cargo.toml"
+
+    cargo test --manifest-path $manifest
+    cargo test --manifest-path $manifest --no-default-features
+    cargo test --manifest-path $manifest --no-default-features --features seek
+    cargo test --manifest-path $manifest --no-default-features --features encryption
+    TFTP_MAX_CLIENTS=4 TFTP_MAX_WINDOW_SIZE=4 TFTP_MAX_BLOCK_SIZE=512 cargo test --manifest-path $manifest
+    cargo test --manifest-path $manifest --features multi_thread
+    cargo test --manifest-path $manifest --no-default-features --features multi_thread
+    TFTP_MAX_CLIENTS=4 TFTP_MAX_WINDOW_SIZE=4 TFTP_MAX_BLOCK_SIZE=512 cargo test --manifest-path $manifest --features multi_thread
+}
 
 test_lib() {
     cargo test -p tftp-dus
@@ -467,6 +483,9 @@ test_lib() {
     cargo test -p tftp-dus --no-default-features --features std,encryption
     cargo test -p tftp-dus --no-default-features --features seek
     cargo test -p tftp-dus --no-default-features
+    TFTP_MAX_BLOCK_SIZE=256 cargo test -p tftp-dus --no-default-features low_block_limit
+    TFTP_MAX_BLOCK_SIZE=64 cargo test -p tftp-dus --no-default-features -- error_message longest_size
+    TFTP_MAX_BLOCK_SIZE=64 cargo test -p tftp-dus --no-default-features --features encryption -- error_message longest_size
 }
 
 build_release_targets() {
@@ -481,6 +500,9 @@ build_release_targets() {
 
     cargo build -p tftp-std-binary --no-default-features --features seek --release
     cp ./target/release/tftp-dus ./target/tftp-stack
+
+    cargo build --manifest-path std-stack-binary/Cargo.toml --release
+    cp std-stack-binary/target/release/tftp-dus-stack-only ./target/tftp-stack-only
 }
 
 test_block_sizes() {
@@ -488,6 +510,8 @@ test_block_sizes() {
     test_min_max_block_sizes ./target/tftp ./target/tftp "49 65464" "data"
     test_min_max_block_sizes ./target/tftp-stack-encryption ./target/tftp-stack-encryption "8 1425" "none"
     test_min_max_block_sizes ./target/tftp-stack-encryption ./target/tftp-stack-encryption "49 1425" "data"
+    test_min_max_block_sizes ./target/tftp-stack-only ./target/tftp-stack-only "8 1425" "none"
+    test_min_max_block_sizes ./target/tftp-stack-only ./target/tftp-stack-only "49 1425" "data"
 }
 
 test_congestion_recovery() {
@@ -518,12 +542,43 @@ test_congestion_recovery() {
     done
 }
 
+test_stack_only_pair() {
+    local server="$1"
+    local client="$2"
+
+    test_bug_fix_server_reuse_ipv6_socket_for_receiver $server $client
+    test_bug_fix_client_can_immediately_use_the_same_port_for_new_connection $server $client
+    test_full_config $server $client
+    test_large_files $server $client 4
+    test_encryption_level $server $client
+    test_encryption_authorized_only $server $client
+    test_standard_tftp $server $client
+}
+
+# directory list and sync are not available in tftp-stack-only
+test_stack_only() {
+    local stack="./target/tftp-stack-only"
+
+    test_stack_only_pair $stack $stack
+    test_large_files $stack $stack 1
+    test_congestion_recovery $stack $stack
+    test_high_load $stack $stack 1
+    test_high_load $stack $stack 4
+    test_double_encryption $stack $stack
+
+    for other in ./target/tftp ./target/tftp-stack-encryption; do
+        test_stack_only_pair $stack $other
+        test_stack_only_pair $other $stack
+    done
+}
+
 test_all() {
     local encryption_targets=(./target/tftp ./target/tftp-stack-encryption)
     local non_encryption_targets=(./target/tftp-alloc ./target/tftp-stack)
 
     test_lib
     test_bin
+    test_stack_bin
 
     build_release_targets
 
@@ -571,6 +626,50 @@ test_all() {
             test_standard_tftp $server $client
         done
     done
+
+    test_stack_only
+}
+
+# formats with nightly because rustfmt.toml uses unstable options that stable ignores
+check_fmt() {
+    cargo +$LINT_NIGHTLY fmt --all --check
+    for manifest in std-stack-binary esp32-example esp32-idf-example; do
+        cargo +$LINT_NIGHTLY fmt --manifest-path $manifest/Cargo.toml --check
+    done
+}
+
+check_clippy() {
+    local deny="-D warnings"
+    local host="x86_64-unknown-linux-gnu"
+    local features
+
+    cargo clippy --workspace --lib --bins --tests -- $deny
+
+    # library across the features that change its code
+    for features in "" alloc encryption alloc,encryption seek multi_thread metrics \
+        std std,alloc std,encryption encryption,seek,multi_thread; do
+        cargo clippy -p tftp-dus --lib --tests --no-default-features --features "$features" -- $deny
+    done
+
+    for features in "" alloc encryption alloc,encryption seek multi_thread alloc,multi_thread \
+        encryption,seek,multi_thread alloc,sync alloc,metrics; do
+        cargo clippy -p tftp-std-binary --bins --tests --no-default-features --features "$features" -- $deny
+    done
+
+    for features in "" multi_thread,encryption std,alloc,encryption; do
+        cargo clippy -p tftp-binary-common --lib --tests --no-default-features --features "$features" -- $deny
+    done
+
+    for features in "" seek multi_thread encryption encryption,seek,multi_thread; do
+        cargo clippy --manifest-path std-stack-binary/Cargo.toml --all-targets --no-default-features --features "$features" -- $deny
+    done
+
+    # the examples select their toolchain and default target from their own directory
+    (cd esp32-example && cargo clippy --no-default-features --target $host --all-targets -- $deny)
+    (cd esp32-idf-example && cargo clippy --no-default-features --target $host --all-targets -- $deny)
+
+    # benches use #![feature(test)]
+    cargo +$LINT_NIGHTLY clippy -p tftp-dus --benches -- $deny
 }
 
 $1 "${2:-""}" "${3:-""}" "${4:-""}"

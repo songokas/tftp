@@ -1,45 +1,31 @@
-use core::net::SocketAddr;
-
 use log::error;
 
 use super::config::ServerConfig;
 use crate::config::ConnectionOptions;
-use crate::error::BoxedResult;
+use crate::error::BoxedError;
 use crate::error::ExtensionError;
 use crate::error::FileError;
-use crate::packet::ByteConverter;
 use crate::packet::ErrorCode;
 use crate::packet::ErrorPacket;
 use crate::packet::Extension;
-use crate::packet::Packet;
-use crate::packet::PacketExtensions;
-use crate::socket::Socket;
-use crate::string::ensure_size;
 use crate::string::format_str;
 use crate::types::FilePath;
 
+/// On failure also returns the error to send, so that the caller can apply the
+/// connection's encryption and its rules on who gets errors.
 pub fn validate_request_options(
-    socket: &impl Socket,
-    client: SocketAddr,
     file_name: &FilePath,
     options: &ConnectionOptions,
-    _extensions: &PacketExtensions,
     config: &ServerConfig,
-) -> BoxedResult<FilePath> {
+) -> Result<FilePath, (ErrorPacket, BoxedError)> {
     if let Err(e) = handle_file_size(options.file_size.unwrap_or(0), config.max_file_size) {
-        let packet = Packet::Error(e);
-        socket.send_to(&mut packet.to_bytes(), client)?;
-        return Err(ExtensionError::InvalidExtension(Extension::TransferSize).into());
+        return Err((
+            e,
+            ExtensionError::InvalidExtension(Extension::TransferSize).into(),
+        ));
     }
 
-    match validate_file_name(file_name) {
-        Ok(p) => Ok(p),
-        Err(e) => {
-            let packet = Packet::Error(e);
-            socket.send_to(&mut packet.to_bytes(), client)?;
-            Err(FileError::InvalidFileName.into())
-        }
-    }
+    validate_file_name(file_name).map_err(|e| (e, FileError::InvalidFileName.into()))
 }
 
 pub fn handle_file_size(received_size: u64, max_file_size: u64) -> Result<(), ErrorPacket> {
@@ -65,11 +51,7 @@ pub fn validate_file_name(file_name: &FilePath) -> Result<FilePath, ErrorPacket>
             error!("Invalid file name received {} {}", file_name.as_str(), e);
             return Err(ErrorPacket::new(
                 ErrorCode::AccessViolation,
-                format_str!(
-                    DefaultString,
-                    "Invalid file name received {}",
-                    ensure_size(file_name, 100)
-                ),
+                format_str!(DefaultString, "Invalid file name received {}", file_name),
             ));
         }
     };
@@ -78,17 +60,18 @@ pub fn validate_file_name(file_name: &FilePath) -> Result<FilePath, ErrorPacket>
 
 fn normalize_remote_name(file_path: &FilePath) -> Result<FilePath, FileError> {
     #[allow(unused_must_use)]
-    let mut result = file_path
+    let result = file_path
         .as_str()
         .trim_start_matches('/')
         .split('/')
         .filter(|c| !matches!(c.trim(), "." | ".." | "/" | ""))
         .fold(FilePath::new(), |mut f, c| {
+            if !f.is_empty() {
+                f.push('/');
+            }
             f.push_str(c);
-            f.push('/');
             f
         });
-    result.pop();
     #[allow(clippy::redundant_as_str)]
     if result.as_str().is_empty() {
         return Err(FileError::InvalidFileName);
@@ -101,6 +84,7 @@ mod tests {
     use core::str::FromStr;
 
     use super::*;
+    use crate::config::MAX_FILE_PATH_SIZE;
 
     #[test]
     fn test_normalize_name() {
@@ -128,6 +112,14 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_name_keeps_a_name_of_the_longest_size() {
+        let name = "x".repeat(MAX_FILE_PATH_SIZE as usize);
+        let file_path: FilePath = name.parse().unwrap();
+
+        assert_eq!(normalize_remote_name(&file_path).unwrap(), file_path);
+    }
+
+    #[test]
     fn test_normalize_name_failures() {
         let data = ["", ".", "/../.", "/////"];
         for (i, file_path) in data.into_iter().enumerate() {
@@ -137,6 +129,17 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_invalid_name_of_the_longest_size_fits_the_error() {
+        let file_path: FilePath = "/".repeat(MAX_FILE_PATH_SIZE as usize).parse().unwrap();
+
+        let packet = validate_file_name(&file_path).unwrap_err();
+
+        let full = format!("Invalid file name received {file_path}");
+        assert!(!packet.message.is_empty());
+        assert!(full.starts_with(packet.message.as_str()));
     }
 
     #[cfg(not(feature = "alloc"))]

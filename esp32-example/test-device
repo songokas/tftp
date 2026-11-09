@@ -1,0 +1,4 @@
+#!/bin/bash
+# Flashes this example to a connected ESP32 and checks a real transfer.
+cd "$(dirname "${BASH_SOURCE[0]}")"
+exec ../esp-test-device target/xtensa-esp32-none-elf/release/tftp-esp32-example --chip esp32

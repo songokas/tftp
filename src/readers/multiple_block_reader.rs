@@ -5,7 +5,8 @@ use log::trace;
 
 use super::block_reader::Block;
 use super::block_reader::BlockReader;
-use crate::block_mapper::BlockMapper;
+use crate::block_mapper::block_index;
+use crate::block_mapper::block_number;
 use crate::buffer::new_data_block;
 use crate::buffer::SliceMutExt;
 use crate::error::StorageError;
@@ -15,7 +16,6 @@ use crate::types::DataBlock;
 #[derive(Debug)]
 pub struct MultipleBlockReader<R> {
     reader: R,
-    block_mapper: BlockMapper,
     block_read: u64,
     block_size: u16,
     blocks: Buffers,
@@ -31,7 +31,6 @@ impl<R> MultipleBlockReader<R> {
         let blocks = Buffers::new();
         Self {
             reader,
-            block_mapper: BlockMapper::new(),
             block_read: 0,
             block_size,
             blocks,
@@ -67,7 +66,7 @@ where
                 )?;
 
                 return Ok(Block {
-                    block: self.block_mapper.block(self.block_read),
+                    block: block_number(self.block_read),
                     index: self.block_read,
                     size: block_buffer.data.len(),
                     retry: true,
@@ -86,7 +85,7 @@ where
                     expected: block_buffer.data.len(),
                 })?;
             let block = Block {
-                block: self.block_mapper.block(index),
+                block: block_number(index),
                 index,
                 size: block_buffer.data.len(),
                 retry: true,
@@ -130,7 +129,7 @@ where
             self.finished = true;
         }
         Ok(Block {
-            block: self.block_mapper.block(self.block_read),
+            block: block_number(self.block_read),
             index,
             size: block_buffer.data.len(),
             retry: false,
@@ -139,7 +138,11 @@ where
     }
 
     fn free_block(&mut self, block: u16) -> usize {
-        let index = self.block_mapper.index(block);
+        let index = block_index(block, self.block_read);
+        // a block that was never sent cannot have been received
+        if self.blocks.iter().filter_map(|b| b.index).max() < Some(index) {
+            return 0;
+        }
         // block order could be random
         let blocks_to_remove = self.blocks.iter_mut().filter(|b| {
             if let Some(bindex) = b.index {
@@ -167,10 +170,7 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
-type Buffers = alloc::vec::Vec<Buffer>;
-#[cfg(not(feature = "alloc"))]
-type Buffers = heapless::Vec<Buffer, { crate::config::MAX_BLOCKS_FOR_MULTI_READER as usize }>;
+type Buffers = crate::types::List<Buffer, { crate::config::MAX_BLOCKS_FOR_MULTI_READER as usize }>;
 
 #[derive(Debug)]
 struct Buffer {
@@ -339,11 +339,13 @@ mod tests {
         let mut buffer = [0_u8; 100];
         assert_eq!(0, reader.free_block(1));
         reader.next(&mut buffer, false).unwrap().unwrap();
-        assert_eq!(2, reader.free_block(2));
+        // never sent, so it cannot have been received
+        assert_eq!(0, reader.free_block(2));
+        assert_eq!(2, reader.free_block(1));
 
         reader.next(&mut buffer, false).unwrap().unwrap();
-        assert_eq!(2, reader.free_block(10));
         assert_eq!(0, reader.free_block(10));
+        assert_eq!(2, reader.free_block(2));
 
         reader.next(&mut buffer, false).unwrap().unwrap();
         assert_eq!(0, reader.free_block(2));
@@ -434,7 +436,7 @@ mod tests {
 
     impl Read for AlwaysFailReader {
         fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
-            Err(ErrorKind::Unsupported).map_err(Into::into)
+            Err(ErrorKind::Unsupported.into())
         }
     }
 }

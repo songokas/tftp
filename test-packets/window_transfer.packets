@@ -1,0 +1,6 @@
+# window size 4: blocks 1 to 4 were sent and block 2 was lost, so it must stay
+# available for retransmission after these acknowledgements
+ack-unsent-block               ignored  00 04 00 09
+ack-far-future-block           ignored  00 04 7f 00
+ack-near-block-limit           ignored  00 04 d8 f0
+ack-last-block-number          ignored  00 04 ff ff

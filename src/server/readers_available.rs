@@ -1,3 +1,5 @@
+use crate::features::SEEK_ENABLED;
+
 #[derive(Debug)]
 pub struct ReadersAvailable {
     single_readers: u16,
@@ -11,23 +13,21 @@ impl ReadersAvailable {
         Self {
             single_readers: 1,
             multi_readers: 1,
-            #[cfg(feature = "seek")]
-            seek_readers: 1,
-            #[cfg(not(feature = "seek"))]
-            seek_readers: 0,
+            seek_readers: SEEK_ENABLED as u16,
         }
     }
 
     #[cfg(not(feature = "alloc"))]
     #[allow(unused)]
-    pub fn from_used(single_readers: usize, multi_readers: usize, _seek_readers: usize) -> Self {
+    pub fn from_used(single_readers: usize, multi_readers: usize, seek_readers: usize) -> Self {
         Self {
             single_readers: crate::config::MAX_SINGLE_READERS - single_readers as u16,
             multi_readers: crate::config::MAX_MULTI_READERS - multi_readers as u16,
-            #[cfg(feature = "seek")]
-            seek_readers: crate::config::MAX_MULTI_SEEK_READERS - _seek_readers as u16,
-            #[cfg(not(feature = "seek"))]
-            seek_readers: 0,
+            seek_readers: if SEEK_ENABLED {
+                crate::config::MAX_MULTI_SEEK_READERS - seek_readers as u16
+            } else {
+                0
+            },
         }
     }
 
@@ -50,6 +50,6 @@ impl ReadersAvailable {
 
     #[allow(dead_code)]
     pub fn seek(&self) -> bool {
-        self.seek_readers > 0
+        SEEK_ENABLED && self.seek_readers > 0
     }
 }

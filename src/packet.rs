@@ -10,14 +10,12 @@ use crate::buffer::SliceMutExt;
 use crate::error::PacketError;
 use crate::error::PacketResult;
 use crate::map::Map;
+use crate::string::ensure_size;
 use crate::types::DefaultString;
 use crate::types::ExtensionValue;
 use crate::types::FilePath;
 use crate::types::PacketBlock;
 
-#[cfg(feature = "alloc")]
-pub type PacketExtensions = Map<Extension, ExtensionValue>;
-#[cfg(not(feature = "alloc"))]
 pub type PacketExtensions = Map<Extension, ExtensionValue, { Extension::SIZE as usize }>; // must be power of 2
 
 pub trait ByteConverter<'a> {
@@ -141,6 +139,13 @@ pub enum PacketType {
     Ack,
     Error,
     OptionalAck,
+}
+
+/// The parts of a request that a client's authorization signature covers.
+#[derive(Clone, Copy)]
+pub struct SignedRequest<'a> {
+    pub packet_type: PacketType,
+    pub file_name: &'a str,
 }
 
 impl PacketType {
@@ -509,6 +514,11 @@ impl ErrorPacket {
     pub fn new(code: ErrorCode, message: DefaultString) -> Self {
         Self { code, message }
     }
+
+    pub fn limit_message(&mut self, max_size: usize) {
+        let size = ensure_size(&self.message, max_size).len();
+        self.message.truncate(size);
+    }
 }
 
 impl<'a> ByteConverter<'a> for ErrorPacket {
@@ -756,6 +766,34 @@ mod tests {
     }
 
     #[test]
+    fn test_error_message_within_the_limit_is_kept() {
+        let mut packet = ErrorPacket::new(ErrorCode::Undefined, "busy".parse().unwrap());
+
+        packet.limit_message(4);
+
+        assert_eq!(packet.message.as_str(), "busy");
+    }
+
+    #[test]
+    fn test_error_message_past_the_limit_is_cut() {
+        let mut packet = ErrorPacket::new(ErrorCode::Undefined, "busy".parse().unwrap());
+
+        packet.limit_message(2);
+
+        assert_eq!(packet.message.as_str(), "bu");
+    }
+
+    #[test]
+    fn test_error_message_limit_does_not_split_a_character() {
+        // é takes two bytes, at positions 1 and 2
+        let mut packet = ErrorPacket::new(ErrorCode::Undefined, "aéb".parse().unwrap());
+
+        packet.limit_message(2);
+
+        assert_eq!(packet.message.as_str(), "a");
+    }
+
+    #[test]
     fn test_optional_ack() {
         let data = [
             (true, b"\x00\x06blksize\x001252\x00".to_vec()),
@@ -822,6 +860,25 @@ mod tests {
         packet.to_buffer(&mut buffer);
 
         assert_eq!(&buffer[0..expected.len()], expected);
+    }
+
+    #[test]
+    fn test_error_message_that_does_not_fit_the_buffer_slice_is_refused() {
+        // nine bytes of message, each é takes two
+        let packet = Packet::Error(ErrorPacket::new(
+            ErrorCode::Undefined,
+            format_str!(DefaultString, "aéééé"),
+        ));
+
+        let mut buffer = [0_u8; 14];
+        assert_eq!(packet.clone().to_buffer(&mut buffer), Some(14));
+        assert_eq!(
+            &buffer,
+            b"\x00\x05\x00\x00a\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\x00"
+        );
+
+        let mut buffer = [0_u8; 13];
+        assert_eq!(packet.to_buffer(&mut buffer), None);
     }
 
     #[test]

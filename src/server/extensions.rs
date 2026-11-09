@@ -7,51 +7,34 @@ use rand::RngCore;
 
 use super::config::ServerConfig;
 use crate::config::ConnectionOptions;
+use crate::config::EXTENSION_BLOCK_SIZE_MAX;
 use crate::config::EXTENSION_BLOCK_SIZE_MIN;
 use crate::config::EXTENSION_TIMEOUT_SIZE_MIN;
 use crate::config::EXTENSION_WINDOW_SIZE_MIN;
 use crate::error::ExtensionError;
-use crate::macros::cfg_encryption;
 use crate::packet::Extension;
 use crate::packet::PacketExtensions;
+use crate::packet::SignedRequest;
 use crate::server::helpers::connection::SessionKeys;
+use crate::server::session_encryption;
 use crate::string::format_str;
 
-cfg_encryption!(
-    use ed25519_dalek::ed25519::signature::SignerMut;
-    use ed25519_dalek::Signature;
-    use ed25519_dalek::SigningKey;
-    use ed25519_dalek::Verifier;
-    use ed25519_dalek::VerifyingKey;
-    use crate::encryption::*;
-    use crate::config::MIN_ENCRYPTION_SIZE;
-);
-
-#[allow(unused_variables)]
 pub fn parse_extensions<R: CryptoRng + RngCore + Copy>(
     client_extensions: PacketExtensions,
+    request: SignedRequest,
     mut options: ConnectionOptions,
     config: &ServerConfig,
     max_window_size: u16,
     rng: R,
-) -> Result<(PacketExtensions, ConnectionOptions, Option<SessionKeys>), ExtensionError> {
+) -> Result<(PacketExtensions, ConnectionOptions, Option<SessionKeys<R>>), ExtensionError> {
     let mut used_extensions = PacketExtensions::new();
     if let Some(size) = client_extensions.get(&Extension::BlockSize) {
         let client_block_size: u16 = size.parse().unwrap_or(0);
+        let min_block_size = session_encryption::min_block_size(&client_extensions);
+        if min_block_size > config.max_block_size {
+            return Err(ExtensionError::InvalidExtension(Extension::BlockSize));
+        }
         if (EXTENSION_BLOCK_SIZE_MIN..=config.max_block_size).contains(&client_block_size) {
-            #[cfg(feature = "encryption")]
-            let min_block_size = if client_extensions
-                .get(&Extension::EncryptionLevel)
-                .and_then(|s| s.parse().ok())
-                .map(|e: EncryptionLevel| e != EncryptionLevel::None)
-                == Some(true)
-            {
-                MIN_ENCRYPTION_SIZE as u16
-            } else {
-                EXTENSION_BLOCK_SIZE_MIN
-            };
-            #[cfg(not(feature = "encryption"))]
-            let min_block_size = EXTENSION_BLOCK_SIZE_MIN;
             options.block_size = max(client_block_size, min_block_size);
             let _ = used_extensions.insert(
                 Extension::BlockSize,
@@ -66,6 +49,12 @@ pub fn parse_extensions<R: CryptoRng + RngCore + Copy>(
         } else {
             warn!("Invalid block size received {} skipping", size);
         }
+    }
+
+    // a request without blksize needs 512 byte blocks, which a build with a
+    // lower TFTP_MAX_BLOCK_SIZE has no room for
+    if options.block_size > EXTENSION_BLOCK_SIZE_MAX {
+        return Err(ExtensionError::InvalidExtension(Extension::BlockSize));
     }
 
     if let Some(window_size) = client_extensions.get(&Extension::WindowSize) {
@@ -119,130 +108,14 @@ pub fn parse_extensions<R: CryptoRng + RngCore + Copy>(
             }
         }
     }
-    #[cfg(feature = "encryption")]
-    {
-        let client_encryption_level = client_extensions
-            .get(&Extension::EncryptionLevel)
-            .map(|s| s.parse())
-            .transpose()?;
-
-        let client_encryption_level_with_default =
-            client_encryption_level.unwrap_or(EncryptionLevel::None);
-
-        if config.require_full_encryption && options.encryption_level != EncryptionLevel::Full {
-            debug!(
-                "Server requires full encryption however client_encryption_level={}",
-                client_encryption_level_with_default
-            );
-            return Err(ExtensionError::ServerRequiredEncryption(
-                EncryptionLevel::Full,
-            ));
-        }
-
-        options.encryption_level = match client_encryption_level_with_default {
-            EncryptionLevel::Full => {
-                // full encryption level required but not fully encrypted
-                if options.encryption_level != EncryptionLevel::Full {
-                    return Err(ExtensionError::InvalidExtension(Extension::EncryptionLevel));
-                }
-                EncryptionLevel::Full
-            }
-            EncryptionLevel::Data | EncryptionLevel::OptionalData => EncryptionLevel::Data,
-            EncryptionLevel::Protocol | EncryptionLevel::OptionalProtocol => {
-                EncryptionLevel::Protocol
-            }
-            EncryptionLevel::None => {
-                if config.authorized_keys.is_none() {
-                    return Ok((used_extensions, options, None));
-                } else {
-                    return Err(ExtensionError::ServerRequiredEncryption(
-                        EncryptionLevel::Data,
-                    ));
-                }
-            }
-        };
-
-        if client_encryption_level.is_some() {
-            let _ = used_extensions.insert(
-                Extension::EncryptionLevel,
-                format_str!(ExtensionValue, "{}", options.encryption_level),
-            );
-        }
-
-        let Some(remote_session_public_key) = client_extensions
-            .get(&Extension::SessionPublicKey)
-            .map(|p| decode_public_key(p.as_bytes()))
-            .transpose()?
-        else {
-            debug!("Invalid session key provided",);
-            return Err(ExtensionError::InvalidPublicKey);
-        };
-
-        let remote_auth_public_key = client_extensions
-            .get(&Extension::AuthPublicKey)
-            .map(|p| decode_verifying_key(p.as_bytes()))
-            .transpose()?;
-
-        if let Some(auth_public_key) = remote_auth_public_key {
-            let Some(signature) = client_extensions
-                .get(&Extension::Signature)
-                .map(|p| decode_signature(p.as_bytes()))
-                .transpose()?
-            else {
-                debug!("Invalid signature received",);
-                return Err(ExtensionError::InvalidSignature);
-            };
-            let verifying_key = match VerifyingKey::from_bytes(auth_public_key.as_bytes()) {
-                Ok(k) => k,
-                Err(e) => {
-                    debug!("Invalid authorization key provided");
-                    return Err(ExtensionError::InvalidSignature);
-                }
-            };
-            if let Err(e) = verifying_key.verify(remote_session_public_key.as_bytes(), &signature) {
-                debug!("Unable to verify error={e}",);
-                return Err(ExtensionError::InvalidSignature);
-            }
-        }
-        if let Some(authorized_keys) = &config.authorized_keys {
-            let Some(p) = remote_auth_public_key else {
-                debug!("Received new connection options however public key is missing",);
-                return Err(ExtensionError::InvalidPublicKey);
-            };
-            if !authorized_keys.contains(&p) {
-                debug!("Received new connection options however public key was not authorized",);
-                return Err(ExtensionError::NotAuthorized);
-            }
-        }
-
-        let server_keys = create_initial_keys(config.private_key.as_ref(), rng);
-
-        let value = encode_public_key(&server_keys.session.public_key).expect("invalid key");
-        let _ = used_extensions.insert(Extension::SessionPublicKey, value);
-
-        if let Some(auth) = &server_keys.auth {
-            if remote_auth_public_key.is_some() {
-                let value = encode_verifying_key(&auth.public_key).expect("invalid key");
-                let _ = used_extensions.insert(Extension::AuthPublicKey, value);
-                let mut signing_key = SigningKey::from_bytes(auth.private_key.as_bytes());
-                let signature: Signature =
-                    signing_key.sign(server_keys.session.public_key.as_bytes());
-                let value = encode_signature(&signature).expect("invalid key");
-                let _ = used_extensions.insert(Extension::Signature, value);
-            }
-        }
-        Ok((
-            used_extensions,
-            options,
-            SessionKeys {
-                server_keys,
-                remote_session_public_key,
-            }
-            .into(),
-        ))
-    }
-    #[cfg(not(feature = "encryption"))]
-    Ok((used_extensions, options, None))
+    session_encryption::negotiate(
+        &client_extensions,
+        request,
+        options,
+        config,
+        used_extensions,
+        rng,
+    )
 }
 
 #[cfg(test)]
@@ -250,16 +123,26 @@ mod tests {
     use rand::rngs::OsRng;
 
     use super::*;
+    use crate::config::DEFAULT_DATA_BLOCK_SIZE;
+    use crate::config::MAX_DATA_BLOCK_SIZE;
     #[allow(unused_imports)]
     use crate::encryption::*;
+    use crate::packet::PacketType;
     use crate::types::FilePath;
 
     #[test]
     fn test_parse_extensions() {
         let extensions = PacketExtensions::new();
         let options = ConnectionOptions::default();
-        let (extensions, ..) =
-            parse_extensions(extensions, options, &create_config(), 8, OsRng).unwrap();
+        let (extensions, ..) = parse_extensions(
+            extensions,
+            test_request(),
+            options,
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .unwrap();
         assert_eq!(extensions.len(), 0);
 
         let options = ConnectionOptions::default();
@@ -268,8 +151,15 @@ mod tests {
         let _ = extensions.insert(Extension::TransferSize, "6".parse().unwrap());
         let _ = extensions.insert(Extension::Timeout, "7".parse().unwrap());
         let _ = extensions.insert(Extension::WindowSize, "8".parse().unwrap());
-        let (extensions, options, ..) =
-            parse_extensions(extensions, options, &create_config(), 8, OsRng).unwrap();
+        let (extensions, options, ..) = parse_extensions(
+            extensions,
+            test_request(),
+            options,
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .unwrap();
         assert_eq!(extensions.len(), 4, "{extensions:?}");
         assert_eq!(options.window_size, 8);
         assert_eq!(options.block_size, 101);
@@ -281,8 +171,15 @@ mod tests {
     fn test_parse_invalid_extensions() {
         let options = ConnectionOptions::default();
         let extensions = PacketExtensions::new();
-        let (extensions, ..) =
-            parse_extensions(extensions, options, &create_config(), 8, OsRng).unwrap();
+        let (extensions, ..) = parse_extensions(
+            extensions,
+            test_request(),
+            options,
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .unwrap();
         assert_eq!(extensions.len(), 0);
 
         let options = ConnectionOptions::default();
@@ -291,12 +188,39 @@ mod tests {
         let _ = extensions.insert(Extension::TransferSize, "a".parse().unwrap());
         let _ = extensions.insert(Extension::Timeout, "0".parse().unwrap());
         let _ = extensions.insert(Extension::WindowSize, "0".parse().unwrap());
-        let (extensions, options, ..) =
-            parse_extensions(extensions, options, &create_config(), 8, OsRng).unwrap();
+        let (extensions, options, ..) = parse_extensions(
+            extensions,
+            test_request(),
+            options,
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .unwrap();
         assert_eq!(extensions.len(), 0);
         assert_ne!(options.block_size, 1);
         assert_ne!(options.file_size, Some(0));
         assert_ne!(options.retry_packet_after_timeout, Duration::from_secs(0));
+    }
+
+    /// Meaningful with `TFTP_MAX_BLOCK_SIZE` below 512, see `./test test_lib`.
+    #[test]
+    fn test_low_block_limit_request_without_blksize_is_refused() {
+        if DEFAULT_DATA_BLOCK_SIZE <= MAX_DATA_BLOCK_SIZE {
+            return;
+        }
+        let result = parse_extensions(
+            PacketExtensions::new(),
+            test_request(),
+            ConnectionOptions::default(),
+            &create_config(),
+            8,
+            OsRng,
+        );
+        assert!(matches!(
+            result,
+            Err(ExtensionError::InvalidExtension(Extension::BlockSize))
+        ));
     }
 
     #[cfg(feature = "encryption")]
@@ -316,10 +240,177 @@ mod tests {
         );
 
         let _ = extensions.insert(Extension::EncryptionLevel, "none".parse().unwrap());
-        let (extensions, options, ..) =
-            parse_extensions(extensions, options, &create_config(), 8, OsRng).unwrap();
+        let (extensions, options, ..) = parse_extensions(
+            extensions,
+            test_request(),
+            options,
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .unwrap();
         assert_eq!(extensions.len(), 0, "{extensions:?}");
         assert_eq!(options.encryption_level, EncryptionLevel::None);
+    }
+
+    fn test_request() -> SignedRequest<'static> {
+        SignedRequest {
+            packet_type: PacketType::Write,
+            file_name: "file",
+        }
+    }
+
+    /// Extensions from a client holding a signing key, for the given request.
+    #[cfg(feature = "encryption")]
+    fn signed_extensions(request: SignedRequest) -> PacketExtensions {
+        let initial_keys = create_initial_keys(Some(&SigningKey::from([9; 32])), OsRng);
+        let options = ConnectionOptions {
+            encryption_level: EncryptionLevel::Data,
+            ..Default::default()
+        };
+        crate::client::extensions::create_extensions(&options, Some(&initial_keys), request)
+    }
+
+    #[cfg(feature = "encryption")]
+    fn negotiate_signed(
+        extensions: PacketExtensions,
+        request: SignedRequest,
+    ) -> Option<ExtensionError> {
+        parse_extensions(
+            extensions,
+            request,
+            ConnectionOptions::default(),
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .err()
+    }
+
+    #[cfg(feature = "encryption")]
+    fn protocol_level_extensions(block_size: &str) -> PacketExtensions {
+        let mut extensions = PacketExtensions::new();
+        let _ = extensions.insert(Extension::BlockSize, block_size.parse().unwrap());
+        let _ = extensions.insert(Extension::EncryptionLevel, "protocol".parse().unwrap());
+        let _ = extensions.insert(
+            Extension::SessionPublicKey,
+            "Yhk58FaJO5dnct6VgrfRXtjqd9m3h2JHrD/Jecov2wY="
+                .parse()
+                .unwrap(),
+        );
+        extensions
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_low_order_session_key_is_refused_before_the_request_is_accepted() {
+        let mut extensions = protocol_level_extensions("512");
+        let _ = extensions.insert(
+            Extension::SessionPublicKey,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                .parse()
+                .unwrap(),
+        );
+
+        let result = parse_extensions(
+            extensions,
+            test_request(),
+            ConnectionOptions::default(),
+            &create_config(),
+            8,
+            OsRng,
+        );
+
+        assert!(matches!(result, Err(ExtensionError::InvalidPublicKey)));
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_encrypted_block_size_keeps_room_for_payload() {
+        let (_, options, _) = parse_extensions(
+            protocol_level_extensions("41"),
+            test_request(),
+            ConnectionOptions::default(),
+            &create_config(),
+            8,
+            OsRng,
+        )
+        .unwrap();
+
+        assert_eq!(options.block_size, 42);
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_encryption_is_refused_when_max_block_size_has_no_room() {
+        let config = ServerConfig {
+            max_block_size: 32,
+            ..create_config()
+        };
+        for block_size in ["16", "65535"] {
+            let result = parse_extensions(
+                protocol_level_extensions(block_size),
+                test_request(),
+                ConnectionOptions::default(),
+                &config,
+                8,
+                OsRng,
+            );
+
+            assert!(
+                matches!(
+                    result,
+                    Err(ExtensionError::InvalidExtension(Extension::BlockSize))
+                ),
+                "{block_size}"
+            );
+        }
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_signature_accepts_the_signed_request() {
+        let extensions = signed_extensions(test_request());
+        assert!(negotiate_signed(extensions, test_request()).is_none());
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_signature_refuses_another_file_name() {
+        let extensions = signed_extensions(test_request());
+        let replayed = SignedRequest {
+            file_name: "other",
+            ..test_request()
+        };
+        assert!(matches!(
+            negotiate_signed(extensions, replayed),
+            Some(ExtensionError::InvalidSignature)
+        ));
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_signature_refuses_another_request_type() {
+        let extensions = signed_extensions(test_request());
+        let replayed = SignedRequest {
+            packet_type: PacketType::Read,
+            ..test_request()
+        };
+        assert!(matches!(
+            negotiate_signed(extensions, replayed),
+            Some(ExtensionError::InvalidSignature)
+        ));
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_signature_refuses_another_encryption_level() {
+        let mut extensions = signed_extensions(test_request());
+        let _ = extensions.insert(Extension::EncryptionLevel, "protocol".parse().unwrap());
+        assert!(matches!(
+            negotiate_signed(extensions, test_request()),
+            Some(ExtensionError::InvalidSignature)
+        ));
     }
 
     fn create_config() -> ServerConfig {

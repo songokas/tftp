@@ -1,0 +1,9 @@
+#!/bin/bash
+# Flashes this example to a connected ESP32 and checks a real transfer.
+cd "$(dirname "${BASH_SOURCE[0]}")"
+# esp-idf-sys fails on a stale IDF_PATH instead of installing its own ESP-IDF
+if [[ -n "${IDF_PATH:-}" && ! -f "$IDF_PATH/tools/cmake/version.cmake" ]]; then
+    echo "Ignoring IDF_PATH, no ESP-IDF found at $IDF_PATH" >&2
+    unset IDF_PATH
+fi
+exec ../esp-test-device target/xtensa-esp32-espidf/release/tftp-esp32-idf-example --chip esp32 --partition-table partitions.csv

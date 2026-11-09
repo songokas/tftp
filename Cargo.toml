@@ -1,15 +1,20 @@
 [package]
 name = "tftp-dus"
-version = "0.7.3"
+version = "0.8.0"
 edition = "2021"
 
 [profile.release]
 strip = true
 
 [workspace]
-members = ["std-binary"]
+members = ["std-binary", "binary-common"]
+exclude = ["std-stack-binary", "esp32-example", "esp32-idf-example"]
 
 [dependencies]
+ed25519-dalek = { version = "2", optional = true, default-features = false, features = [
+    "fast",
+    "zeroize",
+] }
 log = "0.4"
 heapless = { version = "0.8", optional = false, default-features = false }
 base64 = { version = "0.21", optional = true, default-features = false }
@@ -18,9 +23,7 @@ x25519-dalek = { version = "2", optional = true, default-features = false, featu
     "zeroize",
     "static_secrets",
 ] }
-ed25519-dalek = { version = "2", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true, default-features = false, features = [
-    "heapless",
     "getrandom",
     "stream",
 ] }
@@ -28,9 +31,9 @@ rand = { version = "0.8", optional = false, default-features = false, features =
     "getrandom",
 ] }
 micromath = { version = "2", optional = false }
+sha2 = { version = "0.10", optional = true, default-features = false }
+hkdf = { version = "0.12", optional = true, default-features = false }
 
-# remove once chacha20poly1305, aead supports heapless 0.8
-heapless_07 = { package = "heapless", version = "0.7", optional = false, default-features = false }
 metrics = { version = "0.24", optional = true }
 
 [dev-dependencies]
@@ -39,13 +42,23 @@ vfs = "0.9"
 arrayvec = { version = "0.7", optional = false, default-features = false }
 
 [features]
-default = ["alloc", "encryption", "multi_thread", "seek", "metrics"]
+default = ["std", "alloc", "encryption", "multi_thread", "seek", "metrics"]
 std = []
 alloc = [
     "chacha20poly1305?/alloc",
     "x25519-dalek?/alloc",
     "ed25519-dalek?/alloc",
 ]
-encryption = ["x25519-dalek", "chacha20poly1305", "base64", "ed25519-dalek"]
+encryption = [
+    "x25519-dalek",
+    "chacha20poly1305",
+    "base64",
+    "ed25519-dalek",
+    "dep:sha2",
+    "dep:hkdf",
+]
 seek = []
-multi_thread = ["std"]
+# server takes a Spawner. With std, ThreadSpawner uses std::thread::spawn, which
+# heap allocates per connection even without alloc
+multi_thread = []
+metrics = ["dep:metrics", "std"]

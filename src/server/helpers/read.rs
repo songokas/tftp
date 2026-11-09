@@ -94,7 +94,7 @@ pub fn send_data_block<R: BlockReader, B: BoundSocket, Rng: CryptoRng + RngCore 
                     format_str!(DefaultString, "{}", e,),
                 ),
             };
-            connection.send_packet(Packet::Error(error_packet), buffer);
+            connection.reply_with_error(error_packet, buffer);
             connection.invalid = instant().into();
             return false;
         }

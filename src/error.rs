@@ -5,108 +5,137 @@ use core::str::Utf8Error;
 use core::time::Duration;
 
 use crate::encryption::EncryptionLevel;
+use crate::packet::ErrorCode;
 use crate::packet::Extension;
 use crate::std_compat::error::Error;
+use crate::std_compat::io::ErrorKind;
 use crate::types::DefaultString;
 
 #[cfg(all(feature = "std", feature = "alloc"))]
 pub type BoxedError = alloc::boxed::Box<dyn std::error::Error + Send + Sync>;
 #[cfg(not(all(feature = "std", feature = "alloc")))]
 pub type BoxedError = GeneralError;
+
+/// What is known about why a file could not be opened.
+#[cfg(all(feature = "std", feature = "alloc"))]
+fn open_failure(error: &BoxedError) -> (Option<ErrorKind>, bool) {
+    (
+        error.downcast_ref::<std::io::Error>().map(|e| e.kind()),
+        error.is::<FileError>(),
+    )
+}
+
+#[cfg(not(all(feature = "std", feature = "alloc")))]
+fn open_failure(error: &BoxedError) -> (Option<ErrorKind>, bool) {
+    match error {
+        GeneralError::IoError(e) => (Some(e.kind()), false),
+        GeneralError::FileError(_) => (None, true),
+        _ => (None, false),
+    }
+}
+
+/// The TFTP error for a file that could not be opened, or `fallback` when
+/// nothing more specific applies.
+pub fn open_error_code(error: &BoxedError, fallback: ErrorCode) -> ErrorCode {
+    match open_failure(error) {
+        (Some(ErrorKind::NotFound), _) => ErrorCode::FileNotFound,
+        (Some(ErrorKind::AlreadyExists), _) => ErrorCode::FileAlreadyExists,
+        (Some(ErrorKind::PermissionDenied), _) | (_, true) => ErrorCode::AccessViolation,
+        _ => fallback,
+    }
+}
+
 pub type BoxedResult<T> = Result<T, BoxedError>;
 pub type DefaultBoxedResult = Result<(), BoxedError>;
 
 #[cfg(not(all(feature = "std", feature = "alloc")))]
-#[derive(Debug)]
-pub enum GeneralError {
-    PacketError(PacketError),
-    FileError(FileError),
-    StorageError(StorageError),
-    EncryptionError(EncryptionError),
-    ExtensionError(ExtensionError),
-    IoError(crate::std_compat::io::Error),
-    FmtError(core::fmt::Error),
-    AvailabilityError(AvailabilityError),
-    Infallible,
-}
+pub use general_error::GeneralError;
 
 #[cfg(not(all(feature = "std", feature = "alloc")))]
-impl Display for GeneralError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        match self {
-            GeneralError::PacketError(s) => s.fmt(f),
-            GeneralError::FileError(s) => s.fmt(f),
-            GeneralError::StorageError(s) => s.fmt(f),
-            GeneralError::EncryptionError(s) => s.fmt(f),
-            GeneralError::ExtensionError(s) => s.fmt(f),
-            GeneralError::IoError(s) => s.fmt(f),
-            GeneralError::FmtError(s) => s.fmt(f),
-            GeneralError::AvailabilityError(s) => s.fmt(f),
-            GeneralError::Infallible => write!(f, "unknown error"),
+mod general_error {
+    use super::*;
+
+    #[derive(Debug)]
+    pub enum GeneralError {
+        PacketError(PacketError),
+        FileError(FileError),
+        StorageError(StorageError),
+        EncryptionError(EncryptionError),
+        ExtensionError(ExtensionError),
+        IoError(crate::std_compat::io::Error),
+        FmtError(core::fmt::Error),
+        AvailabilityError(AvailabilityError),
+        Infallible,
+    }
+
+    impl Display for GeneralError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+            match self {
+                GeneralError::PacketError(s) => s.fmt(f),
+                GeneralError::FileError(s) => s.fmt(f),
+                GeneralError::StorageError(s) => s.fmt(f),
+                GeneralError::EncryptionError(s) => s.fmt(f),
+                GeneralError::ExtensionError(s) => s.fmt(f),
+                GeneralError::IoError(s) => s.fmt(f),
+                GeneralError::FmtError(s) => s.fmt(f),
+                GeneralError::AvailabilityError(s) => s.fmt(f),
+                GeneralError::Infallible => write!(f, "unknown error"),
+            }
         }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<PacketError> for GeneralError {
-    fn from(source: PacketError) -> Self {
-        GeneralError::PacketError(source)
+    impl From<PacketError> for GeneralError {
+        fn from(source: PacketError) -> Self {
+            GeneralError::PacketError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<FileError> for GeneralError {
-    fn from(source: FileError) -> Self {
-        GeneralError::FileError(source)
+    impl From<FileError> for GeneralError {
+        fn from(source: FileError) -> Self {
+            GeneralError::FileError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<StorageError> for GeneralError {
-    fn from(source: StorageError) -> Self {
-        GeneralError::StorageError(source)
+    impl From<StorageError> for GeneralError {
+        fn from(source: StorageError) -> Self {
+            GeneralError::StorageError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<EncryptionError> for GeneralError {
-    fn from(source: EncryptionError) -> Self {
-        GeneralError::EncryptionError(source)
+    impl From<EncryptionError> for GeneralError {
+        fn from(source: EncryptionError) -> Self {
+            GeneralError::EncryptionError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<ExtensionError> for GeneralError {
-    fn from(source: ExtensionError) -> Self {
-        GeneralError::ExtensionError(source)
+    impl From<ExtensionError> for GeneralError {
+        fn from(source: ExtensionError) -> Self {
+            GeneralError::ExtensionError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<crate::std_compat::io::Error> for GeneralError {
-    fn from(source: crate::std_compat::io::Error) -> Self {
-        GeneralError::IoError(source)
+    impl From<crate::std_compat::io::Error> for GeneralError {
+        fn from(source: crate::std_compat::io::Error) -> Self {
+            GeneralError::IoError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<core::fmt::Error> for GeneralError {
-    fn from(source: core::fmt::Error) -> Self {
-        GeneralError::FmtError(source)
+    impl From<core::fmt::Error> for GeneralError {
+        fn from(source: core::fmt::Error) -> Self {
+            GeneralError::FmtError(source)
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<core::convert::Infallible> for GeneralError {
-    fn from(_: core::convert::Infallible) -> Self {
-        GeneralError::Infallible
+    impl From<core::convert::Infallible> for GeneralError {
+        fn from(_: core::convert::Infallible) -> Self {
+            GeneralError::Infallible
+        }
     }
-}
 
-#[cfg(not(all(feature = "std", feature = "alloc")))]
-impl From<AvailabilityError> for GeneralError {
-    fn from(source: AvailabilityError) -> Self {
-        GeneralError::AvailabilityError(source)
+    impl From<AvailabilityError> for GeneralError {
+        fn from(source: AvailabilityError) -> Self {
+            GeneralError::AvailabilityError(source)
+        }
     }
 }
 
@@ -290,6 +319,7 @@ impl Display for PaddingError {
 pub enum EncryptionError {
     Encrypt,
     Decrypt,
+    LowOrderKey,
     Nonce,
     NoStream,
     Tag,
@@ -305,6 +335,7 @@ impl Display for EncryptionError {
         match self {
             EncryptionError::Encrypt => write!(f, "Failed to encrypt"),
             EncryptionError::Decrypt => write!(f, "Failed to decrypt"),
+            EncryptionError::LowOrderKey => write!(f, "Public key is of low order"),
             EncryptionError::Nonce => write!(f, "Invalid nonce"),
             EncryptionError::Tag => write!(f, "Invalid tag"),
             EncryptionError::NoStream => write!(f, "Stream has been used"),
