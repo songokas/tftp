@@ -148,6 +148,21 @@ fn poller_key(raw_fd: SocketRawFd) -> usize {
     raw_fd as usize
 }
 
+const WSAEMSGSIZE: i32 = 10040;
+
+/// Windows fails a read of a datagram larger than the buffer and discards the
+/// datagram, where other systems cut it to the buffer size. Such a datagram is
+/// never valid, so it must not end the transfer or the server.
+fn ignore_oversized_datagram<T>(result: std::io::Result<T>) -> std::io::Result<T> {
+    match result {
+        Err(e) if cfg!(target_family = "windows") && e.raw_os_error() == Some(WSAEMSGSIZE) => {
+            debug!("Ignoring a datagram larger than the receive buffer");
+            Err(std::io::ErrorKind::WouldBlock.into())
+        }
+        result => result,
+    }
+}
+
 pub struct UdpUnboundSocket {
     socket: UdpSocket,
     poller: Poller,
@@ -172,7 +187,7 @@ impl Socket for UdpUnboundSocket {
             let _ = self.notified.insert(event.key, ());
         }
 
-        let result = self.socket.recv_from(buff);
+        let result = ignore_oversized_datagram(self.socket.recv_from(buff));
         if let Ok((size, client)) = result.as_ref() {
             trace!("Received from {client} {size} {:x?}", buff);
         }
@@ -258,7 +273,7 @@ impl BoundSocket for UdpBoundSocket {
                 .wait(&mut self.events, d.into())
                 .map_err(from_io_err)?;
         }
-        self.socket.recv(buff).map_err(from_io_err)
+        ignore_oversized_datagram(self.socket.recv(buff)).map_err(from_io_err)
     }
 
     fn send(&self, buff: &mut DataBuffer) -> io::Result<usize> {
